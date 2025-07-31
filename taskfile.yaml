@@ -60,11 +60,13 @@ tasks:
       - manifest-rbac
       - manifest-crds
       - manifest-webhooks
+    cmds:
+      - task: manifest-concat
   generate:
     cmds:
       - task: generate-deepcopy
       - task: generate-conversion
-  fmt:
+  format:
     deps:
       - clean-files
       - generate
@@ -78,7 +80,7 @@ tasks:
       fix: '{{ .fix | default "true" }}'
     deps:
       - artifacts-dir
-      - fmt
+      - format
     sources:
       - ./**/*.go
       - ./.golangci.yaml
@@ -90,7 +92,7 @@ tasks:
       - artifacts-dir
       - manifests
       - generate
-      - fmt
+      - format
     sources:
       - ./**/*.go
       - go.sum
@@ -107,7 +109,7 @@ tasks:
     deps:
       - manifests
       - generate
-      - fmt
+      - format
     cmd: git diff --exit-code
   clean:
     cmds:
@@ -250,3 +252,16 @@ tasks:
       - "{{ .controllerGenCmd }} crd paths=./api/... paths=./pkg/... output:crd:artifacts:config={{ .buildDir }}/crds"
     generates:
       - "{{ .buildDir }}/crds/**.yaml"
+
+  manifest-concat:
+    internal: true
+    desc: Concatenate all generated manifests into a single control-plane-components.yaml file
+    sources:
+      - "{{ .buildDir }}/rbac/**.yaml"
+      - "{{ .buildDir }}/webhooks/**.yaml"
+      - "{{ .buildDir }}/crds/**.yaml"
+    cmds:
+      - |
+        cat {{ .buildDir }}/rbac/*.yaml {{ .buildDir }}/webhooks/*.yaml {{ .buildDir }}/crds/*.yaml > {{ .buildDir }}/control-plane-components.yaml
+    generates:
+      - "{{ .buildDir }}/control-plane-components.yaml"

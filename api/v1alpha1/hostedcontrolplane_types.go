@@ -31,8 +31,10 @@ type HostedControlPlane struct {
 	Status HostedControlPlaneStatus `json:"status,omitempty"`
 }
 
-var _ conditions.Setter = &HostedControlPlane{}
-var _ paused.ConditionSetter = &HostedControlPlane{}
+var (
+	_ conditions.Setter      = &HostedControlPlane{}
+	_ paused.ConditionSetter = &HostedControlPlane{}
+)
 
 // HostedControlPlaneSpec defines the desired state of HostedControlPlane.
 type HostedControlPlaneSpec struct {
@@ -71,7 +73,7 @@ type HostedControlPlaneStatus struct {
 	Initialized bool `json:"initialized"`
 	Ready       bool `json:"ready"`
 
-	// Compatiblity with upstream CAPI v1beta2 fields
+	// Compatibility with upstream CAPI v1beta2 fields
 	//+kubebuilder:validation:Optional
 	V1Beta2 *HostedControlPlaneV1Beta2Status `json:"v1beta2,omitempty"`
 }

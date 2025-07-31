@@ -1,6 +1,6 @@
 package v1alpha1
 
-import clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+import capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 
 const (
 	// ConditionMissingReason is used when trying to mirror a condition that does not
@@ -11,8 +11,24 @@ const (
 // HostedControlPlane.
 
 const (
-	DeploymentReadyCondition   clusterv1.ConditionType = "DeploymentReady"
-	DeploymentFailedReason                             = "DeploymentFailed"
-	CertificatesReadyCondition clusterv1.ConditionType = "CertificatesReady"
-	CertificatesFailedReason                           = "CertificatesFailed"
+	DeploymentReadyCondition         capiv1.ConditionType = "DeploymentReady"
+	DeploymentFailedReason                                = "DeploymentFailed"
+	CertificatesReadyCondition       capiv1.ConditionType = "CertificatesReady"
+	CertificatesFailedReason                              = "CertificatesFailed"
+	ServiceReadyCondition            capiv1.ConditionType = "ServiceReady"
+	ServiceFailedReason                                   = "ServiceFailed"
+	KubeconfigReadyCondition         capiv1.ConditionType = "KubeconfigReady"
+	KubeconfigFailedReason                                = "KubeconfigFailed"
+	KonnectivityConfigReadyCondition capiv1.ConditionType = "KonnectivityConfigReady"
+	KonnectivityConfigFailedReason                        = "KonnectivityConfigFailed"
+	KubeadmConfigReadyCondition      capiv1.ConditionType = "KubeadmConfigReady"
+	KubeadmConfigFailedReason                             = "KubeadmConfigFailed"
+	KubeletConfigReadyCondition      capiv1.ConditionType = "KubeletConfigReady"
+	KubeletConfigFailedReason                             = "KubeletConfigFailed"
+	BootstrapTokenReadyCondition     capiv1.ConditionType = "BootstrapTokenReady"
+	BootstrapTokenFailedReason                            = "BootstrapTokenFailed"
+	ClusterAdminRBACReadyCondition   capiv1.ConditionType = "ClusterAdminRBACReady"
+	ClusterAdminRBACFailedReason                          = "ClusterAdminRBACFailed"
+	HTTPRouteReadyCondition          capiv1.ConditionType = "HTTPRouteReady"
+	HTTPRouteFailedReason                                 = "HTTPRouteFailed"
 )
