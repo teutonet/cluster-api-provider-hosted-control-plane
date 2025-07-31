@@ -21,6 +21,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	capiutil "sigs.k8s.io/cluster-api/util"
@@ -43,9 +47,7 @@ const (
 	hostedControlPlaneReconcilerTracer = "HostedControlPlaneReconciler"
 )
 
-var (
-	HostedControlPlaneFinalizer = fmt.Sprintf("hcp.%s", api.GroupName)
-)
+var HostedControlPlaneFinalizer = fmt.Sprintf("hcp.%s", api.GroupName)
 
 var (
 	ErrCloudNotReady            = errors.New("TeutonetesCloud is not ready")
@@ -55,10 +57,11 @@ var (
 )
 
 type HostedControlPlaneReconciler struct {
-	Client            client.Client
-	Recorder          record.EventRecorder
-	Scheme            *runtime.Scheme
-	managementCluster ManagementCluster
+	Client           client.Client
+	KubernetesClient kubernetes.Interface
+	Recorder         record.EventRecorder
+	Scheme           *runtime.Scheme
+	// managementCluster ManagementCluster
 }
 
 func (r *HostedControlPlaneReconciler) SetupWithManager(
@@ -85,7 +88,10 @@ func (r *HostedControlPlaneReconciler) SetupWithManager(
 	)
 }
 
-func (r *HostedControlPlaneReconciler) clusterToHostedControlPlane(_ context.Context, o client.Object) []reconcile.Request {
+func (r *HostedControlPlaneReconciler) clusterToHostedControlPlane(
+	_ context.Context,
+	o client.Object,
+) []reconcile.Request {
 	c, ok := o.(*capiv1.Cluster)
 	if !ok {
 		panic(fmt.Sprintf("Expected a Cluster but got a %T", c))
@@ -109,10 +115,8 @@ func (r *HostedControlPlaneReconciler) clusterToHostedControlPlane(_ context.Con
 //+kubebuilder:rbac:groups=hcp.teuto.net,resources=hostedcontrolplanes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=hcp.teuto.net,resources=hostedcontrolplanes/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=hcp.teuto.net,resources=hostedcontrolplanes/finalizers,verbs=update
-//+kubebuilder:rbac:groups=core,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/status,verbs=get;list;watch;update;patch
-//+kubebuilder:rbac:groups="",resources=events,verbs=get;list;watch;create;update;patch
+//+kubebuilder:rbac:groups="",resources=events,verbs=create
 
 func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	return tracing.WithSpan(ctx, hostedControlPlaneReconcilerTracer, "Reconcile",
@@ -165,7 +169,9 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				attribute.String("ClusterName", cluster.Name),
 			)
 
-			if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, hostedControlPlane); err != nil || isPaused || requeue {
+			if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, hostedControlPlane); err != nil ||
+				isPaused ||
+				requeue {
 				if err == nil && isPaused {
 					r.pauseDeployment(ctx, hostedControlPlane)
 				}
@@ -211,7 +217,8 @@ func (r *HostedControlPlaneReconciler) patch(
 }
 
 func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *patch.Helper,
-	hostedControlPlane *v1alpha1.HostedControlPlane, cluster *capiv1.Cluster) (ctrl.Result, error) {
+	hostedControlPlane *v1alpha1.HostedControlPlane, cluster *capiv1.Cluster,
+) (ctrl.Result, error) {
 	return tracing.WithSpan(ctx, hostedControlPlaneReconcilerTracer, "ReconcileNormal",
 		func(ctx context.Context, span trace.Span) (_ ctrl.Result, reterr error) {
 			if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.Client,
@@ -305,27 +312,27 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				}
 			}
 
-			//workloadCluster, err := r.managementCluster.GetWorkloadCluster(ctx, client.ObjectKeyFromObject(cluster))
-			//if err != nil {
+			// workloadCluster, err := r.managementCluster.GetWorkloadCluster(ctx, client.ObjectKeyFromObject(cluster))
+			// if err != nil {
 			//	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 			//}
 			//
-			//if err := workloadCluster.AllowBootstrapTokensToGetNodes(ctx); err != nil {
+			// if err := workloadCluster.AllowBootstrapTokensToGetNodes(ctx); err != nil {
 			//	return ctrl.Result{}, fmt.Errorf("failed to set role and role binding for kubeadm: %w", err)
 			//}
 			//
-			//parsedVersion, err := version.ParseMajorMinorPatchTolerant(controlPlane.KCP.Spec.Version)
-			//if err != nil {
+			// parsedVersion, err := version.ParseMajorMinorPatchTolerant(controlPlane.KCP.Spec.Version)
+			// if err != nil {
 			//	return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", controlPlane.KCP.Spec.Version)
 			//}
 			//
-			//if hostedControlPlane.Spec.KubeProxy.Enabled {
+			// if hostedControlPlane.Spec.KubeProxy.Enabled {
 			//	if err := workloadCluster.ReconcileKubeProxy(ctx, hostedControlPlane, parsedVersion); err != nil {
 			//		return ctrl.Result{}, fmt.Errorf("failed to reconcile kube-proxy: %w", err)
 			//	}
 			//}
 			//
-			//if err := r.reconcileControlPlaneStatusDeployment(ctx, hostedControlPlane); err != nil {
+			// if err := r.reconcileControlPlaneStatusDeployment(ctx, hostedControlPlane); err != nil {
 			//	return ctrl.Result{}, err
 			//}
 
@@ -335,7 +342,11 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 }
 
 // reconcileDelete handles the deletion of the HostedControlPlane resource.
-func (r *HostedControlPlaneReconciler) reconcileDelete(ctx context.Context, _ *patch.Helper, hostedControlPlane *v1alpha1.HostedControlPlane) (ctrl.Result, error) {
+func (r *HostedControlPlaneReconciler) reconcileDelete(
+	ctx context.Context,
+	_ *patch.Helper,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) (ctrl.Result, error) {
 	return tracing.WithSpan(ctx, hostedControlPlaneReconcilerTracer, "ReconcileDelete",
 		func(ctx context.Context, span trace.Span) (ctrl.Result, error) {
 			controllerutil.RemoveFinalizer(hostedControlPlane, HostedControlPlaneFinalizer)
@@ -345,10 +356,13 @@ func (r *HostedControlPlaneReconciler) reconcileDelete(ctx context.Context, _ *p
 	)
 }
 
-func (r *HostedControlPlaneReconciler) reconcileDeployment(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
+func (r *HostedControlPlaneReconciler) reconcileDeployment(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileCAPICluster",
 		func(ctx context.Context, span trace.Span) error {
-			//deployment := acv1.Deployment(hostedControlPlane.Name, hostedControlPlane.Namespace).
+			// deployment := acv1.Deployment(hostedControlPlane.Name, hostedControlPlane.Namespace).
 			//	WithSpec(acv1.DeploymentSpec())
 
 			return nil
@@ -356,7 +370,190 @@ func (r *HostedControlPlaneReconciler) reconcileDeployment(ctx context.Context, 
 	)
 }
 
-// +kubebuilder:rbac:groups=core,resources=deployments,verbs=get
+//+kubebuilder:rbac:groups=core,resources=services,verbs=create;update;patch
+
+func (r *HostedControlPlaneReconciler) reconcileService(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileService",
+		func(ctx context.Context, span trace.Span) error {
+			serviceApplyConfig := corev1ac.Service(
+				hostedControlPlane.Name,
+				hostedControlPlane.Namespace,
+			)
+			serviceApplyConfig.
+				WithLabels(map[string]string{
+					"app":       hostedControlPlane.Name,
+					"component": "control-plane",
+				})
+
+			serviceSpec := &corev1ac.ServiceSpecApplyConfiguration{}
+			serviceSpec.WithType(corev1.ServiceTypeClusterIP).
+				WithSelector(map[string]string{
+					"app": hostedControlPlane.Name,
+				})
+
+			port := &corev1ac.ServicePortApplyConfiguration{}
+			port.WithName("https").
+				WithPort(6443).
+				WithTargetPort(intstr.FromInt(6443)).
+				WithProtocol(corev1.ProtocolTCP)
+
+			serviceSpec.WithPorts(port)
+			serviceApplyConfig.WithSpec(serviceSpec)
+
+			ownerRef := &metav1ac.OwnerReferenceApplyConfiguration{}
+			ownerRef.WithAPIVersion(hostedControlPlane.APIVersion).
+				WithKind(hostedControlPlane.Kind).
+				WithName(hostedControlPlane.Name).
+				WithUID(hostedControlPlane.UID).
+				WithController(true).
+				WithBlockOwnerDeletion(true)
+
+			serviceApplyConfig.WithOwnerReferences(ownerRef)
+
+			_, err := r.KubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).Apply(
+				ctx,
+				serviceApplyConfig,
+				metav1.ApplyOptions{
+					FieldManager: "hosted-control-plane-controller",
+					Force:        true,
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("failed to apply service: %w", err)
+			}
+
+			return nil
+		},
+	)
+}
+
+func (r *HostedControlPlaneReconciler) reconcileCertificates(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileCertificates",
+		func(ctx context.Context, span trace.Span) error {
+			// TODO: Implement certificate reconciliation
+			return nil
+		},
+	)
+}
+
+func (r *HostedControlPlaneReconciler) reconcileKubeconfig(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKubeconfig",
+		func(ctx context.Context, span trace.Span) error {
+			// TODO: Implement kubeconfig reconciliation
+			return nil
+		},
+	)
+}
+
+func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKonnectivityConfig",
+		func(ctx context.Context, span trace.Span) error {
+			// TODO: Implement konnectivity config reconciliation
+			return nil
+		},
+	)
+}
+
+func (r *HostedControlPlaneReconciler) reconcileKubeadmConfig(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKubeadmConfig",
+		func(ctx context.Context, span trace.Span) error {
+			// TODO: Implement kubeadm config reconciliation
+			return nil
+		},
+	)
+}
+
+func (r *HostedControlPlaneReconciler) reconcileKubeletConfig(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKubeletConfig",
+		func(ctx context.Context, span trace.Span) error {
+			// TODO: Implement kubelet config reconciliation
+			return nil
+		},
+	)
+}
+
+func (r *HostedControlPlaneReconciler) reconcileBootstrapToken(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileBootstrapToken",
+		func(ctx context.Context, span trace.Span) error {
+			// TODO: Implement bootstrap token reconciliation
+			return nil
+		},
+	)
+}
+
+func (r *HostedControlPlaneReconciler) reconcileClusterAdminRBAC(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileClusterAdminRBAC",
+		func(ctx context.Context, span trace.Span) error {
+			// TODO: Implement cluster admin RBAC reconciliation
+			return nil
+		},
+	)
+}
+
+func (r *HostedControlPlaneReconciler) reconcileHTTPRoute(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileHTTPRoute",
+		func(ctx context.Context, span trace.Span) error {
+			// TODO: Implement HTTPRoute reconciliation
+			return nil
+		},
+	)
+}
+
+func (r *HostedControlPlaneReconciler) updateStatus(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "UpdateStatus",
+		func(ctx context.Context, span trace.Span) error {
+			// TODO: Implement status update logic
+			return nil
+		},
+	)
+}
+
+func (r *HostedControlPlaneReconciler) updateV1Beta2Status(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) {
+	// TODO: Implement v1beta2 status update logic
+}
+
+func (r *HostedControlPlaneReconciler) pauseDeployment(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) {
+	// TODO: Implement deployment pause logic
+}
+
+//+kubebuilder:rbac:groups=core,resources=deployments,verbs=get
+
 func (r *HostedControlPlaneReconciler) reconcileControlPlaneStatusDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,

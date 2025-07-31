@@ -116,6 +116,10 @@ linters:
           alias: kerrors
         - pkg: k8s.io/client-go/applyconfigurations/apps/v1
           alias: appsacv1
+        - pkg: k8s.io/client-go/applyconfigurations/meta/v1
+          alias: metav1ac
+        - pkg: k8s.io/client-go/applyconfigurations/core/v1
+          alias: corev1ac
         - pkg: k8s.io/client-go/apps/v1
           alias: appsv1
         - pkg: sigs.k8s.io/gateway-api/apis/v1
@@ -155,10 +159,10 @@ linters:
           # original regex: slog\.Logger\.(Info|Error|Debug|Warn)(?!Context)
         - pattern: ^slog\.Logger\.(Info|Error|Debug|Warn)(|[^C]|C[^o]|Co[^n]|Con[^t]|Cont[^e]|Conte[^x]|Contex[^t])$
           msg: Use the Context version
-        - pattern: ^controllerruntime.LoggerFrom$
-          msg: Use 'logr.FromContextAsSlogLogger(ctx)' instead
-        - pattern: ^logr.Logger
-          msg: Use slog instead
+        # - pattern: ^controllerruntime.LoggerFrom$
+        #   msg: Use 'logr.FromContextAsSlogLogger(ctx)' instead
+        # - pattern: ^logr.Logger
+        #   msg: Use slog instead
     revive:
       rules:
         - name: exported

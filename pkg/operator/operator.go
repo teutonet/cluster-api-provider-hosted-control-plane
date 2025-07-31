@@ -25,6 +25,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.34.0"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -156,10 +157,17 @@ func setupControllers(
 		return fmt.Errorf("failed to get logger from context: %w", err)
 	}
 	predicateLogger = predicateLogger.WithValues("controller", hostedControlPlaneControllerName)
+	// Create kubernetes clientset for applyconfigurations
+	kubernetesClient, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+
 	if err := (&hostedcontrolplane.HostedControlPlaneReconciler{
-		Client:   client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
-		Recorder: mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
-		Scheme:   mgr.GetScheme(),
+		Client:           client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
+		KubernetesClient: kubernetesClient,
+		Recorder:         mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
+		Scheme:           mgr.GetScheme(),
 	}).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}
