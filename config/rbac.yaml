@@ -1,0 +1,86 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: controller-manager
+  namespace: system
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/instance: system
+    app.kubernetes.io/component: cluster-api-control-plane-provider-hcp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: leader-election-role
+  namespace: system
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/instance: system
+    app.kubernetes.io/component: cluster-api-control-plane-provider-hcp
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: leader-election-role-binding
+  namespace: system
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/instance: system
+    app.kubernetes.io/component: cluster-api-control-plane-provider-hcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: leader-election-role
+subjects:
+  - kind: ServiceAccount
+    name: controller-manager
+    namespace: system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: manager-role
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/instance: system
+    app.kubernetes.io/component: cluster-api-control-plane-provider-hcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: manager-role
+subjects:
+  - kind: ServiceAccount
+    name: controller-manager
+    namespace: system

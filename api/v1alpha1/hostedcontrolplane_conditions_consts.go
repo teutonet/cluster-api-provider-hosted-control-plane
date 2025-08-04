@@ -13,6 +13,10 @@ const (
 const (
 	DeploymentReadyCondition         capiv1.ConditionType = "DeploymentReady"
 	DeploymentFailedReason                                = "DeploymentFailed"
+	IssuersReadyCondition            capiv1.ConditionType = "IssuersReady"
+	IssuersFailedReason                                   = "IssuersFailed"
+	CACertificatesReadyCondition     capiv1.ConditionType = "CACertificatesReady"
+	CACertificatesFailedReason                            = "CACertificatesFailed"
 	CertificatesReadyCondition       capiv1.ConditionType = "CertificatesReady"
 	CertificatesFailedReason                              = "CertificatesFailed"
 	ServiceReadyCondition            capiv1.ConditionType = "ServiceReady"

@@ -1,6 +1,6 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="t8s-operator" type="GoApplicationRunConfiguration" factoryName="Go Application">
-    <module name="t8s-engine" />
+  <configuration default="false" name="hosted-control-plane-controller" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="cluster-api-control-plane-provider-hcp" />
     <working_directory value="$PROJECT_DIR$" />
     <envs>
       <env name="LEADER_ELECTION" value="false" />
@@ -21,7 +21,7 @@
       </ENTRIES>
     </EXTENSION>
     <kind value="PACKAGE" />
-    <package value="github.com/teutonet/cluster-api-control-plane-provder-hcp/cmd/t8s-operator" />
+    <package value="github.com/teutonet/cluster-api-control-plane-provider-hcp/cmd/hosted-control-plane-controller" />
     <directory value="$PROJECT_DIR$" />
     <filePath value="$PROJECT_DIR$/main.go" />
     <method v="2" />

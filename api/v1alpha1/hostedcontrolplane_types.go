@@ -12,15 +12,17 @@ import (
 )
 
 //+kubebuilder:object:root=true
-//+kubebuilder:resource:path=hostedcontrolplanes,shortName=tc,scope=Namespaced
+//+kubebuilder:resource:path=hostedcontrolplanes,scope=Namespaced,categories=cluster-api,shortName=hcp
 //+kubebuilder:subresource:status
 //+kubebuilder:storageversion
 //+kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
-//+kubebuilder:printcolumn:name="Replicas",type=int,JSONPath=`.spec.replicas`
+//+kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 //+kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type == "Ready")].status`
 //+kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 //+kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 //+kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
+//+kubebuilder:metadata:annotations={"cert-manager.io/inject-ca-from=system/controller-manager-serving-certificate"}
+//+kubebuilder:metadata:labels={"cluster.x-k8s.io/provider=control-plane-hcp","cluster.x-k8s.io/v1beta1=v1alpha1"}
 
 // HostedControlPlane is the Schema for the hostedcontrolplanes API.
 type HostedControlPlane struct {
@@ -47,10 +49,12 @@ type HostedControlPlaneSpec struct {
 	//+kubebuilder:validation:Minimum=1
 	//+kubebuilder:validation:Optional
 	Replicas *int32 `json:"replicas,omitempty"`
+	Test     bool   `json:"Test,omitempty"`
 }
 
 // HostedControlPlaneStatus defines the observed state of HostedControlPlane.
 type HostedControlPlaneStatus struct {
+	//+kubebuilder:validation:Optional
 	Conditions capiv1.Conditions `json:"conditions,omitempty"`
 
 	// Required fields by CAPI
@@ -70,8 +74,10 @@ type HostedControlPlaneStatus struct {
 	// CAPI Contract fields
 	// https://cluster-api.sigs.k8s.io/developer/providers/contracts/control-plane
 
+	//+kubebuilder:validation:Optional
 	Initialized bool `json:"initialized"`
-	Ready       bool `json:"ready"`
+	//+kubebuilder:validation:Optional
+	Ready bool `json:"ready"`
 
 	// Compatibility with upstream CAPI v1beta2 fields
 	//+kubebuilder:validation:Optional

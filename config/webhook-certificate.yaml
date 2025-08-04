@@ -1,0 +1,29 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: controller-manager
+  namespace: system
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/instance: system
+    app.kubernetes.io/component: cluster-api-control-plane-provider-hcp
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: controller-manager
+  namespace: system
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/instance: system
+    app.kubernetes.io/component: cluster-api-control-plane-provider-hcp
+spec:
+  dnsNames:
+    - controller-manager.system.svc
+    - controller-manager.system.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: controller-manager
+  secretName: controller-manager-serving-certificate
