@@ -9,12 +9,13 @@ import (
 	"os"
 
 	"github.com/blang/semver/v4"
+	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	"github.com/go-logr/logr"
-	"github.com/teutonet/cluster-api-control-plane-provder-hcp/api"
-	"github.com/teutonet/cluster-api-control-plane-provder-hcp/api/v1alpha1"
-	"github.com/teutonet/cluster-api-control-plane-provder-hcp/pkg/hostedcontrolplane"
-	"github.com/teutonet/cluster-api-control-plane-provder-hcp/pkg/operator/etc"
-	"github.com/teutonet/cluster-api-control-plane-provder-hcp/pkg/util/logging"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/hostedcontrolplane"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/etc"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/logging"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
@@ -157,17 +158,22 @@ func setupControllers(
 		return fmt.Errorf("failed to get logger from context: %w", err)
 	}
 	predicateLogger = predicateLogger.WithValues("controller", hostedControlPlaneControllerName)
-	// Create kubernetes clientset for applyconfigurations
+
 	kubernetesClient, err := kubernetes.NewForConfig(mgr.GetConfig())
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
 
+	certManagerClient, err := cmclient.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		return fmt.Errorf("failed to create cert-manager client: %w", err)
+	}
+
 	if err := (&hostedcontrolplane.HostedControlPlaneReconciler{
-		Client:           client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
-		KubernetesClient: kubernetesClient,
-		Recorder:         mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
-		Scheme:           mgr.GetScheme(),
+		Client:            client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
+		KubernetesClient:  kubernetesClient,
+		CertManagerClient: certManagerClient,
+		Recorder:          mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
 	}).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}

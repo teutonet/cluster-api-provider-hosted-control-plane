@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/teutonet/cluster-api-control-plane-provder-hcp/pkg/operator"
-	"github.com/teutonet/cluster-api-control-plane-provder-hcp/pkg/operator/etc"
-	errorsUtil "github.com/teutonet/cluster-api-control-plane-provder-hcp/pkg/util/errors"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/etc"
+	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -17,7 +17,7 @@ func main() {
 	if err := run(); err != nil {
 		//nolint:forbidigo // we don't have a Context here
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error(
-			"unable to run t8s-operator",
+			"unable to run hosted control plane controller",
 			"err",
 			err,
 		)

@@ -1,0 +1,107 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/instance: system
+    app.kubernetes.io/component: cluster-api-control-plane-provider-hosted-control-plane
+  name: system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+  namespace: system
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/instance: system
+    app.kubernetes.io/component: cluster-api-control-plane-provider-hosted-control-plane
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: cluster-api-control-plane-provider-hosted-control-plane
+  replicas: 1
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+      labels:
+        app.kubernetes.io/component: cluster-api-control-plane-provider-hosted-control-plane
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsGroup: 1000
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - command:
+            - /manager
+          image: controller:latest
+          name: manager
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            privileged: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - "ALL"
+          ports:
+            - containerPort: 8081
+              name: health
+            - containerPort: 9443
+              name: webhooks
+            - containerPort: 8080
+              name: metrics
+          volumeMounts:
+            - mountPath: /tmp/k8s-webhook-server/serving-certs
+              name: webhook-serving-certs
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 64Mi
+      volumes:
+        - name: webhook-serving-certs
+          secret:
+            defaultMode: 420
+            secretName: controller-manager-serving-certificate
+      serviceAccountName: controller-manager
+      terminationGracePeriodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller-manager
+  namespace: system
+  labels:
+    control-plane: controller-manager
+    app.kubernetes.io/instance: system
+    app.kubernetes.io/component: cluster-api-control-plane-provider-hosted-control-plane
+spec:
+  ports:
+    - port: 443
+      name: webhooks
+      targetPort: webhooks
+    - port: 8080
+      name: metrics
+      targetPort: metrics
+  selector:
+    app.kubernetes.io/component: cluster-api-control-plane-provider-hosted-control-plane

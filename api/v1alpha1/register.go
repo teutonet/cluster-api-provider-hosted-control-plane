@@ -5,7 +5,7 @@
 package v1alpha1
 
 import (
-	"github.com/teutonet/cluster-api-control-plane-provder-hcp/api"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"

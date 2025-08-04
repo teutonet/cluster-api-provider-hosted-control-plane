@@ -49,19 +49,15 @@ vars:
   artifactsDir: _artifacts
   #  TODO: until https://github.com/go-task/task/issues/178 is done
   version:
-    sh: git describe --tags | awk -F - 'NF==3 {printf("%s-%04d-%s", $1, $2, $3)} NF!=3 {print $1}'
+    sh: git describe --tags 2>/dev/null | awk -F - 'NF==3 {printf("%s-%04d-%s", $1, $2, $3)} NF!=3 {print $1}'
 
 tasks:
   default:
     cmd:
       task: build
   manifests:
-    deps:
-      - manifest-rbac
-      - manifest-crds
-      - manifest-webhooks
-    cmds:
-      - task: manifest-concat
+    cmd:
+      task: manifest-concat
   generate:
     cmds:
       - task: generate-deepcopy
@@ -113,8 +109,8 @@ tasks:
     cmd: git diff --exit-code
   clean:
     cmds:
-      - if realpath -qe "{{ .buildDir }}" >/dev/null; then rm -rf {{ .buildDir }}; fi
-      - if realpath -qe "{{ .artifactsDir }}" >/dev/null; then rm -rf {{ .artifactsDir }}; fi
+      - if test -d "{{ .buildDir }}" >/dev/null; then rm -rf {{ .buildDir }}; fi
+      - if test -d "{{ .artifactsDir }}" >/dev/null; then rm -rf {{ .artifactsDir }}; fi
     status:
       - test ! -d {{ .buildDir }}
       - test ! -d {{ .artifactsDir }}
@@ -134,7 +130,7 @@ tasks:
       GOOS: linux
       GOARCH: amd64
     cmds:
-      - go build -ldflags=-X=main.version={{ .version }}, -o ./build/manager cmd/t8s-operator/main.go
+      - go build -ldflags=-X=main.version={{ .version }}, -o ./build/manager ./cmd/hosted-control-plane-controller/main.go
       - strip ./build/manager
     generates:
       - build/manager
@@ -198,15 +194,15 @@ tasks:
         msg: "symlink missing: sudo ln -s /tmp/operator/var/run/secrets /var/run/secrets"
       - sh: "grep ^user_allow_other /etc/fuse.conf"
         msg: |
-          add user_allow_other to config file
+          # add user_allow_other to config file
           visudo /etc/fuse.conf
     requires:
       vars:
         - kubeConfig
     env:
       KUBECONFIG: "{{ .kubeConfig }}"
-      NAMESPACE: t8se-system
-      DEPLOYMENT_NAME: t8s-engine-operator
+      NAMESPACE: system
+      DEPLOYMENT_NAME: controller-manager
     # always run the cleanup stuff
     ignore_error: true
     cmds:
@@ -227,7 +223,7 @@ tasks:
     cmds:
       - "{{ .controllerGenCmd }} rbac:roleName=manager-role paths=./api/... paths=./pkg/... output:rbac:artifacts:config={{ .buildDir }}/rbac"
     generates:
-      - "{{ .buildDir }}/rbac/**.yaml"
+      - "{{ .buildDir }}/rbac/role.yaml"
   manifest-webhooks:
     internal: true
     desc: Generate WebhookConfiguration manifests.
@@ -239,7 +235,7 @@ tasks:
     cmds:
       - "{{ .controllerGenCmd }} webhook paths=./api/... paths=./pkg/... output:webhook:artifacts:config={{ .buildDir }}/webhooks"
     generates:
-      - "{{ .buildDir }}/webhooks/**.yaml"
+      - "{{ .buildDir }}/webhooks/manifests.yaml"
   manifest-crds:
     internal: true
     desc: Generate CustomResourceDefinition manifests
@@ -251,17 +247,29 @@ tasks:
     cmds:
       - "{{ .controllerGenCmd }} crd paths=./api/... paths=./pkg/... output:crd:artifacts:config={{ .buildDir }}/crds"
     generates:
-      - "{{ .buildDir }}/crds/**.yaml"
+      - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanes.yaml"
+      - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanetemplates.yaml"
 
   manifest-concat:
     internal: true
     desc: Concatenate all generated manifests into a single control-plane-components.yaml file
-    sources:
-      - "{{ .buildDir }}/rbac/**.yaml"
-      - "{{ .buildDir }}/webhooks/**.yaml"
-      - "{{ .buildDir }}/crds/**.yaml"
+    deps:
+      - manifest-rbac
+      - manifest-crds
+      - manifest-webhooks
+    vars:
+      files:
+        - "{{ .buildDir }}/rbac/role.yaml"
+        - "{{ .buildDir }}/webhooks/manifests.yaml"
+        - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanes.yaml"
+        - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanetemplates.yaml"
+        - ./config/deployment.yaml
+        - ./config/rbac.yaml
+        - ./config/webhook-certificate.yaml
     cmds:
-      - |
-        cat {{ .buildDir }}/rbac/*.yaml {{ .buildDir }}/webhooks/*.yaml {{ .buildDir }}/crds/*.yaml > {{ .buildDir }}/control-plane-components.yaml
+      - rm -f {{ .buildDir }}/control-plane-components.yaml
+      - for:
+          var: files
+        cmd: awk '{ if (NR != 1 || $0 != "---") {print} } END { if ($0 != "---") {print "---"} }' {{ .ITEM }} >> {{ .buildDir }}/control-plane-components.yaml
     generates:
       - "{{ .buildDir }}/control-plane-components.yaml"

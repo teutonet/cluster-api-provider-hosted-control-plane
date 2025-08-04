@@ -1,12 +1,14 @@
-// Package t8soperator contains the whole schema for the operator.
+// Package operator contains the whole schema for the operator.
 package operator
 
 import (
-	"github.com/teutonet/cluster-api-control-plane-provder-hcp/api/v1alpha1"
+	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	kubeadmv1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 func NewScheme() (*runtime.Scheme, error) {
@@ -17,6 +19,8 @@ func NewScheme() (*runtime.Scheme, error) {
 		capiv1.AddToScheme,
 		kubeadmv1.AddToScheme,
 		v1alpha1.AddToScheme,
+		certmanagerv1.AddToScheme,
+		gwv1.Install,
 	}
 
 	for _, f := range addToSchemeFuncs {

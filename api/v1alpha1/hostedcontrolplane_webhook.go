@@ -9,7 +9,7 @@ import (
 	"fmt"
 
 	"github.com/blang/semver/v4"
-	errorsUtil "github.com/teutonet/cluster-api-control-plane-provder-hcp/pkg/util/errors"
+	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
