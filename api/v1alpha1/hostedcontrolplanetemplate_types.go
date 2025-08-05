@@ -31,7 +31,10 @@ type HostedControlPlaneTemplateResource struct {
 	Spec HostedControlPlaneTemplateResourceSpec `json:"spec"`
 }
 
-type HostedControlPlaneTemplateResourceSpec struct{}
+type HostedControlPlaneTemplateResourceSpec struct {
+	//+kubebuilder:validation:Optional
+	Deployment HostedControlPlaneDeployment `json:"deployment,omitempty"`
+}
 
 //+kubebuilder:object:root=true
 
