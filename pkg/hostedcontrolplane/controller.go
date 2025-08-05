@@ -295,7 +295,11 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 						kubeconfigReconciler := &KubeconfigReconciler{
 							kubernetesClient: r.KubernetesClient,
 						}
-						return kubeconfigReconciler.ReconcileKubeconfigs(ctx, hostedControlPlane, cluster.Spec.ControlPlaneEndpoint)
+						return kubeconfigReconciler.ReconcileKubeconfigs(
+							ctx,
+							hostedControlPlane,
+							cluster.Spec.ControlPlaneEndpoint,
+						)
 					},
 					Condition:    v1alpha1.KubeconfigReadyCondition,
 					FailedReason: v1alpha1.KubeconfigFailedReason,
