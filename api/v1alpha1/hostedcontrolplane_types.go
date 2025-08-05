@@ -24,7 +24,6 @@ import (
 //+kubebuilder:metadata:annotations={"cert-manager.io/inject-ca-from=system/controller-manager-serving-certificate"}
 //+kubebuilder:metadata:labels={"cluster.x-k8s.io/provider=control-plane-hcp","cluster.x-k8s.io/v1beta1=v1alpha1"}
 
-// HostedControlPlane is the Schema for the hostedcontrolplanes API.
 type HostedControlPlane struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -38,7 +37,6 @@ var (
 	_ paused.ConditionSetter = &HostedControlPlane{}
 )
 
-// HostedControlPlaneSpec defines the desired state of HostedControlPlane.
 type HostedControlPlaneSpec struct {
 	// The Kubernetes version of the cluster.
 	//+kubebuilder:validation:Required
@@ -49,10 +47,26 @@ type HostedControlPlaneSpec struct {
 	//+kubebuilder:validation:Minimum=1
 	//+kubebuilder:validation:Optional
 	Replicas *int32 `json:"replicas,omitempty"`
-	Test     bool   `json:"Test,omitempty"`
+	//+kubebuilder:validation:Optional
+	Deployment HostedControlPlaneDeployment `json:"deployment,omitempty"`
 }
 
-// HostedControlPlaneStatus defines the observed state of HostedControlPlane.
+type HostedControlPlaneDeployment struct {
+	//+kubebuilder:validation:Optional
+	Scheduler HostedControlPlaneComponent `json:"scheduler,omitempty"`
+	//+kubebuilder:validation:Optional
+	APIServer HostedControlPlaneComponent `json:"apiServer,omitempty"`
+	//+kubebuilder:validation:Optional
+	ControllerManager HostedControlPlaneComponent `json:"controllerManager,omitempty"`
+	//+kubebuilder:validation:Optional
+	Konnectivity HostedControlPlaneComponent `json:"konnectivity,omitempty"`
+}
+
+type HostedControlPlaneComponent struct {
+	//+kubebuilder:validation:Optional
+	Args map[string]string `json:"args,omitempty"`
+}
+
 type HostedControlPlaneStatus struct {
 	//+kubebuilder:validation:Optional
 	Conditions capiv1.Conditions `json:"conditions,omitempty"`
@@ -92,7 +106,6 @@ type HostedControlPlaneV1Beta2Status struct {
 
 //+kubebuilder:object:root=true
 
-// HostedControlPlaneList contains a list of HostedControlPlane.
 type HostedControlPlaneList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
