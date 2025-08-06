@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"path"
+	"sort"
 	"strings"
 
 	slices "github.com/samber/lo"
@@ -43,42 +44,19 @@ func (dr *DeploymentReconciler) ReconcileDeployment(
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileDeployment",
 		func(ctx context.Context, span trace.Span) error {
-			caCertificateVolume := dr.createCACertificateVolume(hostedControlPlane)
-			caCertificateKeyVolume := dr.createCACertificateKeyVolume(hostedControlPlane)
-			frontProxyCACertificateVolume := dr.createFrontProxyCACertificateVolume(hostedControlPlane)
-			apiServerCertificateVolume := dr.createAPIServerCertificateVolume(hostedControlPlane)
-			frontProxyClientCertificateVolume := dr.createFrontProxyClientCertificateVolume(hostedControlPlane)
-			serviceAccountCertificateVolume := dr.createServiceAccountCertificateVolume(hostedControlPlane)
+			apiServerCertificatesVolume := dr.createAPIServerCertificatesVolume(hostedControlPlane)
+			controllerManagerCertificatesVolume := dr.createControllerManagerCertificatesVolume(hostedControlPlane)
 			egressSelectorConfigVolume := dr.createKonnectivityConfigVolume(hostedControlPlane)
 			schedulerKubeconfigVolume := dr.createSchedulerKubeconfigVolume(hostedControlPlane)
 			controllerManagerKubeconfigVolume := dr.createControllerManagerKubeconfigVolume(hostedControlPlane)
 
-			caCertificateVolumeMount := corev1ac.VolumeMount().
-				WithName(*caCertificateVolume.Name).
-				WithMountPath(path.Join(kubeadm.DefaultCertificatesDir, konstants.CACertAndKeyBaseName, konstants.CACertName)).
-				WithSubPath(konstants.CACertName).
+			apiServerCertificatesVolumeMount := corev1ac.VolumeMount().
+				WithName(*apiServerCertificatesVolume.Name).
+				WithMountPath(kubeadm.DefaultCertificatesDir).
 				WithReadOnly(true)
-			caCertificateKeyVolumeMount := corev1ac.VolumeMount().
-				WithName(*caCertificateKeyVolume.Name).
-				WithMountPath(path.Join(kubeadm.DefaultCertificatesDir, konstants.CACertAndKeyBaseName, konstants.CAKeyName)).
-				WithSubPath(konstants.CAKeyName).
-				WithReadOnly(true)
-			// globalCACertificateVolumeMount := corev1ac.VolumeMount().
-			//	WithName(*caCertificateVolume.Name).
-			//	WithMountPath(path.Join("/etc/ssl/certs", konstants.CACertName)).
-			//	WithSubPath(konstants.CACertName).
-			//	WithReadOnly(true)
-			frontProxyCACertificateVolumeMount := corev1ac.VolumeMount().
-				WithName(*frontProxyCACertificateVolume.Name).
-				WithMountPath(path.Join(kubeadm.DefaultCertificatesDir, konstants.FrontProxyCACertAndKeyBaseName)).
-				WithReadOnly(true)
-			frontProxyClientCertificateVolumeMount := corev1ac.VolumeMount().
-				WithName(*frontProxyClientCertificateVolume.Name).
-				WithMountPath(path.Join(kubeadm.DefaultCertificatesDir, konstants.FrontProxyClientCertAndKeyBaseName)).
-				WithReadOnly(true)
-			serviceAccountCertificateVolumeMount := corev1ac.VolumeMount().
-				WithName(*serviceAccountCertificateVolume.Name).
-				WithMountPath(path.Join(kubeadm.DefaultCertificatesDir, konstants.ServiceAccountKeyBaseName)).
+			controllerManagerCertificatesVolumeMount := corev1ac.VolumeMount().
+				WithName(*controllerManagerCertificatesVolume.Name).
+				WithMountPath(kubeadm.DefaultCertificatesDir).
 				WithReadOnly(true)
 			egressSelectorConfigVolumeMount := corev1ac.VolumeMount().
 				WithName(*egressSelectorConfigVolume.Name).
@@ -108,19 +86,12 @@ func (dr *DeploymentReconciler) ReconcileDeployment(
 							WithContainers(
 								dr.createAPIServerContainer(
 									hostedControlPlane,
-									caCertificateVolumeMount,
-									frontProxyCACertificateVolumeMount,
-									apiServerCertificateVolume,
-									frontProxyClientCertificateVolumeMount,
-									serviceAccountCertificateVolumeMount,
+									apiServerCertificatesVolumeMount,
 									egressSelectorConfigVolumeMount,
 								),
 								dr.createControllerManagerContainer(
 									hostedControlPlane,
-									caCertificateVolumeMount,
-									frontProxyCACertificateVolumeMount,
-									caCertificateKeyVolumeMount,
-									serviceAccountCertificateVolumeMount,
+									controllerManagerCertificatesVolumeMount,
 									controllerManagerKubeconfigVolume,
 								),
 								dr.createSchedulerContainer(
@@ -130,12 +101,8 @@ func (dr *DeploymentReconciler) ReconcileDeployment(
 								// TODO: add konnectivity container
 							).
 							WithVolumes(
-								caCertificateVolume,
-								caCertificateKeyVolume,
-								frontProxyCACertificateVolume,
-								apiServerCertificateVolume,
-								frontProxyClientCertificateVolume,
-								serviceAccountCertificateVolume,
+								apiServerCertificatesVolume,
+								controllerManagerCertificatesVolume,
 								egressSelectorConfigVolume,
 								schedulerKubeconfigVolume,
 								controllerManagerKubeconfigVolume,
@@ -185,56 +152,6 @@ func (dr *DeploymentReconciler) createControllerManagerKubeconfigVolume(
 		)
 }
 
-func (dr *DeploymentReconciler) createFrontProxyCACertificateVolume(
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) *corev1ac.VolumeApplyConfiguration {
-	return corev1ac.Volume().
-		WithName("front-proxy-ca-certificate").
-		WithSecret(corev1ac.SecretVolumeSource().
-			WithSecretName(names.GetFrontProxyCASecretName(hostedControlPlane.Name)).
-			WithItems(corev1ac.KeyToPath().
-				WithKey(corev1.TLSCertKey).
-				WithPath(konstants.FrontProxyCACertName),
-			),
-		)
-}
-
-func (dr *DeploymentReconciler) createFrontProxyClientCertificateVolume(
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) *corev1ac.VolumeApplyConfiguration {
-	return corev1ac.Volume().
-		WithName("front-proxy-client-certificate").
-		WithSecret(corev1ac.SecretVolumeSource().
-			WithSecretName(names.GetFrontProxySecretName(hostedControlPlane.Name)).
-			WithItems(
-				corev1ac.KeyToPath().
-					WithKey(corev1.TLSCertKey).
-					WithPath(konstants.FrontProxyClientCertName),
-				corev1ac.KeyToPath().
-					WithKey(corev1.TLSPrivateKeyKey).
-					WithPath(konstants.FrontProxyClientKeyName),
-			),
-		)
-}
-
-func (dr *DeploymentReconciler) createServiceAccountCertificateVolume(
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) *corev1ac.VolumeApplyConfiguration {
-	return corev1ac.Volume().
-		WithName("service-account-certificate").
-		WithSecret(corev1ac.SecretVolumeSource().
-			WithSecretName(names.GetServiceAccountSecretName(hostedControlPlane.Name)).
-			WithItems(
-				corev1ac.KeyToPath().
-					WithKey(corev1.TLSCertKey).
-					WithPath(konstants.ServiceAccountPublicKeyName),
-				corev1ac.KeyToPath().
-					WithKey(corev1.TLSPrivateKeyKey).
-					WithPath(konstants.ServiceAccountPrivateKeyName),
-			),
-		)
-}
-
 func (dr *DeploymentReconciler) createKonnectivityConfigVolume(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 ) *corev1ac.VolumeApplyConfiguration {
@@ -245,7 +162,7 @@ func (dr *DeploymentReconciler) createKonnectivityConfigVolume(
 		)
 }
 
-func (dr *DeploymentReconciler) createAPIServerCertificateVolume(
+func (dr *DeploymentReconciler) createAPIServerCertificatesVolume(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
@@ -253,13 +170,54 @@ func (dr *DeploymentReconciler) createAPIServerCertificateVolume(
 		WithProjected(corev1ac.ProjectedVolumeSource().
 			WithSources(
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
+					WithName(names.GetCASecretName(hostedControlPlane.Name)).
+					WithItems(
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSCertKey).
+							WithPath(konstants.CACertName),
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSPrivateKeyKey).
+							WithPath(konstants.CAKeyName),
+					),
+				),
+				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
+					WithName(names.GetFrontProxyCASecretName(hostedControlPlane.Name)).
+					WithItems(
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSCertKey).
+							WithPath(konstants.FrontProxyCACertName),
+					),
+				),
+				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
+					WithName(names.GetFrontProxySecretName(hostedControlPlane.Name)).
+					WithItems(
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSCertKey).
+							WithPath(konstants.FrontProxyClientCertName),
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSPrivateKeyKey).
+							WithPath(konstants.FrontProxyClientKeyName),
+					),
+				),
+				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
+					WithName(names.GetServiceAccountSecretName(hostedControlPlane.Name)).
+					WithItems(
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSCertKey).
+							WithPath(konstants.ServiceAccountPublicKeyName),
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSPrivateKeyKey).
+							WithPath(konstants.ServiceAccountPrivateKeyName),
+					),
+				),
+				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
 					WithName(names.GetAPIServerSecretName(hostedControlPlane.Name)).
 					WithItems(
 						corev1ac.KeyToPath().
 							WithKey(corev1.TLSCertKey).
 							WithPath(konstants.APIServerCertName),
 						corev1ac.KeyToPath().
-							WithKey(corev1.TLSCertKey).
+							WithKey(corev1.TLSPrivateKeyKey).
 							WithPath(konstants.APIServerKeyName),
 					),
 				),
@@ -278,49 +236,53 @@ func (dr *DeploymentReconciler) createAPIServerCertificateVolume(
 		)
 }
 
-func (dr *DeploymentReconciler) createCACertificateVolume(
+func (dr *DeploymentReconciler) createControllerManagerCertificatesVolume(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
-		WithName("ca-certificate").
-		WithSecret(corev1ac.SecretVolumeSource().
-			WithSecretName(names.GetCASecretName(hostedControlPlane.Name)).
-			WithItems(corev1ac.KeyToPath().
-				WithKey(corev1.TLSCertKey).
-				WithPath(konstants.CACertName),
-			),
-		)
-}
-
-func (dr *DeploymentReconciler) createCACertificateKeyVolume(
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) *corev1ac.VolumeApplyConfiguration {
-	return corev1ac.Volume().
-		WithName("ca-certificate-key").
-		WithSecret(corev1ac.SecretVolumeSource().
-			WithSecretName(names.GetCASecretName(hostedControlPlane.Name)).
-			WithItems(corev1ac.KeyToPath().
-				WithKey(corev1.TLSPrivateKeyKey).
-				WithPath(konstants.CAKeyName),
+		WithName("controller-manager-certificates").
+		WithProjected(corev1ac.ProjectedVolumeSource().
+			WithSources(
+				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
+					WithName(names.GetCASecretName(hostedControlPlane.Name)).
+					WithItems(
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSCertKey).
+							WithPath(konstants.CACertName),
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSPrivateKeyKey).
+							WithPath(konstants.CAKeyName),
+					),
+				),
+				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
+					WithName(names.GetFrontProxyCASecretName(hostedControlPlane.Name)).
+					WithItems(
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSCertKey).
+							WithPath(konstants.FrontProxyCACertName),
+					),
+				),
+				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
+					WithName(names.GetServiceAccountSecretName(hostedControlPlane.Name)).
+					WithItems(
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSPrivateKeyKey).
+							WithPath(konstants.ServiceAccountPrivateKeyName),
+					),
+				),
 			),
 		)
 }
 
 func (dr *DeploymentReconciler) buildAPIServerArgs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	caCertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	frontProxyCACertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	apiServerCertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	frontProxyClientCertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	serviceAccountCertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
+	apiServerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	egressSelectorConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 ) []string {
 	// TODO: add etcd flags
 
-	frontProxyClientCertificateDir := *frontProxyClientCertificateVolumeMount.MountPath
-	frontProxyCACertificateDir := *frontProxyCACertificateVolumeMount.MountPath
-	serviceAccountCertificateDir := *serviceAccountCertificateVolumeMount.MountPath
-	apiServerCertificateDir := *apiServerCertificateVolumeMount.MountPath
+	certificatesDir := *apiServerCertificatesVolumeMount.MountPath
+	egressSelectorConfigDir := *egressSelectorConfigVolumeMount.MountPath
 	nodeAdressTypes := slices.Map([]corev1.NodeAddressType{
 		corev1.NodeInternalDNS,
 		corev1.NodeExternalDNS,
@@ -332,67 +294,47 @@ func (dr *DeploymentReconciler) buildAPIServerArgs(
 
 	args := map[string]string{
 		"egress-selector-config-file": path.Join(
-			*egressSelectorConfigVolumeMount.MountPath,
+			egressSelectorConfigDir,
 			"configurations",
 			EgressSelectorConfigurationFileName,
 		),
-		"allow-privileged":            "true",
-		"authorization-mode":          "Node,RBAC",
-		"client-ca-file":              *caCertificateVolumeMount.MountPath,
-		"enable-bootstrap-token-auth": "true",
-		"kubelet-client-certificate": path.Join(
-			apiServerCertificateDir,
-			konstants.APIServerKubeletClientCertName,
-		),
-		"kubelet-client-key": path.Join(
-			apiServerCertificateDir,
-			konstants.APIServerKubeletClientKeyName,
-		),
-		"kubelet-preferred-address-types": strings.Join(nodeAdressTypes, ","),
-		"proxy-client-cert-file": path.Join(
-			frontProxyClientCertificateDir,
-			konstants.FrontProxyClientCertName,
-		),
-		"proxy-client-key-file": path.Join(
-			frontProxyClientCertificateDir,
-			konstants.FrontProxyClientKeyName,
-		),
+		"allow-privileged":                   "true",
+		"authorization-mode":                 "Node,RBAC",
+		"client-ca-file":                     path.Join(certificatesDir, konstants.CACertName),
+		"enable-bootstrap-token-auth":        "true",
+		"kubelet-client-certificate":         path.Join(certificatesDir, konstants.APIServerKubeletClientCertName),
+		"kubelet-client-key":                 path.Join(certificatesDir, konstants.APIServerKubeletClientKeyName),
+		"kubelet-preferred-address-types":    strings.Join(nodeAdressTypes, ","),
+		"proxy-client-cert-file":             path.Join(certificatesDir, konstants.FrontProxyClientCertName),
+		"proxy-client-key-file":              path.Join(certificatesDir, konstants.FrontProxyClientKeyName),
 		"requestheader-allowed-names":        konstants.FrontProxyClientCertCommonName,
-		"requestheader-client-ca-file":       path.Join(frontProxyCACertificateDir, konstants.FrontProxyCACertName),
+		"requestheader-client-ca-file":       path.Join(certificatesDir, konstants.FrontProxyCACertName),
 		"requestheader-extra-headers-prefix": "X-Remote-Extra-",
 		"requestheader-group-headers":        "X-Remote-Group",
 		"requestheader-username-headers":     "X-Remote-User",
 		"secure-port":                        "6443",
 		"service-account-issuer":             "https://kubernetes.default.svc.cluster.local",
-		"service-account-key-file": path.Join(
-			serviceAccountCertificateDir,
-			konstants.ServiceAccountPublicKeyName,
-		),
-		"service-account-signing-key-file": path.Join(
-			serviceAccountCertificateDir,
-			konstants.ServiceAccountPrivateKeyName,
-		),
-		"service-cluster-ip-range": "10.96.0.0/12",
-		"tls-cert-file":            path.Join(apiServerCertificateDir, konstants.APIServerCertName),
-		"tls-private-key-file":     path.Join(apiServerCertificateDir, konstants.APIServerKeyName),
+		"service-account-key-file":           path.Join(certificatesDir, konstants.ServiceAccountPublicKeyName),
+		"service-account-signing-key-file":   path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
+		"service-cluster-ip-range":           "10.96.0.0/12",
+		"tls-cert-file":                      path.Join(certificatesDir, konstants.APIServerCertName),
+		"tls-private-key-file":               path.Join(certificatesDir, konstants.APIServerKeyName),
 	}
 
 	return dr.argsToSlice(hostedControlPlane.Spec.Deployment.APIServer.Args, args)
 }
 
 func (dr *DeploymentReconciler) argsToSlice(args ...map[string]string) []string {
-	return slices.MapToSlice(slices.Assign(args...), func(key string, value string) string {
+	argsSlice := slices.MapToSlice(slices.Assign(args...), func(key string, value string) string {
 		return fmt.Sprintf("--%s=%s", key, value)
 	})
+	sort.Strings(argsSlice)
+	return argsSlice
 }
 
 func (dr *DeploymentReconciler) createAPIServerContainer(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	caCertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	frontProxyCACertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	apiServerCertificateVolume *corev1ac.VolumeApplyConfiguration,
-	frontProxyClientCertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	serviceAccountCertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
+	apiServerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	egressSelectorConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
 	apiPort := corev1ac.ContainerPort().
@@ -401,22 +343,14 @@ func (dr *DeploymentReconciler) createAPIServerContainer(
 		WithProtocol(corev1.ProtocolTCP)
 	//probePort := dr.createProbePort(int(*apiPort.ContainerPort))
 
-	apiServerCertificateVolumeMount := corev1ac.VolumeMount().
-		WithName(*apiServerCertificateVolume.Name).
-		WithMountPath(path.Join(kubeadm.DefaultCertificatesDir, konstants.APIServerCertAndKeyBaseName)).
-		WithReadOnly(true)
-
 	return corev1ac.Container().
 		WithName(konstants.KubeAPIServer).
 		WithImage(fmt.Sprintf("registry.k8s.io/kube-apiserver:%s", hostedControlPlane.Spec.Version)).
 		WithImagePullPolicy(corev1.PullAlways).
+		WithCommand("kube-apiserver").
 		WithArgs(dr.buildAPIServerArgs(
 			hostedControlPlane,
-			caCertificateVolumeMount,
-			frontProxyCACertificateVolumeMount,
-			apiServerCertificateVolumeMount,
-			frontProxyClientCertificateVolumeMount,
-			serviceAccountCertificateVolumeMount,
+			apiServerCertificatesVolumeMount,
 			egressSelectorConfigVolumeMount,
 		)...).
 		WithPorts(apiPort).
@@ -424,11 +358,7 @@ func (dr *DeploymentReconciler) createAPIServerContainer(
 		WithReadinessProbe(dr.createReadinessProbe(apiPort)).
 		WithLivenessProbe(dr.createLivenessProbe(apiPort)).
 		WithVolumeMounts(
-			caCertificateVolumeMount,
-			frontProxyCACertificateVolumeMount,
-			apiServerCertificateVolumeMount,
-			frontProxyClientCertificateVolumeMount,
-			serviceAccountCertificateVolumeMount,
+			apiServerCertificatesVolumeMount,
 			egressSelectorConfigVolumeMount,
 		)
 }
@@ -497,6 +427,7 @@ func (dr *DeploymentReconciler) createSchedulerContainer(
 		WithName(konstants.KubeScheduler).
 		WithImage(fmt.Sprintf("registry.k8s.io/kube-scheduler:%s", hostedControlPlane.Spec.Version)).
 		WithImagePullPolicy(corev1.PullAlways).
+		WithCommand("kube-scheduler").
 		WithArgs(dr.buildSchedulerArgs(hostedControlPlane, schedulerKubeconfigVolumeMount)...).
 		WithPorts(probePort).
 		WithStartupProbe(dr.createStartupProbe(probePort)).
@@ -507,10 +438,7 @@ func (dr *DeploymentReconciler) createSchedulerContainer(
 
 func (dr *DeploymentReconciler) createControllerManagerContainer(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	caCertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	frontProxyCACertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	caCertificateKeyVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	serviceAccountCertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
+	controllerManagerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	controllerManagerKubeconfigVolume *corev1ac.VolumeApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
 	probePort := dr.createProbePort(konstants.KubeControllerManagerPort)
@@ -522,19 +450,17 @@ func (dr *DeploymentReconciler) createControllerManagerContainer(
 		WithName(konstants.KubeControllerManager).
 		WithImage(fmt.Sprintf("registry.k8s.io/kube-controller-manager:%s", hostedControlPlane.Spec.Version)).
 		WithImagePullPolicy(corev1.PullAlways).
+		WithCommand("kube-controller-manager").
 		WithArgs(dr.buildControllerManagerArgs(
 			hostedControlPlane,
-			caCertificateVolumeMount,
-			frontProxyCACertificateVolumeMount,
-			caCertificateKeyVolumeMount,
-			serviceAccountCertificateVolumeMount,
+			controllerManagerCertificatesVolumeMount,
 			controllerManagerKubeconfigVolumeMount,
 		)...).
 		WithPorts(probePort).
 		WithStartupProbe(dr.createStartupProbe(probePort)).
 		WithReadinessProbe(dr.createReadinessProbe(probePort)).
 		WithLivenessProbe(dr.createLivenessProbe(probePort)).
-		WithVolumeMounts(caCertificateVolumeMount, controllerManagerKubeconfigVolumeMount)
+		WithVolumeMounts(controllerManagerCertificatesVolumeMount, controllerManagerKubeconfigVolumeMount)
 }
 
 func (dr *DeploymentReconciler) buildSchedulerArgs(
@@ -545,11 +471,11 @@ func (dr *DeploymentReconciler) buildSchedulerArgs(
 
 	// use map[string]any as soon as https://github.com/kubernetes-sigs/controller-tools/issues/636 is resolved
 	args := map[string]string{
-		"authentication-config":    kubeconfigPath,
-		"authorization-kubeconfig": kubeconfigPath,
-		"kubeconfig":               kubeconfigPath,
-		"bind-address":             "0.0.0.0",
-		"leader-elect":             "true",
+		"authentication-kubeconfig": kubeconfigPath,
+		"authorization-kubeconfig":  kubeconfigPath,
+		"kubeconfig":                kubeconfigPath,
+		"bind-address":              "0.0.0.0",
+		"leader-elect":              "true",
 	}
 
 	return dr.argsToSlice(hostedControlPlane.Spec.Deployment.Scheduler.Args, args)
@@ -557,39 +483,34 @@ func (dr *DeploymentReconciler) buildSchedulerArgs(
 
 func (dr *DeploymentReconciler) buildControllerManagerArgs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	caCertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	frontProxyCACertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	caCertificateKeyVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	serviceAccountCertificateVolumeMount *corev1ac.VolumeMountApplyConfiguration,
+	controllerManagerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	controllerManagerKubeconfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 ) []string {
-	kubeconfigPath := path.Join(*controllerManagerKubeconfigVolumeMount.MountPath, "kubeconfig")
+	kubeconfigPath := path.Join(
+		*controllerManagerKubeconfigVolumeMount.MountPath,
+		konstants.ControllerManagerKubeConfigFileName,
+	)
 
 	// use map[string]any as soon as https://github.com/kubernetes-sigs/controller-tools/issues/636 is resolved
+	certificatesDir := *controllerManagerCertificatesVolumeMount.MountPath
 	args := map[string]string{
-		"allocate-node-cidrs":       "true",
-		"authentication-kubeconfig": kubeconfigPath,
-		"authorization-kubeconfig":  kubeconfigPath,
-		"kubeconfig":                kubeconfigPath,
-		"bind-address":              "0.0.0.0",
-		"leader-elect":              "true",
-		"cluster-name":              hostedControlPlane.Name,
-		"client-ca-file":            *caCertificateVolumeMount.MountPath,
-		"cluster-signing-cert-file": *caCertificateVolumeMount.MountPath,
-		"cluster-signing-key-file":  *caCertificateKeyVolumeMount.MountPath,
-		"controllers":               "*,bootstrapsigner,tokencleaner",
-		"service-cluster-ip-range":  "10.96.0.0/16",
-		"cluster-cidr":              "10.244.0.0/16",
-		"requestheader-client-ca-file": path.Join(
-			*frontProxyCACertificateVolumeMount.MountPath,
-			konstants.FrontProxyCACertName,
-		),
-		"root-ca-file": *caCertificateVolumeMount.MountPath,
-		"service-account-private-key-file": path.Join(
-			*serviceAccountCertificateVolumeMount.MountPath,
-			konstants.ServiceAccountPrivateKeyName,
-		),
-		"use-service-account-credentials": "true",
+		"allocate-node-cidrs":              "true",
+		"authentication-kubeconfig":        kubeconfigPath,
+		"authorization-kubeconfig":         kubeconfigPath,
+		"kubeconfig":                       kubeconfigPath,
+		"bind-address":                     "0.0.0.0",
+		"leader-elect":                     "true",
+		"cluster-name":                     hostedControlPlane.Name,
+		"client-ca-file":                   path.Join(certificatesDir, konstants.CACertName),
+		"cluster-signing-cert-file":        path.Join(certificatesDir, konstants.CACertName),
+		"cluster-signing-key-file":         path.Join(certificatesDir, konstants.CAKeyName),
+		"controllers":                      "*,bootstrapsigner,tokencleaner",
+		"service-cluster-ip-range":         "10.96.0.0/16",
+		"cluster-cidr":                     "10.244.0.0/16",
+		"requestheader-client-ca-file":     path.Join(certificatesDir, konstants.FrontProxyCACertName),
+		"root-ca-file":                     path.Join(certificatesDir, konstants.CACertName),
+		"service-account-private-key-file": path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
+		"use-service-account-credentials":  "true",
 	}
 
 	return dr.argsToSlice(hostedControlPlane.Spec.Deployment.ControllerManager.Args, args)
