@@ -2,7 +2,7 @@ package hostedcontrolplane
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/md5" //nolint:gosec // MD5 is used for checksums, not cryptographic security
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -404,7 +404,6 @@ func (dr *DeploymentReconciler) createAPIServerContainer(
 		WithName(APIServerPortName).
 		WithContainerPort(konstants.KubeAPIServerPort).
 		WithProtocol(corev1.ProtocolTCP)
-	// probePort := dr.createProbePort(int(*apiPort.ContainerPort))
 
 	return corev1ac.Container().
 		WithName(konstants.KubeAPIServer).
@@ -476,7 +475,7 @@ func (dr *DeploymentReconciler) createProbePort(
 ) *corev1ac.ContainerPortApplyConfiguration {
 	containerPort := corev1ac.ContainerPort().
 		WithName(fmt.Sprintf("%s-probe-port", prefix)). // TODO: use konstants.probePort when available
-		WithContainerPort(int32(port)).
+		WithContainerPort(int32(port)).                 //nolint:gosec // port is expected to be within int32 range
 		WithProtocol(corev1.ProtocolTCP)
 	return containerPort
 }
