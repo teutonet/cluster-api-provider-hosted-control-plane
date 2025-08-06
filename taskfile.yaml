@@ -86,7 +86,6 @@ tasks:
   test:
     deps:
       - artifacts-dir
-      - manifests
       - generate
       - format
     sources:
@@ -117,6 +116,7 @@ tasks:
 
   build:
     deps:
+      - tidy
       - build-dir
       - manifests
       - generate
@@ -143,6 +143,8 @@ tasks:
         kubeConfig: /run/user/1000/gopass/k8s/teuto/t8se-mgmt-dev/kube-config-oidc
   generate-deepcopy:
     desc: Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+    deps:
+      - tidy
     sources:
       - api/**/*.go
       - exclude: api/**/zz_generated.deepcopy.go
@@ -153,6 +155,8 @@ tasks:
       - api/**/zz_generated.deepcopy.go
   generate-conversion:
     desc: Generate code containing Conversion method implementations.
+    deps:
+      - tidy
     sources:
       - api/**/*.go
       - exclude: api/**/zz_generated.conversion.go
@@ -167,6 +171,13 @@ tasks:
     generates:
       - api/**/zz_generated.conversion.go
 
+  tidy:
+    internal: true
+    sources:
+      - go.mod
+    generates:
+      - go.sum
+    cmd: go mod tidy
   clean-files:
     internal: true
     cmd: find -type f -size 0 -name '*.go' -delete
@@ -220,6 +231,7 @@ tasks:
       - exclude: api/**/zz_generated.deepcopy.go
       - exclude: api/**/zz_generated.conversion.go
       - pkg/**/*.go
+      - exclude: pkg/**/*_test.go
     cmds:
       - "{{ .controllerGenCmd }} rbac:roleName=manager-role paths=./api/... paths=./pkg/... output:rbac:artifacts:config={{ .buildDir }}/rbac"
     generates:
@@ -232,6 +244,7 @@ tasks:
       - exclude: api/**/zz_generated.deepcopy.go
       - exclude: api/**/zz_generated.conversion.go
       - pkg/**/*.go
+      - exclude: pkg/**/*_test.go
     cmds:
       - "{{ .controllerGenCmd }} webhook paths=./api/... paths=./pkg/... output:webhook:artifacts:config={{ .buildDir }}/webhooks"
     generates:
@@ -244,12 +257,12 @@ tasks:
       - exclude: api/**/zz_generated.deepcopy.go
       - exclude: api/**/zz_generated.conversion.go
       - pkg/**/*.go
+      - exclude: pkg/**/*_test.go
     cmds:
       - "{{ .controllerGenCmd }} crd paths=./api/... paths=./pkg/... output:crd:artifacts:config={{ .buildDir }}/crds"
     generates:
       - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanes.yaml"
       - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanetemplates.yaml"
-
   manifest-concat:
     internal: true
     desc: Concatenate all generated manifests into a single control-plane-components.yaml file

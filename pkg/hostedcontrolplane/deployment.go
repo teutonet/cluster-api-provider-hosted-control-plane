@@ -2,6 +2,9 @@ package hostedcontrolplane
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"path"
@@ -15,8 +18,9 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
+	appsacv1 "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -31,10 +35,61 @@ type DeploymentReconciler struct {
 
 var (
 	egressSelectorConfigMountPath       = "/etc/kubernetes/egress/configurations"
-	konnectivitySocketPath              = "/run/konnectivity"
 	EgressSelectorConfigurationFileName = "egress-selector-configuration.yaml"
 	APIServerPortName                   = "api"
+	ErrSecretFetchFailed                = errors.New("failed to fetch secret")
 )
+
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get
+
+func (dr *DeploymentReconciler) calculateSecretChecksum(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) (string, error) {
+	secretNames := []string{
+		names.GetCASecretName(hostedControlPlane.Name),
+		names.GetFrontProxyCASecretName(hostedControlPlane.Name),
+		names.GetFrontProxySecretName(hostedControlPlane.Name),
+		names.GetServiceAccountSecretName(hostedControlPlane.Name),
+		names.GetAPIServerSecretName(hostedControlPlane.Name),
+		names.GetAPIServerKubeletClientSecretName(hostedControlPlane.Name),
+		names.GetKubeconfigSecretName(hostedControlPlane.Name, konstants.KubeScheduler),
+		names.GetKubeconfigSecretName(hostedControlPlane.Name, konstants.KubeControllerManager),
+	}
+
+	secretChecksums := make([]string, 0, len(secretNames))
+	for _, secretName := range secretNames {
+		secret, err := dr.kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
+			Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			return "", fmt.Errorf("%w: %s", ErrSecretFetchFailed, secretName)
+		}
+
+		//nolint:gosec // MD5 is used for checksums, not cryptographic security
+		hasher := md5.New()
+
+		keys := make([]string, 0, len(secret.Data))
+		for key := range secret.Data {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		for _, key := range keys {
+			hasher.Write([]byte(key))
+			hasher.Write(secret.Data[key])
+		}
+		secretChecksums = append(secretChecksums, hex.EncodeToString(hasher.Sum(nil)))
+	}
+	sort.Strings(secretChecksums)
+
+	//nolint:gosec // MD5 is used for checksums, not cryptographic security
+	finalHasher := md5.New()
+	for _, checksum := range secretChecksums {
+		finalHasher.Write([]byte(checksum))
+	}
+
+	return hex.EncodeToString(finalHasher.Sum(nil)), nil
+}
 
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=create;update;patch
 
@@ -63,14 +118,22 @@ func (dr *DeploymentReconciler) ReconcileDeployment(
 				WithMountPath(egressSelectorConfigMountPath).
 				WithReadOnly(true)
 
-			deployment := appsv1ac.Deployment(hostedControlPlane.Name, hostedControlPlane.Namespace).
+			secretChecksum, err := dr.calculateSecretChecksum(ctx, hostedControlPlane)
+			if err != nil {
+				return fmt.Errorf("failed to calculate secret checksum: %w", err)
+			}
+
+			deployment := appsacv1.Deployment(hostedControlPlane.Name, hostedControlPlane.Namespace).
 				WithLabels(names.GetLabels(hostedControlPlane.Name)).
-				WithSpec(appsv1ac.DeploymentSpec().
+				WithSpec(appsacv1.DeploymentSpec().
 					WithReplicas(*hostedControlPlane.Spec.Replicas).
 					WithSelector(metav1ac.LabelSelector().
 						WithMatchLabels(names.GetSelector(hostedControlPlane.Name)),
 					).
 					WithTemplate(corev1ac.PodTemplateSpec().
+						WithAnnotations(map[string]string{
+							"checksum/secrets": secretChecksum,
+						}).
 						WithLabels(names.GetLabels(hostedControlPlane.Name)).
 						WithSpec(corev1ac.PodSpec().
 							WithTopologySpreadConstraints(corev1ac.TopologySpreadConstraint().
@@ -112,7 +175,7 @@ func (dr *DeploymentReconciler) ReconcileDeployment(
 				).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane))
 
-			_, err := dr.kubernetesClient.AppsV1().Deployments(hostedControlPlane.Namespace).Apply(ctx,
+			_, err = dr.kubernetesClient.AppsV1().Deployments(hostedControlPlane.Namespace).Apply(ctx,
 				deployment,
 				applyOptions,
 			)
@@ -341,7 +404,7 @@ func (dr *DeploymentReconciler) createAPIServerContainer(
 		WithName(APIServerPortName).
 		WithContainerPort(konstants.KubeAPIServerPort).
 		WithProtocol(corev1.ProtocolTCP)
-	//probePort := dr.createProbePort(int(*apiPort.ContainerPort))
+	// probePort := dr.createProbePort(int(*apiPort.ContainerPort))
 
 	return corev1ac.Container().
 		WithName(konstants.KubeAPIServer).
@@ -407,9 +470,12 @@ func (dr *DeploymentReconciler) createProbe(
 	)
 }
 
-func (dr *DeploymentReconciler) createProbePort(port int) *corev1ac.ContainerPortApplyConfiguration {
+func (dr *DeploymentReconciler) createProbePort(
+	prefix string,
+	port int,
+) *corev1ac.ContainerPortApplyConfiguration {
 	containerPort := corev1ac.ContainerPort().
-		WithName("probe-port"). // TODO: use konstants.probePort when available
+		WithName(fmt.Sprintf("%s-probe-port", prefix)). // TODO: use konstants.probePort when available
 		WithContainerPort(int32(port)).
 		WithProtocol(corev1.ProtocolTCP)
 	return containerPort
@@ -419,10 +485,10 @@ func (dr *DeploymentReconciler) createSchedulerContainer(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	schedulerKubeconfigVolume *corev1ac.VolumeApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
-	probePort := dr.createProbePort(konstants.KubeSchedulerPort)
 	schedulerKubeconfigVolumeMount := corev1ac.VolumeMount().
 		WithName(*schedulerKubeconfigVolume.Name).
 		WithMountPath(konstants.KubernetesDir)
+	probePort := dr.createProbePort("s", konstants.KubeSchedulerPort)
 	return corev1ac.Container().
 		WithName(konstants.KubeScheduler).
 		WithImage(fmt.Sprintf("registry.k8s.io/kube-scheduler:%s", hostedControlPlane.Spec.Version)).
@@ -441,11 +507,10 @@ func (dr *DeploymentReconciler) createControllerManagerContainer(
 	controllerManagerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	controllerManagerKubeconfigVolume *corev1ac.VolumeApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
-	probePort := dr.createProbePort(konstants.KubeControllerManagerPort)
 	controllerManagerKubeconfigVolumeMount := corev1ac.VolumeMount().
 		WithName(*controllerManagerKubeconfigVolume.Name).
 		WithMountPath(konstants.KubernetesDir)
-
+	probePort := dr.createProbePort("c", konstants.KubeControllerManagerPort)
 	return corev1ac.Container().
 		WithName(konstants.KubeControllerManager).
 		WithImage(fmt.Sprintf("registry.k8s.io/kube-controller-manager:%s", hostedControlPlane.Spec.Version)).
