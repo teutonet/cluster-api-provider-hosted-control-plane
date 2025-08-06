@@ -24,11 +24,11 @@ type Management struct {
 var _ ManagementCluster = &Management{}
 
 func (m *Management) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	return m.Client.Get(ctx, key, obj, opts...)
+	return fmt.Errorf("failed to get object: %w", m.Client.Get(ctx, key, obj, opts...))
 }
 
 func (m *Management) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	return m.Client.List(ctx, list, opts...)
+	return fmt.Errorf("failed to list objects: %w", m.Client.List(ctx, list, opts...))
 }
 
 func (m *Management) GetWorkloadCluster(ctx context.Context, clusterKey client.ObjectKey) (WorkloadCluster, error) {

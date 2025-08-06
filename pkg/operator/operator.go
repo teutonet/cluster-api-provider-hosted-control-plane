@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/blang/semver/v4"
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	"github.com/go-logr/logr"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
@@ -25,9 +24,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	semconv "go.opentelemetry.io/otel/semconv/v1.34.0"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -128,23 +125,6 @@ func configureLogging(ctx context.Context, format etc.LogFormat) context.Context
 	logrLogger := logr.FromSlogHandler(handler)
 	log.SetLogger(logrLogger)
 	return logr.NewContextWithSlogLogger(logr.NewContext(ctx, logrLogger), slog.New(handler))
-}
-
-func getKubernetesServerVersion(config *rest.Config) (semver.Version, error) {
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
-	if err != nil {
-		return semver.Version{}, fmt.Errorf("failed to create discoveryClient: %w", err)
-	}
-	serverVersion, err := discoveryClient.ServerVersion()
-	if err != nil {
-		return semver.Version{}, fmt.Errorf("failed to get Kubernetes server version: %w", err)
-	}
-
-	kubernetesServerVersion, err := semver.ParseTolerant(serverVersion.GitVersion)
-	if err != nil {
-		return semver.Version{}, fmt.Errorf("failed to parse Kubernetes server version: %w", err)
-	}
-	return kubernetesServerVersion, nil
 }
 
 func setupControllers(

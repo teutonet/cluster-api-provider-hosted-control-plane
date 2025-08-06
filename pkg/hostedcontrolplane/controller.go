@@ -204,7 +204,7 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				if err == nil && isPaused {
 					r.pauseDeployment(ctx, hostedControlPlane)
 				}
-				return ctrl.Result{}, err
+				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to verify paused condition: %w", err)
 			}
 
 			if !hostedControlPlane.DeletionTimestamp.IsZero() {
@@ -253,7 +253,7 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 			if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.Client,
 				hostedControlPlane, hostedControlPlaneFinalizer,
 			); err != nil || finalizerAdded {
-				return ctrl.Result{}, err
+				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to ensure finalizer: %w", err)
 			}
 
 			type Phase struct {
@@ -368,30 +368,6 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				}
 			}
 
-			// workloadCluster, err := r.managementCluster.GetWorkloadCluster(ctx, client.ObjectKeyFromObject(cluster))
-			// if err != nil {
-			//	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-			//}
-			//
-			// if err := workloadCluster.AllowBootstrapTokensToGetNodes(ctx); err != nil {
-			//	return ctrl.Result{}, fmt.Errorf("failed to set role and role binding for kubeadm: %w", err)
-			//}
-			//
-			// parsedVersion, err := version.ParseMajorMinorPatchTolerant(controlPlane.KCP.Spec.Version)
-			// if err != nil {
-			//	return ctrl.Result{}, errors.Wrapf(err, "failed to parse kubernetes version %q", controlPlane.KCP.Spec.Version)
-			//}
-			//
-			// if hostedControlPlane.Spec.KubeProxy.Enabled {
-			//	if err := workloadCluster.ReconcileKubeProxy(ctx, hostedControlPlane, parsedVersion); err != nil {
-			//		return ctrl.Result{}, fmt.Errorf("failed to reconcile kube-proxy: %w", err)
-			//	}
-			//}
-			//
-			// if err := r.reconcileControlPlaneStatusDeployment(ctx, hostedControlPlane); err != nil {
-			//	return ctrl.Result{}, err
-			//}
-
 			return ctrl.Result{}, nil
 		},
 	)
@@ -493,7 +469,7 @@ func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 	)
 }
 
-func ToYaml(o runtime.Object) (*bytes.Buffer, error) {
+func ToYaml(obj runtime.Object) (*bytes.Buffer, error) {
 	scheme := runtime.NewScheme()
 	encoder := json.NewSerializerWithOptions(json.SimpleMetaFactory{}, scheme, scheme, json.SerializerOptions{
 		Yaml:   true,
@@ -502,7 +478,7 @@ func ToYaml(o runtime.Object) (*bytes.Buffer, error) {
 	})
 
 	buf := bytes.NewBuffer([]byte{})
-	if err := encoder.Encode(o, buf); err != nil {
+	if err := encoder.Encode(obj, buf); err != nil {
 		return nil, fmt.Errorf("failed to encode egress selector config: %w", err)
 	}
 	return buf, nil
@@ -570,7 +546,7 @@ func (r *HostedControlPlaneReconciler) reconcileHTTPRoute(
 
 func (r *HostedControlPlaneReconciler) updateStatus(
 	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
+	_ *v1alpha1.HostedControlPlane,
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "UpdateStatus",
 		func(ctx context.Context, span trace.Span) error {
@@ -592,35 +568,4 @@ func (r *HostedControlPlaneReconciler) pauseDeployment(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 ) {
 	// TODO: Implement deployment pause logic
-}
-
-//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get
-
-func (r *HostedControlPlaneReconciler) reconcileControlPlaneStatusDeployment(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileClusterStatusKubeadmControlPlane",
-		func(ctx context.Context, span trace.Span) error {
-			deployment := &v1.Deployment{ObjectMeta: metav1.ObjectMeta{
-				Namespace: hostedControlPlane.Namespace,
-				Name:      hostedControlPlane.Name,
-			}}
-			err := r.Client.Get(ctx, client.ObjectKeyFromObject(deployment), deployment)
-			if err != nil {
-				if !apierrors.IsNotFound(err) {
-					return fmt.Errorf("failed to get Deployment for HostedControlPlane %q: %w",
-						client.ObjectKeyFromObject(hostedControlPlane),
-						err,
-					)
-				} else {
-					return nil
-				}
-			}
-
-			// TODO: get conditions of deployment into sensible conditions on us
-
-			return nil
-		},
-	)
 }

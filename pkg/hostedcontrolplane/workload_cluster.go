@@ -16,7 +16,7 @@ import (
 )
 
 type WorkloadCluster interface {
-	ReconcileKubeProxy(context.Context, *v1alpha1.HostedControlPlane) error
+	ReconcileKubeProxy(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error
 }
 
 type Workload struct {
@@ -32,36 +32,36 @@ const (
 )
 
 func (w *Workload) ReconcileKubeProxy(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
-	ds := &appsv1.DaemonSet{
+	daemonSet := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kubeProxyKey,
 			Namespace: metav1.NamespaceSystem,
 		},
 	}
 
-	if err := w.Client.Get(ctx, client.ObjectKeyFromObject(ds), ds); err != nil {
+	if err := w.Client.Get(ctx, client.ObjectKeyFromObject(daemonSet), daemonSet); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to determine if %s DaemonSet already exists: %w", kubeProxyKey, err)
 	}
-	container := findKubeProxyContainer(ds)
+	container := findKubeProxyContainer(daemonSet)
 	if container == nil {
 		return nil
 	}
 
 	newImageName, err := containerutil.ModifyImageTag(container.Image, hostedControlPlane.Spec.Version)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to modify image tag: %w", err)
 	}
 
 	if container.Image != newImageName {
-		helper, err := patch.NewHelper(ds, w.Client)
+		helper, err := patch.NewHelper(daemonSet, w.Client)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to create patch helper: %w", err)
 		}
-		patchKubeProxyImage(ds, newImageName)
-		return helper.Patch(ctx, ds)
+		patchKubeProxyImage(daemonSet, newImageName)
+		return fmt.Errorf("failed to patch daemon set: %w", helper.Patch(ctx, daemonSet))
 	}
 	return nil
 }

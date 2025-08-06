@@ -137,9 +137,9 @@ linters:
         - pkg: sigs.k8s.io/cluster-api/util/secret
           alias: capisecretutil
         # hcp
-        - pkg: github.com/teutonet/cluster-api-control-plane-provder-hcp/pkg/util/errors
+        - pkg: github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors
           alias: errorsUtil
-        - pkg: github.com/teutonet/cluster-api-control-plane-provder-hcp/pkg/operator/util/controller
+        - pkg: github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/controller
           alias: controllerUtil
 
     nolintlint:
@@ -186,9 +186,9 @@ linters:
       strconcat: false
     wrapcheck:
       ignore-sig-regexps:
-        - func github.com/teutonet/cluster-api-control-plane-provder-hcp/pkg/util/tracing\.WithSpan[0-9]*
+        - func github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing\.WithSpan[0-9]*
       extra-ignore-sigs:
-        - func github.com/teutonet/cluster-api-control-plane-provder-hcp/pkg/util/errors.IfErrErrorf
+        - func github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors.IfErrErrorf
   exclusions:
     generated: strict
     rules:
@@ -227,27 +227,6 @@ linters:
       #- linters:
       #    - gocritic
       #  text: "appendAssign: append result not assigned to the same slice"
-      # Disable linters for conversion
-      - linters:
-          - staticcheck
-        text: "SA1019: in.(.+) is deprecated"
-        path: &conversionFiles .*(api|types)\/.*\/.*\/.*_conversion.*\.go$
-      - linters:
-          - revive
-        text: "var-naming: don't use underscores in Go names;"
-        path: *conversionFiles
-      - linters:
-          - revive
-        text: "receiver-naming: receiver name"
-        path: *conversionFiles
-      - linters:
-          - stylecheck
-        text: "ST1003: should not use underscores in Go names;"
-        path: *conversionFiles
-      - linters:
-          - stylecheck
-        text: "ST1016: methods on the same type should have the same receiver name"
-        path: *conversionFiles
       # We don't care about defer in for loops in test files.
       - linters:
           - gocritic
