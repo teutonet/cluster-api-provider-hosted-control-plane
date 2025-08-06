@@ -6,7 +6,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -133,9 +133,9 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 						kubeconfig.ApiServerEndpoint,
 						kubeconfig.ClusterName,
 						kubeconfig.Name,
-						certSecret.Data[v1.TLSCertKey],
-						certSecret.Data[v1.TLSPrivateKeyKey],
-						caSecret.Data[v1.TLSCertKey],
+						certSecret.Data[corev1.TLSCertKey],
+						certSecret.Data[corev1.TLSPrivateKeyKey],
+						caSecret.Data[corev1.TLSCertKey],
 					),
 				})
 
