@@ -1,6 +1,9 @@
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+)
 
 //+kubebuilder:object:root=true
 //+kubebuilder:resource:path=hostedcontrolplanetemplates,scope=Namespaced,categories=cluster-api,shortName=hcpt
@@ -34,6 +37,8 @@ type HostedControlPlaneTemplateResource struct {
 type HostedControlPlaneTemplateResourceSpec struct {
 	//+kubebuilder:validation:Optional
 	Deployment HostedControlPlaneDeployment `json:"deployment,omitempty"`
+	//+kubebuilder:validation:Optional
+	ControlPlaneEndpoint *capiv1.APIEndpoint `json:"controlPlaneEndpoint,omitempty"`
 }
 
 //+kubebuilder:object:root=true

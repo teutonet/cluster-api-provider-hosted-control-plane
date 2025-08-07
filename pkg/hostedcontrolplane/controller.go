@@ -93,6 +93,7 @@ type HostedControlPlaneReconciler struct {
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=watch;list
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=watch;list
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes,verbs=watch;list
+//+kubebuilder:rbac:groups=druid.gardener.cloud,resources=etcds,verbs=create;get;update;patch;delete;watch;list
 
 func (r *HostedControlPlaneReconciler) SetupWithManager(
 	mgr ctrl.Manager,
@@ -256,6 +257,17 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to ensure finalizer: %w", err)
 			}
 
+			if hostedControlPlane.Spec.ControlPlaneEndpoint == nil {
+				if cluster.Spec.ControlPlaneEndpoint.IsZero() {
+					hostedControlPlane.Spec.ControlPlaneEndpoint = &capiv1.APIEndpoint{
+						Host: cluster.Name + "." + cluster.Namespace + ".svc",
+						Port: 443,
+					}
+				} else {
+					hostedControlPlane.Spec.ControlPlaneEndpoint = &cluster.Spec.ControlPlaneEndpoint
+				}
+			}
+
 			type Phase struct {
 				Reconcile    func(context.Context, *v1alpha1.HostedControlPlane) error
 				Condition    capiv1.ConditionType
@@ -309,6 +321,18 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					Reconcile:    r.reconcileKonnectivityConfig,
 					Condition:    v1alpha1.KonnectivityConfigReadyCondition,
 					FailedReason: v1alpha1.KonnectivityConfigFailedReason,
+				},
+				{
+					Name: "etcd cluster",
+					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
+						etcdClusterReconciler := &EtcdClusterReconciler{
+							kubernetesClient: r.KubernetesClient,
+							client:           r.Client,
+						}
+						return etcdClusterReconciler.ReconcileEtcdCluster(ctx, hostedControlPlane)
+					},
+					Condition:    v1alpha1.EtcdClusterReadyCondition,
+					FailedReason: v1alpha1.EtcdClusterFailedReason,
 				},
 				{
 					Name: "deployment",

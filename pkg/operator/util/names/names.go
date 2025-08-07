@@ -102,6 +102,18 @@ func GetKonnectivityClientSecretName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-konnectivity-client", controlPlaneName)
 }
 
+func GetControllerCertificateName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-controller", controlPlaneName)
+}
+
+func GetControllerSecretName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-controller", controlPlaneName)
+}
+
 func GetKubeconfigSecretName(controlPlaneName string, kubeconfigName string) string {
 	return fmt.Sprintf("%s-%s-kubeconfig", controlPlaneName, kubeconfigName)
+}
+
+func GetEtcdClusterName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-etcd", controlPlaneName)
 }

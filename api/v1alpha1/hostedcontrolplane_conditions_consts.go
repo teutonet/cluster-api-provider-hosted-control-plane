@@ -35,4 +35,6 @@ const (
 	ClusterAdminRBACFailedReason                          = "ClusterAdminRBACFailed"
 	HTTPRouteReadyCondition          capiv1.ConditionType = "HTTPRouteReady"
 	HTTPRouteFailedReason                                 = "HTTPRouteFailed"
+	EtcdClusterReadyCondition        capiv1.ConditionType = "EtcdClusterReady"
+	EtcdClusterFailedReason                               = "EtcdClusterFailed"
 )

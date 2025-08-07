@@ -342,8 +342,6 @@ func (dr *DeploymentReconciler) buildAPIServerArgs(
 	apiServerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	egressSelectorConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 ) []string {
-	// TODO: add etcd flags
-
 	certificatesDir := *apiServerCertificatesVolumeMount.MountPath
 	egressSelectorConfigDir := *egressSelectorConfigVolumeMount.MountPath
 	nodeAdressTypes := slices.Map([]corev1.NodeAddressType{
@@ -382,6 +380,10 @@ func (dr *DeploymentReconciler) buildAPIServerArgs(
 		"service-cluster-ip-range":           "10.96.0.0/12",
 		"tls-cert-file":                      path.Join(certificatesDir, konstants.APIServerCertName),
 		"tls-private-key-file":               path.Join(certificatesDir, konstants.APIServerKeyName),
+		"etcd-servers":                       "https://127.0.0.1:2379",
+		"etcd-cafile":                        path.Join(certificatesDir, konstants.CACertName),
+		"etcd-certfile":                      path.Join(certificatesDir, konstants.APIServerCertName),
+		"etcd-keyfile":                       path.Join(certificatesDir, konstants.APIServerKeyName),
 	}
 
 	return dr.argsToSlice(hostedControlPlane.Spec.Deployment.APIServer.Args, args)

@@ -3,6 +3,7 @@ package operator
 
 import (
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
+	etcdv1alpha1 "github.com/gardener/etcd-druid/api/core/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -21,6 +22,7 @@ func NewScheme() (*runtime.Scheme, error) {
 		v1alpha1.AddToScheme,
 		certmanagerv1.AddToScheme,
 		gwv1.Install,
+		etcdv1alpha1.AddToScheme,
 	}
 
 	for _, f := range addToSchemeFuncs {
