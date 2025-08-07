@@ -260,6 +260,17 @@ func (cr *CertificateReconciler) ReconcileCertificates(
 						WithOrganizations(konstants.SystemPrivilegedGroup),
 					),
 				},
+				{
+					name: names.GetControllerCertificateName(hostedControlPlane.Name),
+					spec: createCertificateSpec(
+						names.GetCAIssuerName(hostedControlPlane.Name),
+						"system:controller",
+						names.GetControllerSecretName(hostedControlPlane.Name),
+						certmanagerv1.UsageClientAuth,
+					).WithSubject(certmanagerv1ac.X509Subject().
+						WithOrganizations(konstants.SystemPrivilegedGroup),
+					),
+				},
 			}
 
 			for _, cert := range certificates {

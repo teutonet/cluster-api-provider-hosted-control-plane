@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
@@ -44,7 +45,8 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (err 
 		Scheme:                        scheme,
 		LeaderElectionReleaseOnCancel: true,
 		Metrics: metricsserver.Options{
-			BindAddress: "127.0.0.1:8080",
+			BindAddress:    "0.0.0.0:8080",
+			FilterProvider: filters.WithAuthenticationAndAuthorization,
 		},
 		HealthProbeBindAddress: ":8081",
 		WebhookServer: webhook.NewServer(webhook.Options{

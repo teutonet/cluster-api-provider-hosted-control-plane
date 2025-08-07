@@ -76,6 +76,13 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 					ClusterName:           hostedControlPlane.Name,
 					ApiServerEndpoint:     localEndpoint,
 				},
+				{
+					Name:                  "controller",
+					CertificateSecretName: names.GetControllerSecretName(hostedControlPlane.Name),
+					CertName:              names.GetControllerCertificateName(hostedControlPlane.Name),
+					ClusterName:           hostedControlPlane.Name,
+					ApiServerEndpoint:     localEndpoint,
+				},
 			}
 
 			for _, kubeconfig := range kubeconfigs {
