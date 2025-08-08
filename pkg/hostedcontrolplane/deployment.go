@@ -2,9 +2,6 @@ package hostedcontrolplane
 
 import (
 	"context"
-	"crypto/md5" //nolint:gosec // MD5 is used for checksums, not cryptographic security
-	"encoding/hex"
-	"errors"
 	"fmt"
 	"math"
 	"path"
@@ -14,11 +11,11 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsacv1 "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -37,59 +34,7 @@ var (
 	egressSelectorConfigMountPath       = "/etc/kubernetes/egress/configurations"
 	EgressSelectorConfigurationFileName = "egress-selector-configuration.yaml"
 	APIServerPortName                   = "api"
-	ErrSecretFetchFailed                = errors.New("failed to fetch secret")
 )
-
-//+kubebuilder:rbac:groups="",resources=secrets,verbs=get
-
-func (dr *DeploymentReconciler) calculateSecretChecksum(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) (string, error) {
-	secretNames := []string{
-		names.GetCASecretName(hostedControlPlane.Name),
-		names.GetFrontProxyCASecretName(hostedControlPlane.Name),
-		names.GetFrontProxySecretName(hostedControlPlane.Name),
-		names.GetServiceAccountSecretName(hostedControlPlane.Name),
-		names.GetAPIServerSecretName(hostedControlPlane.Name),
-		names.GetAPIServerKubeletClientSecretName(hostedControlPlane.Name),
-		names.GetKubeconfigSecretName(hostedControlPlane.Name, konstants.KubeScheduler),
-		names.GetKubeconfigSecretName(hostedControlPlane.Name, konstants.KubeControllerManager),
-	}
-
-	secretChecksums := make([]string, 0, len(secretNames))
-	for _, secretName := range secretNames {
-		secret, err := dr.kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
-			Get(ctx, secretName, metav1.GetOptions{})
-		if err != nil {
-			return "", fmt.Errorf("%w: %s", ErrSecretFetchFailed, secretName)
-		}
-
-		//nolint:gosec // MD5 is used for checksums, not cryptographic security
-		hasher := md5.New()
-
-		keys := make([]string, 0, len(secret.Data))
-		for key := range secret.Data {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-
-		for _, key := range keys {
-			hasher.Write([]byte(key))
-			hasher.Write(secret.Data[key])
-		}
-		secretChecksums = append(secretChecksums, hex.EncodeToString(hasher.Sum(nil)))
-	}
-	sort.Strings(secretChecksums)
-
-	//nolint:gosec // MD5 is used for checksums, not cryptographic security
-	finalHasher := md5.New()
-	for _, checksum := range secretChecksums {
-		finalHasher.Write([]byte(checksum))
-	}
-
-	return hex.EncodeToString(finalHasher.Sum(nil)), nil
-}
 
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=create;update;patch
 
@@ -118,9 +63,59 @@ func (dr *DeploymentReconciler) ReconcileDeployment(
 				WithMountPath(egressSelectorConfigMountPath).
 				WithReadOnly(true)
 
-			secretChecksum, err := dr.calculateSecretChecksum(ctx, hostedControlPlane)
+			template := corev1ac.PodTemplateSpec().
+				WithLabels(names.GetLabels(hostedControlPlane.Name)).
+				WithSpec(corev1ac.PodSpec().
+					WithTopologySpreadConstraints(corev1ac.TopologySpreadConstraint().
+						WithTopologyKey("kubernetes.io/hostname").
+						WithLabelSelector(metav1ac.LabelSelector().
+							WithMatchLabels(names.GetSelector(hostedControlPlane.Name)),
+						).
+						WithMaxSkew(1).
+						WithWhenUnsatisfiable(corev1.ScheduleAnyway),
+					).
+					WithAutomountServiceAccountToken(false).
+					WithEnableServiceLinks(false).
+					WithContainers(
+						dr.createAPIServerContainer(
+							hostedControlPlane,
+							apiServerCertificatesVolumeMount,
+							egressSelectorConfigVolumeMount,
+						),
+						dr.createControllerManagerContainer(
+							hostedControlPlane,
+							controllerManagerCertificatesVolumeMount,
+							controllerManagerKubeconfigVolume,
+						),
+						dr.createSchedulerContainer(
+							hostedControlPlane,
+							schedulerKubeconfigVolume,
+						),
+						// TODO: add konnectivity container
+					).
+					WithVolumes(
+						apiServerCertificatesVolume,
+						controllerManagerCertificatesVolume,
+						egressSelectorConfigVolume,
+						schedulerKubeconfigVolume,
+						controllerManagerKubeconfigVolume,
+					),
+				)
+
+			secretChecksum, err := util.CalculateSecretChecksum(ctx, dr.kubernetesClient,
+				hostedControlPlane.Namespace,
+				extractSecretNames(template.Spec.Volumes),
+			)
 			if err != nil {
 				return fmt.Errorf("failed to calculate secret checksum: %w", err)
+			}
+
+			configMapChecksum, err := util.CalculateConfigMapChecksum(ctx, dr.kubernetesClient,
+				hostedControlPlane.Namespace,
+				extractConfigMapNames(template.Spec.Volumes),
+			)
+			if err != nil {
+				return fmt.Errorf("failed to calculate configmap checksum: %w", err)
 			}
 
 			deployment := appsacv1.Deployment(hostedControlPlane.Name, hostedControlPlane.Namespace).
@@ -130,48 +125,10 @@ func (dr *DeploymentReconciler) ReconcileDeployment(
 					WithSelector(metav1ac.LabelSelector().
 						WithMatchLabels(names.GetSelector(hostedControlPlane.Name)),
 					).
-					WithTemplate(corev1ac.PodTemplateSpec().
-						WithAnnotations(map[string]string{
-							"checksum/secrets": secretChecksum,
-						}).
-						WithLabels(names.GetLabels(hostedControlPlane.Name)).
-						WithSpec(corev1ac.PodSpec().
-							WithTopologySpreadConstraints(corev1ac.TopologySpreadConstraint().
-								WithTopologyKey("kubernetes.io/hostname").
-								WithLabelSelector(metav1ac.LabelSelector().
-									WithMatchLabels(names.GetSelector(hostedControlPlane.Name)),
-								).
-								WithMaxSkew(1).
-								WithWhenUnsatisfiable(corev1.ScheduleAnyway),
-							).
-							WithAutomountServiceAccountToken(false).
-							WithEnableServiceLinks(false).
-							WithContainers(
-								dr.createAPIServerContainer(
-									hostedControlPlane,
-									apiServerCertificatesVolumeMount,
-									egressSelectorConfigVolumeMount,
-								),
-								dr.createControllerManagerContainer(
-									hostedControlPlane,
-									controllerManagerCertificatesVolumeMount,
-									controllerManagerKubeconfigVolume,
-								),
-								dr.createSchedulerContainer(
-									hostedControlPlane,
-									schedulerKubeconfigVolume,
-								),
-								// TODO: add konnectivity container
-							).
-							WithVolumes(
-								apiServerCertificatesVolume,
-								controllerManagerCertificatesVolume,
-								egressSelectorConfigVolume,
-								schedulerKubeconfigVolume,
-								controllerManagerKubeconfigVolume,
-							),
-						),
-					),
+					WithTemplate(template.WithAnnotations(map[string]string{
+						"checksum/secrets":    secretChecksum,
+						"checksum/configmaps": configMapChecksum,
+					})),
 				).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane))
 
@@ -183,6 +140,57 @@ func (dr *DeploymentReconciler) ReconcileDeployment(
 			return errorsUtil.IfErrErrorf("failed to patch deployment: %w", err)
 		},
 	)
+}
+
+func extractNames(
+	volumes []corev1ac.VolumeApplyConfiguration,
+	directAccess func(corev1ac.VolumeApplyConfiguration) string,
+	projectedAccess func(configuration *corev1ac.VolumeProjectionApplyConfiguration) string,
+) []string {
+	return slices.Flatten(slices.Map(volumes, func(volume corev1ac.VolumeApplyConfiguration, _ int) []string {
+		if value := directAccess(volume); value != "" {
+			return []string{value}
+		}
+		if volume.Projected != nil && volume.Projected.Sources != nil {
+			return slices.FilterMap(volume.Projected.Sources,
+				func(source corev1ac.VolumeProjectionApplyConfiguration, _ int) (string, bool) {
+					if value := projectedAccess(&source); value != "" {
+						return value, true
+					}
+					return "", false
+				},
+			)
+		}
+		return nil
+	}))
+}
+
+func extractSecretNames(volumes []corev1ac.VolumeApplyConfiguration) []string {
+	return extractNames(volumes, func(volume corev1ac.VolumeApplyConfiguration) string {
+		if volume.Secret != nil {
+			return *volume.Secret.SecretName
+		}
+		return ""
+	}, func(configuration *corev1ac.VolumeProjectionApplyConfiguration) string {
+		if configuration.Secret != nil {
+			return *configuration.Secret.Name
+		}
+		return ""
+	})
+}
+
+func extractConfigMapNames(volumes []corev1ac.VolumeApplyConfiguration) []string {
+	return extractNames(volumes, func(volume corev1ac.VolumeApplyConfiguration) string {
+		if volume.ConfigMap != nil {
+			return *volume.ConfigMap.Name
+		}
+		return ""
+	}, func(configuration *corev1ac.VolumeProjectionApplyConfiguration) string {
+		if configuration.ConfigMap != nil {
+			return *configuration.ConfigMap.Name
+		}
+		return ""
+	})
 }
 
 func (dr *DeploymentReconciler) createSchedulerKubeconfigVolume(
@@ -295,6 +303,25 @@ func (dr *DeploymentReconciler) createAPIServerCertificatesVolume(
 							WithPath(konstants.APIServerKubeletClientKeyName),
 					),
 				),
+				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
+					WithName(names.GetEtcdCASecretName(hostedControlPlane.Name)).
+					WithItems(
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSCertKey).
+							WithPath(konstants.EtcdCACertName),
+					),
+				),
+				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
+					WithName(names.GetEtcdAPIServerClientSecretName(hostedControlPlane.Name)).
+					WithItems(
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSCertKey).
+							WithPath(konstants.APIServerEtcdClientCertName),
+						corev1ac.KeyToPath().
+							WithKey(corev1.TLSPrivateKeyKey).
+							WithPath(konstants.APIServerEtcdClientKeyName),
+					),
+				),
 			),
 		)
 }
@@ -356,7 +383,6 @@ func (dr *DeploymentReconciler) buildAPIServerArgs(
 	args := map[string]string{
 		"egress-selector-config-file": path.Join(
 			egressSelectorConfigDir,
-			"configurations",
 			EgressSelectorConfigurationFileName,
 		),
 		"allow-privileged":                   "true",
@@ -380,10 +406,10 @@ func (dr *DeploymentReconciler) buildAPIServerArgs(
 		"service-cluster-ip-range":           "10.96.0.0/12",
 		"tls-cert-file":                      path.Join(certificatesDir, konstants.APIServerCertName),
 		"tls-private-key-file":               path.Join(certificatesDir, konstants.APIServerKeyName),
-		"etcd-servers":                       "https://127.0.0.1:2379",
-		"etcd-cafile":                        path.Join(certificatesDir, konstants.CACertName),
-		"etcd-certfile":                      path.Join(certificatesDir, konstants.APIServerCertName),
-		"etcd-keyfile":                       path.Join(certificatesDir, konstants.APIServerKeyName),
+		"etcd-servers":                       fmt.Sprintf("https://e-%s-client:2379", hostedControlPlane.Name),
+		"etcd-cafile":                        path.Join(certificatesDir, konstants.EtcdCACertName),
+		"etcd-certfile":                      path.Join(certificatesDir, konstants.APIServerEtcdClientCertName),
+		"etcd-keyfile":                       path.Join(certificatesDir, konstants.APIServerEtcdClientKeyName),
 	}
 
 	return dr.argsToSlice(hostedControlPlane.Spec.Deployment.APIServer.Args, args)

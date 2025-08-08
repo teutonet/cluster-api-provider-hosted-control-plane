@@ -2,12 +2,14 @@ package hostedcontrolplane
 
 import (
 	"context"
-	"errors"
 	"testing"
 
+	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
@@ -105,11 +107,12 @@ func TestDeploymentReconciler_calculateSecretChecksum(t *testing.T) {
 		}
 	}
 
-	dr := &DeploymentReconciler{
-		kubernetesClient: fakeClient,
-	}
-
-	checksum, err := dr.calculateSecretChecksum(context.Background(), hostedControlPlane)
+	checksum, err := util.CalculateSecretChecksum(t.Context(), fakeClient,
+		hostedControlPlane.Namespace,
+		slices.Map(testSecrets, func(s testSecret, _ int) string {
+			return s.name
+		}),
+	)
 	if err != nil {
 		t.Fatalf("failed to calculate secret checksum: %v", err)
 	}
@@ -129,7 +132,12 @@ func TestDeploymentReconciler_calculateSecretChecksum(t *testing.T) {
 		}
 	}
 
-	checksum2, err := dr.calculateSecretChecksum(context.Background(), hostedControlPlane)
+	checksum2, err := util.CalculateSecretChecksum(t.Context(), fakeClient,
+		hostedControlPlane.Namespace,
+		slices.Map(testSecrets, func(s testSecret, _ int) string {
+			return s.name
+		}),
+	)
 	if err != nil {
 		t.Fatalf("failed to calculate secret checksum second time: %v", err)
 	}
@@ -169,11 +177,12 @@ func TestDeploymentReconciler_calculateSecretChecksum_DifferentValues(t *testing
 		}
 	}
 
-	dr := &DeploymentReconciler{
-		kubernetesClient: fakeClient,
-	}
-
-	checksum, err := dr.calculateSecretChecksum(context.Background(), hostedControlPlane)
+	checksum, err := util.CalculateSecretChecksum(t.Context(), fakeClient,
+		hostedControlPlane.Namespace,
+		slices.Map(testSecrets, func(s testSecret, _ int) string {
+			return s.name
+		}),
+	)
 	if err != nil {
 		t.Fatalf("failed to calculate secret checksum: %v", err)
 	}
@@ -207,10 +216,7 @@ func TestDeploymentReconciler_calculateSecretChecksum_MissingSecret(t *testing.T
 	}
 
 	// Create only some of the required secrets, leaving one missing
-	testSecrets := []struct {
-		name string
-		data map[string][]byte
-	}{
+	testSecrets := []testSecret{
 		{
 			name: names.GetCASecretName(hostedControlPlane.Name),
 			data: map[string][]byte{
@@ -244,16 +250,17 @@ func TestDeploymentReconciler_calculateSecretChecksum_MissingSecret(t *testing.T
 		}
 	}
 
-	dr := &DeploymentReconciler{
-		kubernetesClient: fakeClient,
-	}
-
-	_, err := dr.calculateSecretChecksum(context.Background(), hostedControlPlane)
+	_, err := util.CalculateSecretChecksum(t.Context(), fakeClient,
+		hostedControlPlane.Namespace,
+		append(slices.Map(testSecrets, func(s testSecret, _ int) string {
+			return s.name
+		}), "missing-secret-name"),
+	)
 	if err == nil {
 		t.Fatal("expected error when secret is missing, but got nil")
 	}
 
-	if !errors.Is(err, ErrSecretFetchFailed) {
-		t.Errorf("expected error to wrap ErrSecretFetchFailed, but got: %v", err)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("expected error to be NotFound, but got: %v", err)
 	}
 }

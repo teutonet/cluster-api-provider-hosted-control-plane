@@ -43,7 +43,7 @@ func (w *Workload) ReconcileKubeProxy(ctx context.Context, hostedControlPlane *v
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to determine if %s DaemonSet already exists: %w", kubeProxyKey, err)
+		return fmt.Errorf("failed to determine if DaemonSet already exists: %w", err)
 	}
 	container := findKubeProxyContainer(daemonSet)
 	if container == nil {
