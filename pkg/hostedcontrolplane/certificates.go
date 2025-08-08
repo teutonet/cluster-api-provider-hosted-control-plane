@@ -63,7 +63,7 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 			}
 
 			rootIssuer := certmanagerv1ac.Issuer(names.GetRootIssuerName(hostedControlPlane.Name), hostedControlPlane.Namespace).
-				WithLabels(names.GetLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithSelfSigned(certmanagerv1ac.SelfSignedIssuer()),
@@ -91,7 +91,7 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 			}
 
 			caIssuer := certmanagerv1ac.Issuer(names.GetCAIssuerName(hostedControlPlane.Name), hostedControlPlane.Namespace).
-				WithLabels(names.GetLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
@@ -122,7 +122,7 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 			frontProxyCAIssuer := certmanagerv1ac.Issuer(
 				names.GetFrontProxyCAName(hostedControlPlane.Name), hostedControlPlane.Namespace,
 			).
-				WithLabels(names.GetLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
@@ -153,7 +153,7 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 			etcdCAIssuer := certmanagerv1ac.Issuer(
 				names.GetEtcdCAName(hostedControlPlane.Name), hostedControlPlane.Namespace,
 			).
-				WithLabels(names.GetLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
@@ -197,39 +197,14 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 			WithRenewBeforePercentage(certificateRenewBefore)
 	}
 
-	etcdSuffixes := []string{
-		"",
-		"client",
-		"local",
-		"peer",
-	}
-
-	svcSuffixes := []string{
-		"",
-		hostedControlPlane.Namespace,
-		fmt.Sprintf("%s.svc", hostedControlPlane.Namespace),
-		fmt.Sprintf("%s.svc.%s", hostedControlPlane.Namespace, clusterDomain),
-	}
-
 	etcdDNSNames := []string{
 		"localhost",
 	}
 
-	etcdDNSNames = append(etcdDNSNames, slices.Flatten(slices.Map(etcdSuffixes, func(suffix string, _ int) []string {
-		if suffix != "" {
-			suffix = "-" + suffix
-		}
-		return slices.Flatten(slices.Map(svcSuffixes, func(svcSuffix string, _ int) []string {
-			if svcSuffix != "" {
-				svcSuffix = "." + svcSuffix
-			}
-			dnsName := fmt.Sprintf("e-%s%s%s", hostedControlPlane.Name, suffix, svcSuffix)
-			return []string{
-				dnsName,
-				fmt.Sprintf("*.%s", dnsName),
-			}
-		}))
-	}))...)
+	dnsNames := names.GetEtcdDNSNames(hostedControlPlane)
+	etcdDNSNames = append(etcdDNSNames, slices.Keys(dnsNames)...)
+	etcdDNSNames = append(etcdDNSNames, slices.Values(dnsNames)...)
+	etcdDNSNames = append(etcdDNSNames, names.GetEtcdServiceName(hostedControlPlane.Name))
 
 	sort.Strings(etcdDNSNames)
 
@@ -372,15 +347,6 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 				certmanagerv1.UsageClientAuth,
 			).WithDNSNames(names.GetServiceName(hostedControlPlane.Name)),
 		},
-		{
-			name: names.GetEtcdBackupCertificateName(hostedControlPlane.Name),
-			spec: createCertificateSpec(
-				names.GetEtcdCAName(hostedControlPlane.Name),
-				"etcd-backup",
-				names.GetEtcdBackupSecretName(hostedControlPlane.Name),
-				certmanagerv1.UsageClientAuth,
-			).WithDNSNames(fmt.Sprintf("e-%s-local", hostedControlPlane.Name)).WithIPAddresses("127.0.0.1"),
-		},
 	}
 }
 
@@ -426,11 +392,11 @@ func (cr *CertificateReconciler) reconcileCertificate(
 			)
 
 			certificate := certmanagerv1ac.Certificate(name, hostedControlPlane.Namespace).
-				WithLabels(names.GetLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(spec.WithRevisionHistoryLimit(1).
 					WithSecretTemplate(certmanagerv1ac.CertificateSecretTemplate().
-						WithLabels(names.GetLabels(hostedControlPlane.Name)),
+						WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)),
 					),
 				)
 

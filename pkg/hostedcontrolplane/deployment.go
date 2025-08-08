@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"path"
-	"sort"
+	"strconv"
 	"strings"
 
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
+	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
@@ -19,7 +21,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsacv1 "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	kubeadm "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
@@ -64,16 +65,9 @@ func (dr *DeploymentReconciler) ReconcileDeployment(
 				WithReadOnly(true)
 
 			template := corev1ac.PodTemplateSpec().
-				WithLabels(names.GetLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 				WithSpec(corev1ac.PodSpec().
-					WithTopologySpreadConstraints(corev1ac.TopologySpreadConstraint().
-						WithTopologyKey("kubernetes.io/hostname").
-						WithLabelSelector(metav1ac.LabelSelector().
-							WithMatchLabels(names.GetSelector(hostedControlPlane.Name)),
-						).
-						WithMaxSkew(1).
-						WithWhenUnsatisfiable(corev1.ScheduleAnyway),
-					).
+					WithTopologySpreadConstraints(operatorutil.CreatePodTopologySpreadConstraints(names.GetControlPlaneSelector(hostedControlPlane.Name))).
 					WithAutomountServiceAccountToken(false).
 					WithEnableServiceLinks(false).
 					WithContainers(
@@ -119,12 +113,10 @@ func (dr *DeploymentReconciler) ReconcileDeployment(
 			}
 
 			deployment := appsacv1.Deployment(hostedControlPlane.Name, hostedControlPlane.Namespace).
-				WithLabels(names.GetLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 				WithSpec(appsacv1.DeploymentSpec().
 					WithReplicas(*hostedControlPlane.Spec.Replicas).
-					WithSelector(metav1ac.LabelSelector().
-						WithMatchLabels(names.GetSelector(hostedControlPlane.Name)),
-					).
+					WithSelector(names.GetControlPlaneSelector(hostedControlPlane.Name)).
 					WithTemplate(template.WithAnnotations(map[string]string{
 						"checksum/secrets":    secretChecksum,
 						"checksum/configmaps": configMapChecksum,
@@ -368,6 +360,7 @@ func (dr *DeploymentReconciler) buildAPIServerArgs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	apiServerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	egressSelectorConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
+	apiPort *corev1ac.ContainerPortApplyConfiguration,
 ) []string {
 	certificatesDir := *apiServerCertificatesVolumeMount.MountPath
 	egressSelectorConfigDir := *egressSelectorConfigVolumeMount.MountPath
@@ -386,7 +379,7 @@ func (dr *DeploymentReconciler) buildAPIServerArgs(
 			EgressSelectorConfigurationFileName,
 		),
 		"allow-privileged":                   "true",
-		"authorization-mode":                 "Node,RBAC",
+		"authorization-mode":                 strings.Join([]string{konstants.ModeNode, konstants.ModeRBAC}, ","),
 		"client-ca-file":                     path.Join(certificatesDir, konstants.CACertName),
 		"enable-bootstrap-token-auth":        "true",
 		"kubelet-client-certificate":         path.Join(certificatesDir, konstants.APIServerKubeletClientCertName),
@@ -399,28 +392,23 @@ func (dr *DeploymentReconciler) buildAPIServerArgs(
 		"requestheader-extra-headers-prefix": "X-Remote-Extra-",
 		"requestheader-group-headers":        "X-Remote-Group",
 		"requestheader-username-headers":     "X-Remote-User",
-		"secure-port":                        "6443",
-		"service-account-issuer":             "https://kubernetes.default.svc.cluster.local",
-		"service-account-key-file":           path.Join(certificatesDir, konstants.ServiceAccountPublicKeyName),
-		"service-account-signing-key-file":   path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
-		"service-cluster-ip-range":           "10.96.0.0/12",
-		"tls-cert-file":                      path.Join(certificatesDir, konstants.APIServerCertName),
-		"tls-private-key-file":               path.Join(certificatesDir, konstants.APIServerKeyName),
-		"etcd-servers":                       fmt.Sprintf("https://e-%s-client:2379", hostedControlPlane.Name),
-		"etcd-cafile":                        path.Join(certificatesDir, konstants.EtcdCACertName),
-		"etcd-certfile":                      path.Join(certificatesDir, konstants.APIServerEtcdClientCertName),
-		"etcd-keyfile":                       path.Join(certificatesDir, konstants.APIServerEtcdClientKeyName),
+		"secure-port":                        strconv.Itoa(int(*apiPort.ContainerPort)),
+		// TODO: do this correctly
+		"service-account-issuer":           fmt.Sprintf("https://kubernetes.default.svc.%s", "cluster.local"),
+		"service-account-key-file":         path.Join(certificatesDir, konstants.ServiceAccountPublicKeyName),
+		"service-account-signing-key-file": path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
+		"service-cluster-ip-range":         "10.96.0.0/12",
+		"tls-cert-file":                    path.Join(certificatesDir, konstants.APIServerCertName),
+		"tls-private-key-file":             path.Join(certificatesDir, konstants.APIServerKeyName),
+		"etcd-servers": fmt.Sprintf("https://%s",
+			net.JoinHostPort(names.GetEtcdServiceName(hostedControlPlane.Name), "2379"),
+		),
+		"etcd-cafile":   path.Join(certificatesDir, konstants.EtcdCACertName),
+		"etcd-certfile": path.Join(certificatesDir, konstants.APIServerEtcdClientCertName),
+		"etcd-keyfile":  path.Join(certificatesDir, konstants.APIServerEtcdClientKeyName),
 	}
 
-	return dr.argsToSlice(hostedControlPlane.Spec.Deployment.APIServer.Args, args)
-}
-
-func (dr *DeploymentReconciler) argsToSlice(args ...map[string]string) []string {
-	argsSlice := slices.MapToSlice(slices.Assign(args...), func(key string, value string) string {
-		return fmt.Sprintf("--%s=%s", key, value)
-	})
-	sort.Strings(argsSlice)
-	return argsSlice
+	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.APIServer.Args, args)
 }
 
 func (dr *DeploymentReconciler) createAPIServerContainer(
@@ -439,9 +427,8 @@ func (dr *DeploymentReconciler) createAPIServerContainer(
 		WithImagePullPolicy(corev1.PullAlways).
 		WithCommand("kube-apiserver").
 		WithArgs(dr.buildAPIServerArgs(
-			hostedControlPlane,
-			apiServerCertificatesVolumeMount,
-			egressSelectorConfigVolumeMount,
+			hostedControlPlane, apiServerCertificatesVolumeMount, egressSelectorConfigVolumeMount,
+			apiPort,
 		)...).
 		WithPorts(apiPort).
 		WithStartupProbe(dr.createStartupProbe(apiPort)).
@@ -570,7 +557,7 @@ func (dr *DeploymentReconciler) buildSchedulerArgs(
 		"leader-elect":              "true",
 	}
 
-	return dr.argsToSlice(hostedControlPlane.Spec.Deployment.Scheduler.Args, args)
+	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.Scheduler.Args, args)
 }
 
 func (dr *DeploymentReconciler) buildControllerManagerArgs(
@@ -605,5 +592,5 @@ func (dr *DeploymentReconciler) buildControllerManagerArgs(
 		"use-service-account-credentials":  "true",
 	}
 
-	return dr.argsToSlice(hostedControlPlane.Spec.Deployment.ControllerManager.Args, args)
+	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.ControllerManager.Args, args)
 }

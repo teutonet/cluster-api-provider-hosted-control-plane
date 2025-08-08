@@ -11,7 +11,6 @@ import (
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
-	etcdv1alpha1 "github.com/gardener/etcd-druid/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
@@ -20,6 +19,7 @@ import (
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -95,11 +95,11 @@ type HostedControlPlaneReconciler struct {
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=watch;list
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=watch;list
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=watch;list
+//+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=watch;list
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=watch;list
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=watch;list
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=watch;list
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes,verbs=watch;list
-//+kubebuilder:rbac:groups=druid.gardener.cloud,resources=etcds,verbs=create;get;update;patch;delete;watch;list
 
 func (r *HostedControlPlaneReconciler) SetupWithManager(
 	mgr ctrl.Manager,
@@ -113,7 +113,7 @@ func (r *HostedControlPlaneReconciler) SetupWithManager(
 			Owns(&certmanagerv1.Certificate{}).
 			Owns(&corev1.Secret{}).
 			Owns(&corev1.ConfigMap{}).
-			Owns(&etcdv1alpha1.Etcd{}).
+			Owns(&appsv1.StatefulSet{}).
 			Owns(&v1.Deployment{}).
 			Owns(&gwv1.HTTPRoute{}).
 			Watches(
@@ -351,30 +351,6 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					FailedReason: v1alpha1.DeploymentFailedReason,
 				},
 				{
-					Name:         "kubeadm config",
-					Reconcile:    r.reconcileKubeadmConfig,
-					Condition:    v1alpha1.KubeadmConfigReadyCondition,
-					FailedReason: v1alpha1.KubeadmConfigFailedReason,
-				},
-				{
-					Name:         "kubelet config",
-					Reconcile:    r.reconcileKubeletConfig,
-					Condition:    v1alpha1.KubeletConfigReadyCondition,
-					FailedReason: v1alpha1.KubeletConfigFailedReason,
-				},
-				{
-					Name:         "bootstrap token",
-					Reconcile:    r.reconcileBootstrapToken,
-					Condition:    v1alpha1.BootstrapTokenReadyCondition,
-					FailedReason: v1alpha1.BootstrapTokenFailedReason,
-				},
-				{
-					Name:         "cluster admin RBAC",
-					Reconcile:    r.reconcileClusterAdminRBAC,
-					Condition:    v1alpha1.ClusterAdminRBACReadyCondition,
-					FailedReason: v1alpha1.ClusterAdminRBACFailedReason,
-				},
-				{
 					Name:         "HTTPRoute",
 					Reconcile:    r.reconcileHTTPRoute,
 					Condition:    v1alpha1.HTTPRouteReadyCondition,
@@ -391,7 +367,9 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 						capiv1.ConditionSeverityError,
 						"Reconciling %s failed: %v", phase.Name, err,
 					)
-					if errors.Is(err, ErrCANotReady) || errors.Is(err, ErrCertificateNotReady) {
+					if errors.Is(err, ErrCANotReady) ||
+						errors.Is(err, ErrCertificateNotReady) ||
+						errors.Is(err, ErrStatefulSetRecreateRequired) {
 						return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 					}
 					return reconcile.Result{}, err
@@ -429,10 +407,10 @@ func (r *HostedControlPlaneReconciler) reconcileService(
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileService",
 		func(ctx context.Context, span trace.Span) error {
 			service := corev1ac.Service(names.GetServiceName(hostedControlPlane.Name), hostedControlPlane.Namespace).
-				WithLabels(names.GetLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 				WithSpec(corev1ac.ServiceSpec().
 					WithType(corev1.ServiceTypeClusterIP).
-					WithSelector(names.GetSelector(hostedControlPlane.Name)).
+					WithSelector(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 					WithPorts(corev1ac.ServicePort().
 						WithName(APIServerPortName).
 						WithPort(443).
@@ -488,7 +466,7 @@ func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 				names.GetKonnectivityConfigMapName(hostedControlPlane.Name),
 				hostedControlPlane.Namespace,
 			).
-				WithLabels(names.GetLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string]string{
 					EgressSelectorConfigurationFileName: buf.String(),
