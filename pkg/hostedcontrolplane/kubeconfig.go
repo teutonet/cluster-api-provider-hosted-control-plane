@@ -133,7 +133,7 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 			}
 
 			kubeconfigSecret := corev1ac.Secret(kubeconfig.SecretName, hostedControlPlane.Namespace).
-				WithLabels(names.GetLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string][]byte{
 					capisecretutil.KubeconfigDataName: kr.generateKubeconfig(

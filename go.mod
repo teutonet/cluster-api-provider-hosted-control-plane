@@ -7,7 +7,6 @@ require (
 	github.com/caarlos0/env/v6 v6.10.1
 	github.com/cert-manager/cert-manager v1.18.0-beta.0.0.20250731163618-236523b2c1b8
 	github.com/coredns/corefile-migration v1.0.26
-	github.com/gardener/etcd-druid/api v0.31.0
 	github.com/go-logr/logr v1.4.3
 	github.com/samber/lo v1.51.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.62.0
@@ -22,6 +21,7 @@ require (
 	k8s.io/apiserver v0.33.3
 	k8s.io/client-go v0.33.3
 	k8s.io/kubernetes v1.33.3
+	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
 	sigs.k8s.io/cluster-api v1.10.4
 	sigs.k8s.io/controller-runtime v0.21.0
 	sigs.k8s.io/gateway-api v1.3.0
@@ -97,7 +97,6 @@ require (
 	k8s.io/component-base v0.33.3 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250701173324-9bd5c66d9911 // indirect
-	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.33.0 // indirect
 	sigs.k8s.io/json v0.0.0-20241014173422-cfa47c3a1cc8 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect

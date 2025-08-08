@@ -3,6 +3,9 @@ package names
 
 import (
 	"fmt"
+
+	slices "github.com/samber/lo"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 )
 
 func GetRootIssuerName(controlPlaneName string) string {
@@ -146,10 +149,19 @@ func GetEtcdAPIServerClientSecretName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-apiserver-etcd-client", controlPlaneName)
 }
 
-func GetEtcdBackupCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-etcd-backup", controlPlaneName)
+func GetEtcdServiceName(controlPlaneName string) string {
+	return fmt.Sprintf("e-%s", controlPlaneName)
 }
 
-func GetEtcdBackupSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-etcd-backup", controlPlaneName)
+func GetEtcdStatefulSetName(controlPlaneName string) string {
+	return GetEtcdServiceName(controlPlaneName)
+}
+
+func GetEtcdDNSNames(hostedControlPlane *v1alpha1.HostedControlPlane) map[string]string {
+	serviceName := GetEtcdServiceName(hostedControlPlane.Name)
+	return slices.Associate(slices.RepeatBy(3, func(i int) string {
+		return fmt.Sprintf("%s-%d", GetEtcdStatefulSetName(hostedControlPlane.Name), i)
+	}), func(host string) (string, string) {
+		return host, fmt.Sprintf("%s.%s.%s.svc", host, serviceName, hostedControlPlane.Namespace)
+	})
 }
