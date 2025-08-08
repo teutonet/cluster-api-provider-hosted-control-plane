@@ -90,7 +90,7 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 					kubeconfig.SecretName = names.GetKubeconfigSecretName(hostedControlPlane.Name, kubeconfig.Name)
 				}
 				if err := kr.reconcileKubeconfig(ctx, hostedControlPlane, kubeconfig); err != nil {
-					return fmt.Errorf("failed to reconcile kubeconfig %s: %w", kubeconfig.Name, err)
+					return fmt.Errorf("failed to reconcile kubeconfig: %w", err)
 				}
 			}
 
@@ -118,18 +118,18 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 				Get(ctx, kubeconfig.CertificateSecretName, metav1.GetOptions{})
 			if err != nil {
 				if apierrors.IsNotFound(err) {
-					return fmt.Errorf("certificate secret %s not found: %w", kubeconfig.CertificateSecretName, err)
+					return fmt.Errorf("certificate secret not found: %w", err)
 				}
-				return fmt.Errorf("failed to get certificate secret %s: %w", kubeconfig.CertificateSecretName, err)
+				return fmt.Errorf("failed to get certificate secret: %w", err)
 			}
 
 			caSecret, err := kr.kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
 				Get(ctx, names.GetCASecretName(hostedControlPlane.Name), metav1.GetOptions{})
 			if err != nil {
 				if apierrors.IsNotFound(err) {
-					return fmt.Errorf("CA secret %s not found: %w", names.GetCASecretName(hostedControlPlane.Name), err)
+					return fmt.Errorf("CA secret not found: %w", err)
 				}
-				return fmt.Errorf("failed to get CA secret %s: %w", names.GetCASecretName(hostedControlPlane.Name), err)
+				return fmt.Errorf("failed to get CA secret: %w", err)
 			}
 
 			kubeconfigSecret := corev1ac.Secret(kubeconfig.SecretName, hostedControlPlane.Namespace).

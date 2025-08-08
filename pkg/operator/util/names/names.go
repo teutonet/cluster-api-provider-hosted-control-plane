@@ -114,6 +114,42 @@ func GetKubeconfigSecretName(controlPlaneName string, kubeconfigName string) str
 	return fmt.Sprintf("%s-%s-kubeconfig", controlPlaneName, kubeconfigName)
 }
 
-func GetEtcdClusterName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-etcd", controlPlaneName)
+func GetEtcdCAName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-etcd-ca", controlPlaneName)
+}
+
+func GetEtcdCASecretName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-etcd-ca", controlPlaneName)
+}
+
+func GetEtcdServerCertificateName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-etcd-server", controlPlaneName)
+}
+
+func GetEtcdServerSecretName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-etcd-server", controlPlaneName)
+}
+
+func GetEtcdPeerCertificateName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-etcd-peer", controlPlaneName)
+}
+
+func GetEtcdPeerSecretName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-etcd-peer", controlPlaneName)
+}
+
+func GetEtcdAPIServerClientCertificateName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-apiserver-etcd-client", controlPlaneName)
+}
+
+func GetEtcdAPIServerClientSecretName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-apiserver-etcd-client", controlPlaneName)
+}
+
+func GetEtcdBackupCertificateName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-etcd-backup", controlPlaneName)
+}
+
+func GetEtcdBackupSecretName(controlPlaneName string) string {
+	return fmt.Sprintf("%s-etcd-backup", controlPlaneName)
 }

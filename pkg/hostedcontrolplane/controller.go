@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"time"
 
+	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
+	etcdv1alpha1 "github.com/gardener/etcd-druid/api/core/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
@@ -26,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/apiserver/pkg/apis/apiserver"
+	apiserverv1beta1 "k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -79,6 +81,8 @@ var (
 	ErrDomainNotFound           = errors.New("OpenStack domain not found")
 	ErrFlavorNotFound           = errors.New("OpenStack flavor not found")
 	ErrAvailabilityZoneNotFound = errors.New("OpenStack availability zone not found")
+	ErrCANotReady               = errors.New("CA not ready")
+	ErrCertificateNotReady      = errors.New("certificate not ready")
 )
 
 type HostedControlPlaneReconciler struct {
@@ -89,7 +93,9 @@ type HostedControlPlaneReconciler struct {
 }
 
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=watch;list
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=watch;list
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=watch;list
+//+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=watch;list
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=watch;list
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=watch;list
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes,verbs=watch;list
@@ -104,8 +110,11 @@ func (r *HostedControlPlaneReconciler) SetupWithManager(
 		ctrl.NewControllerManagedBy(mgr).
 			WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrentReconciles}).
 			For(&v1alpha1.HostedControlPlane{}).
-			Owns(&v1.Deployment{}).
+			Owns(&certmanagerv1.Certificate{}).
 			Owns(&corev1.Secret{}).
+			Owns(&corev1.ConfigMap{}).
+			Owns(&etcdv1alpha1.Etcd{}).
+			Owns(&v1.Deployment{}).
 			Owns(&gwv1.HTTPRoute{}).
 			Watches(
 				&capiv1.Cluster{},
@@ -162,15 +171,12 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				if apierrors.IsNotFound(err) {
 					return reconcile.Result{}, nil
 				}
-				return reconcile.Result{}, fmt.Errorf("failed to get HostedControlPlane %q: %w", req, err)
+				return reconcile.Result{}, fmt.Errorf("failed to get HostedControlPlane: %w", err)
 			}
 
 			patchHelper, err := patch.NewHelper(hostedControlPlane, r.Client)
 			if err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to create patch helper for HostedControlPlane %q/%q: %w",
-					hostedControlPlane.Namespace, hostedControlPlane.Name,
-					err,
-				)
+				return ctrl.Result{}, fmt.Errorf("failed to create patch helper for HostedControlPlane: %w", err)
 			}
 
 			defer func() {
@@ -238,8 +244,7 @@ func (r *HostedControlPlaneReconciler) patch(
 					Conditions: append(applicableConditions, capiv1.ReadyCondition),
 				},
 			)
-			return errorsUtil.IfErrErrorf("failed to patch HostedControlPlane %q/%q: %w",
-				teutonetesCluster.Namespace, teutonetesCluster.Name,
+			return errorsUtil.IfErrErrorf("failed to patch HostedControlPlane: %w",
 				patchHelper.Patch(ctx, teutonetesCluster, options...),
 			)
 		},
@@ -326,8 +331,8 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					Name: "etcd cluster",
 					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
 						etcdClusterReconciler := &EtcdClusterReconciler{
-							kubernetesClient: r.KubernetesClient,
 							client:           r.Client,
+							kubernetesClient: r.KubernetesClient,
 						}
 						return etcdClusterReconciler.ReconcileEtcdCluster(ctx, hostedControlPlane)
 					},
@@ -384,8 +389,11 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 						phase.Condition,
 						phase.FailedReason,
 						capiv1.ConditionSeverityError,
-						fmt.Sprintf("Reconciling %s failed", phase.Name), err,
+						"Reconciling %s failed: %v", phase.Name, err,
 					)
+					if errors.Is(err, ErrCANotReady) || errors.Is(err, ErrCertificateNotReady) {
+						return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
+					}
 					return reconcile.Result{}, err
 				} else {
 					conditions.MarkTrue(hostedControlPlane, phase.Condition)
@@ -451,18 +459,18 @@ func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKonnectivityConfig",
 		func(ctx context.Context, span trace.Span) error {
-			egressSelectorConfig := &apiserver.EgressSelectorConfiguration{
+			egressSelectorConfig := &apiserverv1beta1.EgressSelectorConfiguration{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "apiserver.k8s.io/v1beta1",
 					Kind:       "EgressSelectorConfiguration",
 				},
-				EgressSelections: []apiserver.EgressSelection{
+				EgressSelections: []apiserverv1beta1.EgressSelection{
 					{
 						Name: "cluster",
-						Connection: apiserver.Connection{
-							ProxyProtocol: apiserver.ProtocolGRPC,
-							Transport: &apiserver.Transport{
-								UDS: &apiserver.UDSTransport{
+						Connection: apiserverv1beta1.Connection{
+							ProxyProtocol: apiserverv1beta1.ProtocolGRPC,
+							Transport: &apiserverv1beta1.Transport{
+								UDS: &apiserverv1beta1.UDSTransport{
 									UDSName: "/run/konnectivity/konnectivity-server.sock",
 								},
 							},
@@ -482,8 +490,8 @@ func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 			).
 				WithLabels(names.GetLabels(hostedControlPlane.Name)).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
-				WithBinaryData(map[string][]byte{
-					EgressSelectorConfigurationFileName: buf.Bytes(),
+				WithData(map[string]string{
+					EgressSelectorConfigurationFileName: buf.String(),
 				})
 
 			_, err = r.KubernetesClient.CoreV1().ConfigMaps(hostedControlPlane.Namespace).

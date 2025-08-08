@@ -34,14 +34,14 @@ func (m *Management) List(ctx context.Context, list client.ObjectList, opts ...c
 func (m *Management) GetWorkloadCluster(ctx context.Context, clusterKey client.ObjectKey) (WorkloadCluster, error) {
 	restConfig, err := m.ClusterCache.GetRESTConfig(ctx, clusterKey)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", clusterKey.String(), err)
+		return nil, fmt.Errorf("failed to get REST config: %w", err)
 	}
 	restConfig = rest.CopyConfig(restConfig)
 	restConfig.Timeout = 30 * time.Second
 
 	workloadClusterClient, err := m.ClusterCache.GetClient(ctx, clusterKey)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", clusterKey.String(), err)
+		return nil, fmt.Errorf("failed to get workload cluster client: %w", err)
 	}
 
 	return &Workload{

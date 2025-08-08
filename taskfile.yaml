@@ -139,8 +139,6 @@ tasks:
   dev:
     cmd:
       task: telepresence
-      vars:
-        kubeConfig: /run/user/1000/gopass/k8s/teuto/t8se-mgmt-dev/kube-config-oidc
   generate-deepcopy:
     desc: Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
     deps:
@@ -209,9 +207,8 @@ tasks:
           visudo /etc/fuse.conf
     requires:
       vars:
-        - kubeConfig
+        - KUBECONFIG
     env:
-      KUBECONFIG: "{{ .kubeConfig }}"
       NAMESPACE: system
       DEPLOYMENT_NAME: controller-manager
     # always run the cleanup stuff

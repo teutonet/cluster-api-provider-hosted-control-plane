@@ -61,7 +61,7 @@ func (w *hostedControlPlaneWebhook) castObjectToHostedControlPlane(
 ) (*HostedControlPlane, *apierrors.StatusError) {
 	newHostedControlPlane, ok := newObj.(*HostedControlPlane)
 	if !ok {
-		return nil, apierrors.NewBadRequest(fmt.Sprintf("expected a HostedControlPlane but got a %T", newObj))
+		return nil, apierrors.NewBadRequest("expected a HostedControlPlane but got wrong type")
 	}
 	return newHostedControlPlane, nil
 }
