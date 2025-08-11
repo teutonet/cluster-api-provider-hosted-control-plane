@@ -11,11 +11,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	"sigs.k8s.io/cluster-api/util/secret"
+	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 )
 
 type ManagementCluster interface {
-	GetWorkloadClusterClient(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) (*kubernetes.Clientset, error)
+	GetWorkloadClusterClient(
+		ctx context.Context,
+		hostedControlPlane *v1alpha1.HostedControlPlane,
+	) (*kubernetes.Clientset, error)
 }
 
 type Management struct {
@@ -37,7 +40,7 @@ func (m *Management) GetWorkloadClusterClient(
 		return nil, fmt.Errorf("failed to get kubeconfig for workload cluster: %w", err)
 	}
 
-	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeConfigSecret.Data[secret.KubeconfigDataName])
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeConfigSecret.Data[capisecretutil.KubeconfigDataName])
 	if err != nil {
 		return nil, fmt.Errorf("failed to get REST config for workload cluster: %w", err)
 	}

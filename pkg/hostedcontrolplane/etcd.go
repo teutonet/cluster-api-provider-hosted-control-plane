@@ -20,9 +20,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
+	appsacv1 "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
@@ -34,9 +34,7 @@ type EtcdClusterReconciler struct {
 	kubernetesClient kubernetes.Interface
 }
 
-var (
-	ErrStatefulSetRecreateRequired = errors.New("recreate required for etcd StatefulSet")
-)
+var ErrStatefulSetRecreateRequired = errors.New("recreate required for etcd StatefulSet")
 
 //+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=create;patch;delete
 //+kubebuilder:rbac:groups="",resources=services,verbs=create;patch
@@ -154,25 +152,25 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 		return nil, nil, nil, fmt.Errorf("failed to calculate etcd secret checksum: %w", err)
 	}
 
-	statefulSet := appsv1ac.StatefulSet(name, hostedControlPlane.Namespace).
+	statefulSet := appsacv1.StatefulSet(name, hostedControlPlane.Namespace).
 		WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
 		WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 		WithAnnotations(map[string]string{
 			"checksum/secrets": secretChecksum,
 		}).
-		WithSpec(appsv1ac.StatefulSetSpec().
+		WithSpec(appsacv1.StatefulSetSpec().
 			WithServiceName(name).
 			WithReplicas(3).
 			WithPodManagementPolicy(appsv1.ParallelPodManagement).
-			WithUpdateStrategy(appsv1ac.StatefulSetUpdateStrategy().WithRollingUpdate(
-				appsv1ac.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
+			WithUpdateStrategy(appsacv1.StatefulSetUpdateStrategy().WithRollingUpdate(
+				appsacv1.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
 			)).
 			WithSelector(names.GetEtcdSelector(hostedControlPlane.Name)).
 			WithTemplate(template.WithAnnotations(map[string]string{
 				"checksum/secrets": secretChecksum,
 			})).
 			WithVolumeClaimTemplates(etcdDataVolumeClaimTemplate).
-			WithPersistentVolumeClaimRetentionPolicy(appsv1ac.StatefulSetPersistentVolumeClaimRetentionPolicy().
+			WithPersistentVolumeClaimRetentionPolicy(appsacv1.StatefulSetPersistentVolumeClaimRetentionPolicy().
 				WithWhenDeleted(appsv1.DeletePersistentVolumeClaimRetentionPolicyType),
 			),
 		)
@@ -182,7 +180,7 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 
 	if apierrors.IsInvalid(err) {
 		if err := er.kubernetesClient.AppsV1().StatefulSets(hostedControlPlane.Namespace).Delete(ctx, name,
-			v1.DeleteOptions{PropagationPolicy: ptr.To(v1.DeletePropagationOrphan)},
+			metav1.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationOrphan)},
 		); err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to delete existing etcd StatefulSet: %w", err)
 		}

@@ -1,0 +1,83 @@
+package hostedcontrolplane
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
+	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
+	"go.opentelemetry.io/otel/trace"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer/json"
+	apiserverv1beta1 "k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+)
+
+//+kubebuilder:rbac:groups=core,resources=configmaps,verbs=create;update;patch
+
+func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKonnectivityConfig",
+		func(ctx context.Context, span trace.Span) error {
+			egressSelectorConfig := &apiserverv1beta1.EgressSelectorConfiguration{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "apiserver.k8s.io/v1beta1",
+					Kind:       "EgressSelectorConfiguration",
+				},
+				EgressSelections: []apiserverv1beta1.EgressSelection{
+					{
+						Name: "cluster",
+						Connection: apiserverv1beta1.Connection{
+							ProxyProtocol: apiserverv1beta1.ProtocolGRPC,
+							Transport: &apiserverv1beta1.Transport{
+								UDS: &apiserverv1beta1.UDSTransport{
+									UDSName: "/run/konnectivity/konnectivity-server.sock",
+								},
+							},
+						},
+					},
+				},
+			}
+
+			buf, err := ToYaml(egressSelectorConfig)
+			if err != nil {
+				return err
+			}
+
+			configMap := corev1ac.ConfigMap(
+				names.GetKonnectivityConfigMapName(hostedControlPlane.Name),
+				hostedControlPlane.Namespace,
+			).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
+				WithData(map[string]string{
+					EgressSelectorConfigurationFileName: buf.String(),
+				})
+
+			_, err = r.KubernetesClient.CoreV1().ConfigMaps(hostedControlPlane.Namespace).
+				Apply(ctx, configMap, applyOptions)
+			return errorsUtil.IfErrErrorf("failed to patch konnectivity configmap: %w", err)
+		},
+	)
+}
+
+func ToYaml(obj runtime.Object) (*bytes.Buffer, error) {
+	scheme := runtime.NewScheme()
+	encoder := json.NewSerializerWithOptions(json.SimpleMetaFactory{}, scheme, scheme, json.SerializerOptions{
+		Yaml:   true,
+		Pretty: true,
+		Strict: false,
+	})
+
+	buf := bytes.NewBuffer([]byte{})
+	if err := encoder.Encode(obj, buf); err != nil {
+		return nil, fmt.Errorf("failed to encode egress selector config: %w", err)
+	}
+	return buf, nil
+}

@@ -3,11 +3,11 @@ package util
 import (
 	corev1 "k8s.io/api/core/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
 func CreatePodTopologySpreadConstraints(
-	labelSelector *v1.LabelSelectorApplyConfiguration,
+	labelSelector *metav1ac.LabelSelectorApplyConfiguration,
 ) *corev1ac.TopologySpreadConstraintApplyConfiguration {
 	return corev1ac.TopologySpreadConstraint().
 		WithTopologyKey("kubernetes.io/hostname").

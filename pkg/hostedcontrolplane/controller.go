@@ -2,7 +2,6 @@
 package hostedcontrolplane
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"errors"
@@ -14,21 +13,16 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
-	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
+
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	appsv1 "k8s.io/api/apps/v1"
-	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/serializer/json"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	apiserverv1beta1 "k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
-	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -110,7 +104,7 @@ func (r *HostedControlPlaneReconciler) SetupWithManager(
 			Owns(&corev1.Secret{}).
 			Owns(&corev1.ConfigMap{}).
 			Owns(&appsv1.StatefulSet{}).
-			Owns(&v1.Deployment{}).
+			Owns(&appsv1.Deployment{}).
 			Owns(&gwv1.HTTPRoute{}).
 			Watches(
 				&capiv1.Cluster{},
@@ -381,143 +375,6 @@ func (r *HostedControlPlaneReconciler) reconcileDelete(
 			controllerutil.RemoveFinalizer(hostedControlPlane, hostedControlPlaneFinalizer)
 
 			return ctrl.Result{}, nil
-		},
-	)
-}
-
-//+kubebuilder:rbac:groups=core,resources=configmaps,verbs=create;update;patch
-
-func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKonnectivityConfig",
-		func(ctx context.Context, span trace.Span) error {
-			egressSelectorConfig := &apiserverv1beta1.EgressSelectorConfiguration{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: "apiserver.k8s.io/v1beta1",
-					Kind:       "EgressSelectorConfiguration",
-				},
-				EgressSelections: []apiserverv1beta1.EgressSelection{
-					{
-						Name: "cluster",
-						Connection: apiserverv1beta1.Connection{
-							ProxyProtocol: apiserverv1beta1.ProtocolGRPC,
-							Transport: &apiserverv1beta1.Transport{
-								UDS: &apiserverv1beta1.UDSTransport{
-									UDSName: "/run/konnectivity/konnectivity-server.sock",
-								},
-							},
-						},
-					},
-				},
-			}
-
-			buf, err := ToYaml(egressSelectorConfig)
-			if err != nil {
-				return err
-			}
-
-			configMap := corev1ac.ConfigMap(
-				names.GetKonnectivityConfigMapName(hostedControlPlane.Name),
-				hostedControlPlane.Namespace,
-			).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
-				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
-				WithData(map[string]string{
-					EgressSelectorConfigurationFileName: buf.String(),
-				})
-
-			_, err = r.KubernetesClient.CoreV1().ConfigMaps(hostedControlPlane.Namespace).
-				Apply(ctx, configMap, applyOptions)
-			return errorsUtil.IfErrErrorf("failed to patch konnectivity configmap: %w", err)
-		},
-	)
-}
-
-func ToYaml(obj runtime.Object) (*bytes.Buffer, error) {
-	scheme := runtime.NewScheme()
-	encoder := json.NewSerializerWithOptions(json.SimpleMetaFactory{}, scheme, scheme, json.SerializerOptions{
-		Yaml:   true,
-		Pretty: true,
-		Strict: false,
-	})
-
-	buf := bytes.NewBuffer([]byte{})
-	if err := encoder.Encode(obj, buf); err != nil {
-		return nil, fmt.Errorf("failed to encode egress selector config: %w", err)
-	}
-	return buf, nil
-}
-
-func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileWorkloadSetup",
-		func(ctx context.Context, span trace.Span) error {
-			type WorkloadPhase struct {
-				Reconcile    func(context.Context, *v1alpha1.HostedControlPlane) error
-				Condition    capiv1.ConditionType
-				FailedReason string
-				Name         string
-			}
-
-			workloadClusterClient, err := r.ManagementCluster.GetWorkloadClusterClient(ctx, hostedControlPlane)
-			if err != nil {
-				return fmt.Errorf("failed to get workload cluster client: %w", err)
-			}
-
-			workloadClusterReconciler := &WorkloadClusterReconciler{
-				kubernetesClient: workloadClusterClient,
-			}
-
-			workloadPhases := []WorkloadPhase{
-				{
-					Name:         "kubelet config RBAC",
-					Reconcile:    workloadClusterReconciler.ReconcileKubeletConfigRBAC,
-					Condition:    v1alpha1.KubeletConfigRBACReadyCondition,
-					FailedReason: v1alpha1.KubeletConfigRBACFailedReason,
-				},
-				// TODO: Add more workload phases here
-				// {
-				//     Name: "kube-proxy",
-				//     Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane, workloadClusterClient WorkloadCluster) error {
-				//         return workloadClusterClient.ReconcileKubeProxy(ctx, hostedControlPlane)
-				//     },
-				//     Condition:    v1alpha1.KubeProxyReadyCondition,
-				//     FailedReason: v1alpha1.KubeProxyFailedReason,
-				// },
-			}
-
-			for _, phase := range workloadPhases {
-				if err := phase.Reconcile(ctx, hostedControlPlane); err != nil {
-					conditions.MarkFalse(
-						hostedControlPlane,
-						phase.Condition,
-						phase.FailedReason,
-						capiv1.ConditionSeverityError,
-						"Reconciling workload %s failed: %v", phase.Name, err,
-					)
-					return err
-				} else {
-					conditions.MarkTrue(hostedControlPlane, phase.Condition)
-				}
-			}
-
-			return nil
-		},
-	)
-}
-
-func (r *HostedControlPlaneReconciler) reconcileHTTPRoute(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileHTTPRoute",
-		func(ctx context.Context, span trace.Span) error {
-			// TODO: Implement HTTPRoute reconciliation
-			return nil
 		},
 	)
 }
