@@ -2,6 +2,7 @@ package hostedcontrolplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -17,7 +18,9 @@ import (
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsacv1 "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -26,6 +29,8 @@ import (
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 )
+
+var ErrDeploymentNotReady = fmt.Errorf("deployment is not ready: %w", ErrRequeueRequired)
 
 type APIServerResourcesReconciler struct {
 	kubernetesClient kubernetes.Interface
@@ -36,7 +41,11 @@ var (
 	EgressSelectorConfigurationFileName = "egress-selector-configuration.yaml"
 )
 
-//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=create;update;patch
+var (
+	componentAPIServer         = "api-server"
+	componentControllerManager = "controller-manager"
+	componentScheduler         = "scheduler"
+)
 
 func (dr *APIServerResourcesReconciler) ReconcileAPIServerResources(
 	ctx context.Context,
@@ -44,12 +53,28 @@ func (dr *APIServerResourcesReconciler) ReconcileAPIServerResources(
 ) error {
 	apiPort, err := dr.reconcileAPIServerDeployment(ctx, hostedControlPlane)
 	if err != nil {
-		return errorsUtil.IfErrErrorf("failed to reconcile API server deployment: %w", err)
+		return fmt.Errorf("failed to reconcile API server deployment: %w", err)
 	}
 
-	return errorsUtil.IfErrErrorf("failed to reconcile API server service: %w",
-		dr.reconcileAPIServerService(ctx, hostedControlPlane, apiPort),
-	)
+	if err := dr.reconcileAPIServerService(ctx, hostedControlPlane, apiPort); err != nil {
+		return fmt.Errorf("failed to reconcile API server service: %w", err)
+	}
+
+	if err := dr.reconcileControllerManagerDeployment(ctx, hostedControlPlane); err != nil {
+		if !errors.Is(err, ErrDeploymentNotReady) {
+			return fmt.Errorf("failed to reconcile controller manager deployment: %w", err)
+		}
+	}
+
+	if err := dr.reconcileSchedulerDeployment(ctx, hostedControlPlane); err != nil {
+		if !errors.Is(err, ErrDeploymentNotReady) {
+			return fmt.Errorf("failed to reconcile scheduler deployment: %w", err)
+		}
+	}
+
+	hostedControlPlane.Status.Version = hostedControlPlane.Spec.Version
+
+	return nil
 }
 
 func (dr *APIServerResourcesReconciler) reconcileAPIServerDeployment(
@@ -59,17 +84,10 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerDeployment(
 	return tracing.WithSpan(ctx, hostedControlPlaneReconcilerTracer, "ReconcileAPIServerDeployment",
 		func(ctx context.Context, span trace.Span) (*corev1ac.ContainerPortApplyConfiguration, error) {
 			apiServerCertificatesVolume := dr.createAPIServerCertificatesVolume(hostedControlPlane)
-			controllerManagerCertificatesVolume := dr.createControllerManagerCertificatesVolume(hostedControlPlane)
 			egressSelectorConfigVolume := dr.createKonnectivityConfigVolume(hostedControlPlane)
-			schedulerKubeconfigVolume := dr.createSchedulerKubeconfigVolume(hostedControlPlane)
-			controllerManagerKubeconfigVolume := dr.createControllerManagerKubeconfigVolume(hostedControlPlane)
 
 			apiServerCertificatesVolumeMount := corev1ac.VolumeMount().
 				WithName(*apiServerCertificatesVolume.Name).
-				WithMountPath(kubeadm.DefaultCertificatesDir).
-				WithReadOnly(true)
-			controllerManagerCertificatesVolumeMount := corev1ac.VolumeMount().
-				WithName(*controllerManagerCertificatesVolume.Name).
 				WithMountPath(kubeadm.DefaultCertificatesDir).
 				WithReadOnly(true)
 			egressSelectorConfigVolumeMount := corev1ac.VolumeMount().
@@ -82,70 +100,215 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerDeployment(
 				apiServerCertificatesVolumeMount,
 				egressSelectorConfigVolumeMount,
 			)
-			template := corev1ac.PodTemplateSpec().
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
-				WithSpec(corev1ac.PodSpec().
-					WithTopologySpreadConstraints(operatorutil.CreatePodTopologySpreadConstraints(names.GetControlPlaneSelector(hostedControlPlane.Name))).
-					WithAutomountServiceAccountToken(false).
-					WithEnableServiceLinks(false).
-					WithContainers(
-						container,
-						dr.createControllerManagerContainer(
-							hostedControlPlane,
-							controllerManagerCertificatesVolumeMount,
-							controllerManagerKubeconfigVolume,
-						),
-						dr.createSchedulerContainer(
-							hostedControlPlane,
-							schedulerKubeconfigVolume,
-						),
-						// TODO: add konnectivity container
-					).
-					WithVolumes(
-						apiServerCertificatesVolume,
-						controllerManagerCertificatesVolume,
-						egressSelectorConfigVolume,
-						schedulerKubeconfigVolume,
-						controllerManagerKubeconfigVolume,
-					),
-				)
 
-			secretChecksum, err := util.CalculateSecretChecksum(ctx, dr.kubernetesClient,
-				hostedControlPlane.Namespace,
-				extractSecretNames(template.Spec.Volumes),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("failed to calculate secret checksum: %w", err)
+			volumes := []*corev1ac.VolumeApplyConfiguration{
+				apiServerCertificatesVolume,
+				egressSelectorConfigVolume,
 			}
 
-			configMapChecksum, err := util.CalculateConfigMapChecksum(ctx, dr.kubernetesClient,
-				hostedControlPlane.Namespace,
-				extractConfigMapNames(template.Spec.Volumes),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("failed to calculate configmap checksum: %w", err)
+			if deployment, err := dr.reconcileDeployment(
+				ctx,
+				hostedControlPlane,
+				componentAPIServer,
+				ComponentETCD,
+				[]*corev1ac.ContainerApplyConfiguration{container},
+				volumes,
+			); err != nil {
+				return nil, err
+			} else {
+				selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert label selector: %w", err)
+				}
+				hostedControlPlane.Status.Selector = selector.String()
+				hostedControlPlane.Status.ReadyReplicas = deployment.Status.ReadyReplicas
+				hostedControlPlane.Status.Replicas = deployment.Status.Replicas
+				hostedControlPlane.Status.UpdatedReplicas = deployment.Status.UpdatedReplicas
+				hostedControlPlane.Status.UnavailableReplicas = deployment.Status.UnavailableReplicas
 			}
 
-			deployment := appsacv1.Deployment(hostedControlPlane.Name, hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
-				WithSpec(appsacv1.DeploymentSpec().
-					WithReplicas(*hostedControlPlane.Spec.Replicas).
-					WithSelector(names.GetControlPlaneSelector(hostedControlPlane.Name)).
-					WithTemplate(template.WithAnnotations(map[string]string{
-						"checksum/secrets":    secretChecksum,
-						"checksum/configmaps": configMapChecksum,
-					})),
-				).
-				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane))
-
-			_, err = dr.kubernetesClient.AppsV1().Deployments(hostedControlPlane.Namespace).Apply(ctx,
-				deployment,
-				applyOptions,
-			)
-
-			return apiPort, errorsUtil.IfErrErrorf("failed to patch deployment: %w", err)
+			return apiPort, nil
 		},
 	)
+}
+
+func (dr *APIServerResourcesReconciler) reconcileControllerManagerDeployment(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileControllerManagerDeployment",
+		func(ctx context.Context, span trace.Span) error {
+			controllerManagerCertificatesVolume := dr.createControllerManagerCertificatesVolume(hostedControlPlane)
+			controllerManagerKubeconfigVolume := dr.createControllerManagerKubeconfigVolume(hostedControlPlane)
+
+			controllerManagerCertificatesVolumeMount := corev1ac.VolumeMount().
+				WithName(*controllerManagerCertificatesVolume.Name).
+				WithMountPath(kubeadm.DefaultCertificatesDir).
+				WithReadOnly(true)
+
+			container := dr.createControllerManagerContainer(
+				hostedControlPlane,
+				controllerManagerCertificatesVolumeMount,
+				controllerManagerKubeconfigVolume,
+			)
+
+			volumes := []*corev1ac.VolumeApplyConfiguration{
+				controllerManagerCertificatesVolume,
+				controllerManagerKubeconfigVolume,
+			}
+
+			_, err := dr.reconcileDeployment(
+				ctx,
+				hostedControlPlane,
+				componentControllerManager,
+				componentAPIServer,
+				[]*corev1ac.ContainerApplyConfiguration{container},
+				volumes,
+			)
+			return err
+		},
+	)
+}
+
+func (dr *APIServerResourcesReconciler) reconcileSchedulerDeployment(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileSchedulerDeployment",
+		func(ctx context.Context, span trace.Span) error {
+			schedulerKubeconfigVolume := dr.createSchedulerKubeconfigVolume(hostedControlPlane)
+
+			container := dr.createSchedulerContainer(
+				hostedControlPlane,
+				schedulerKubeconfigVolume,
+			)
+
+			volumes := []*corev1ac.VolumeApplyConfiguration{
+				schedulerKubeconfigVolume,
+			}
+
+			_, err := dr.reconcileDeployment(
+				ctx,
+				hostedControlPlane,
+				componentScheduler,
+				componentAPIServer,
+				[]*corev1ac.ContainerApplyConfiguration{container},
+				volumes,
+			)
+			return err
+		},
+	)
+}
+
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=create;patch
+
+func (dr *APIServerResourcesReconciler) reconcileDeployment(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	component string,
+	targetComponent string,
+	containers []*corev1ac.ContainerApplyConfiguration,
+	volumes []*corev1ac.VolumeApplyConfiguration,
+) (*appsv1.Deployment, error) {
+	affinity := corev1ac.Affinity().
+		WithPodAffinity(corev1ac.PodAffinity().
+			WithPreferredDuringSchedulingIgnoredDuringExecution(
+				corev1ac.WeightedPodAffinityTerm().
+					WithWeight(100).
+					WithPodAffinityTerm(corev1ac.PodAffinityTerm().
+						WithLabelSelector(names.GetControlPlaneSelector(hostedControlPlane.Name, targetComponent)).
+						WithTopologyKey(corev1.LabelHostname),
+					),
+			),
+		)
+
+	template := corev1ac.PodTemplateSpec().
+		WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, component)).
+		WithSpec(corev1ac.PodSpec().
+			WithTopologySpreadConstraints(
+				operatorutil.CreatePodTopologySpreadConstraints(
+					names.GetControlPlaneSelector(hostedControlPlane.Name, component),
+				),
+			).
+			WithAutomountServiceAccountToken(false).
+			WithEnableServiceLinks(false).
+			WithContainers(containers...).
+			WithVolumes(volumes...).
+			WithAffinity(affinity),
+		)
+
+	if secretChecksum, err := util.CalculateSecretChecksum(ctx, dr.kubernetesClient,
+		hostedControlPlane.Namespace,
+		extractSecretNames(template.Spec.Volumes),
+	); err != nil {
+		return nil, fmt.Errorf("failed to calculate secret checksum: %w", err)
+	} else if secretChecksum != "" {
+		template = template.WithAnnotations(map[string]string{
+			"checksum/secrets": secretChecksum,
+		})
+	}
+
+	if configMapChecksum, err := util.CalculateConfigMapChecksum(ctx, dr.kubernetesClient,
+		hostedControlPlane.Namespace,
+		extractConfigMapNames(template.Spec.Volumes),
+	); err != nil {
+		return nil, fmt.Errorf("failed to calculate configmap checksum: %w", err)
+	} else if configMapChecksum != "" {
+		template = template.WithAnnotations(map[string]string{
+			"checksum/configmaps": configMapChecksum,
+		})
+	}
+
+	deploymentName := fmt.Sprintf("%s-%s", hostedControlPlane.Name, component)
+	deployment := appsacv1.Deployment(
+		deploymentName,
+		hostedControlPlane.Namespace,
+	).
+		WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, component)).
+		WithSpec(appsacv1.DeploymentSpec().
+			WithReplicas(*hostedControlPlane.Spec.Replicas).
+			WithSelector(names.GetControlPlaneSelector(hostedControlPlane.Name, component)).
+			WithTemplate(template),
+		).
+		WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane))
+
+	appliedDeployment, err := dr.kubernetesClient.AppsV1().Deployments(hostedControlPlane.Namespace).Apply(ctx,
+		deployment,
+		applyOptions,
+	)
+	if err != nil {
+		return nil, errorsUtil.IfErrErrorf("failed to patch deployment: %w", err)
+	}
+
+	if !isDeploymentReady(appliedDeployment) {
+		return nil, ErrDeploymentNotReady
+	}
+
+	return appliedDeployment, nil
+}
+
+func isDeploymentReady(deployment *appsv1.Deployment) bool {
+	if deployment == nil {
+		return false
+	}
+
+	if deployment.Spec.Replicas != nil && deployment.Status.ReadyReplicas < *deployment.Spec.Replicas {
+		return false
+	}
+
+	if deployment.Spec.Replicas != nil && deployment.Status.AvailableReplicas < *deployment.Spec.Replicas {
+		return false
+	}
+
+	if deployment.Spec.Replicas != nil && deployment.Status.UpdatedReplicas < *deployment.Spec.Replicas {
+		return false
+	}
+
+	if deployment.Status.ObservedGeneration < deployment.Generation {
+		return false
+	}
+
+	return true
 }
 
 //+kubebuilder:rbac:groups=core,resources=services,verbs=create;update;patch
@@ -157,11 +320,12 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerService(
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileAPIServerService",
 		func(ctx context.Context, span trace.Span) error {
+			labels := names.GetControlPlaneLabels(hostedControlPlane.Name, componentAPIServer)
 			service := corev1ac.Service(names.GetServiceName(hostedControlPlane.Name), hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+				WithLabels(labels).
 				WithSpec(corev1ac.ServiceSpec().
 					WithType(corev1.ServiceTypeClusterIP).
-					WithSelector(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+					WithSelector(labels).
 					WithPorts(
 						corev1ac.ServicePort().
 							WithName("api").
@@ -445,13 +609,12 @@ func (dr *APIServerResourcesReconciler) buildAPIServerArgs(
 		"requestheader-group-headers":        "X-Remote-Group",
 		"requestheader-username-headers":     "X-Remote-User",
 		"secure-port":                        strconv.Itoa(int(*apiPort.ContainerPort)),
-		// TODO: do this correctly
-		"service-account-issuer":           fmt.Sprintf("https://kubernetes.default.svc.%s", "cluster.local"),
-		"service-account-key-file":         path.Join(certificatesDir, konstants.ServiceAccountPublicKeyName),
-		"service-account-signing-key-file": path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
-		"service-cluster-ip-range":         "10.96.0.0/12",
-		"tls-cert-file":                    path.Join(certificatesDir, konstants.APIServerCertName),
-		"tls-private-key-file":             path.Join(certificatesDir, konstants.APIServerKeyName),
+		"service-account-issuer":             "https://kubernetes.default.svc",
+		"service-account-key-file":           path.Join(certificatesDir, konstants.ServiceAccountPublicKeyName),
+		"service-account-signing-key-file":   path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
+		"service-cluster-ip-range":           "10.96.0.0/12",
+		"tls-cert-file":                      path.Join(certificatesDir, konstants.APIServerCertName),
+		"tls-private-key-file":               path.Join(certificatesDir, konstants.APIServerKeyName),
 		"etcd-servers": fmt.Sprintf("https://%s",
 			net.JoinHostPort(names.GetEtcdServiceName(hostedControlPlane.Name), "2379"),
 		),
@@ -483,9 +646,9 @@ func (dr *APIServerResourcesReconciler) createAPIServerContainer(
 			apiPort,
 		)...).
 		WithPorts(apiPort).
-		WithStartupProbe(dr.createStartupProbe(apiPort)).
-		WithReadinessProbe(dr.createReadinessProbe(apiPort)).
-		WithLivenessProbe(dr.createLivenessProbe(apiPort)).
+		WithStartupProbe(dr.createStartupProbe(apiPort, "/livez")).
+		WithReadinessProbe(dr.createReadinessProbe(apiPort, "/readyz")).
+		WithLivenessProbe(dr.createLivenessProbe(apiPort, "/livez")).
 		WithVolumeMounts(
 			apiServerCertificatesVolumeMount,
 			egressSelectorConfigVolumeMount,
@@ -494,12 +657,13 @@ func (dr *APIServerResourcesReconciler) createAPIServerContainer(
 
 func (dr *APIServerResourcesReconciler) createStartupProbe(
 	probePort *corev1ac.ContainerPortApplyConfiguration,
+	path string,
 ) *corev1ac.ProbeApplyConfiguration {
 	healthCheckTimeout := konstants.ControlPlaneComponentHealthCheckTimeout.Seconds()
 	periodSeconds := int32(10)
 	failureThreshold := int32(math.Ceil(healthCheckTimeout / float64(periodSeconds)))
-	return dr.createProbe("/livez", probePort).
-		WithInitialDelaySeconds(periodSeconds).
+	return dr.createProbe(path, probePort).
+		WithInitialDelaySeconds(0).
 		WithTimeoutSeconds(15).
 		WithFailureThreshold(failureThreshold).
 		WithPeriodSeconds(periodSeconds)
@@ -507,8 +671,9 @@ func (dr *APIServerResourcesReconciler) createStartupProbe(
 
 func (dr *APIServerResourcesReconciler) createReadinessProbe(
 	probePort *corev1ac.ContainerPortApplyConfiguration,
+	path string,
 ) *corev1ac.ProbeApplyConfiguration {
-	return dr.createProbe("/readyz", probePort).
+	return dr.createProbe(path, probePort).
 		WithInitialDelaySeconds(0).
 		WithTimeoutSeconds(15).
 		WithFailureThreshold(3).
@@ -517,9 +682,10 @@ func (dr *APIServerResourcesReconciler) createReadinessProbe(
 
 func (dr *APIServerResourcesReconciler) createLivenessProbe(
 	probePort *corev1ac.ContainerPortApplyConfiguration,
+	path string,
 ) *corev1ac.ProbeApplyConfiguration {
-	return dr.createProbe("/livez", probePort).
-		WithInitialDelaySeconds(10).
+	return dr.createProbe(path, probePort).
+		WithInitialDelaySeconds(0).
 		WithTimeoutSeconds(15).
 		WithFailureThreshold(8).
 		WithPeriodSeconds(10)
@@ -562,9 +728,9 @@ func (dr *APIServerResourcesReconciler) createSchedulerContainer(
 		WithCommand("kube-scheduler").
 		WithArgs(dr.buildSchedulerArgs(hostedControlPlane, schedulerKubeconfigVolumeMount)...).
 		WithPorts(probePort).
-		WithStartupProbe(dr.createStartupProbe(probePort)).
-		WithReadinessProbe(dr.createReadinessProbe(probePort)).
-		WithLivenessProbe(dr.createLivenessProbe(probePort)).
+		WithStartupProbe(dr.createStartupProbe(probePort, "/livez")).
+		WithReadinessProbe(dr.createReadinessProbe(probePort, "/readyz")).
+		WithLivenessProbe(dr.createLivenessProbe(probePort, "/livez")).
 		WithVolumeMounts(schedulerKubeconfigVolumeMount)
 }
 
@@ -588,9 +754,9 @@ func (dr *APIServerResourcesReconciler) createControllerManagerContainer(
 			controllerManagerKubeconfigVolumeMount,
 		)...).
 		WithPorts(probePort).
-		WithStartupProbe(dr.createStartupProbe(probePort)).
-		WithReadinessProbe(dr.createReadinessProbe(probePort)).
-		WithLivenessProbe(dr.createLivenessProbe(probePort)).
+		WithStartupProbe(dr.createStartupProbe(probePort, "/healthz")).
+		WithReadinessProbe(dr.createReadinessProbe(probePort, "/healthz")).
+		WithLivenessProbe(dr.createLivenessProbe(probePort, "/healthz")).
 		WithVolumeMounts(controllerManagerCertificatesVolumeMount, controllerManagerKubeconfigVolumeMount)
 }
 
@@ -600,7 +766,6 @@ func (dr *APIServerResourcesReconciler) buildSchedulerArgs(
 ) []string {
 	kubeconfigPath := path.Join(*schedulerKubeconfigVolumeMount.MountPath, konstants.SchedulerKubeConfigFileName)
 
-	// use map[string]any as soon as https://github.com/kubernetes-sigs/controller-tools/issues/636 is resolved
 	args := map[string]string{
 		"authentication-kubeconfig": kubeconfigPath,
 		"authorization-kubeconfig":  kubeconfigPath,
@@ -622,7 +787,7 @@ func (dr *APIServerResourcesReconciler) buildControllerManagerArgs(
 		konstants.ControllerManagerKubeConfigFileName,
 	)
 
-	// use map[string]any as soon as https://github.com/kubernetes-sigs/controller-tools/issues/636 is resolved
+	// TODO: use map[string]any as soon as https://github.com/kubernetes-sigs/controller-tools/issues/636 is resolved
 	certificatesDir := *controllerManagerCertificatesVolumeMount.MountPath
 	args := map[string]string{
 		"allocate-node-cidrs":              "true",

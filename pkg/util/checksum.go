@@ -30,6 +30,11 @@ func calculateChecksum(maps ...map[string]any) string {
 		}
 		checksums = append(checksums, hex.EncodeToString(hasher.Sum(nil)))
 	}
+
+	if len(checksums) == 0 {
+		return ""
+	}
+
 	sort.Strings(checksums)
 
 	//nolint:gosec // MD5 is used for checksums, not cryptographic security

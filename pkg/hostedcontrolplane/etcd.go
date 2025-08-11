@@ -2,7 +2,6 @@ package hostedcontrolplane
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path"
 	"sort"
@@ -34,7 +33,12 @@ type EtcdClusterReconciler struct {
 	kubernetesClient kubernetes.Interface
 }
 
-var ErrStatefulSetRecreateRequired = errors.New("recreate required for etcd StatefulSet")
+var (
+	ErrStatefulSetRecreateRequired = fmt.Errorf("recreate required for etcd StatefulSet: %w", ErrRequeueRequired)
+	ErrStatefulsetNotReady         = fmt.Errorf("etcd StatefulSet is not ready: %w", ErrRequeueRequired)
+)
+
+var ComponentETCD = "etcd"
 
 //+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=create;patch;delete
 //+kubebuilder:rbac:groups="",resources=services,verbs=create;patch
@@ -45,16 +49,10 @@ func (er *EtcdClusterReconciler) ReconcileEtcdCluster(
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileEtcdCluster",
 		func(ctx context.Context, span trace.Span) error {
-			name := names.GetEtcdServiceName(hostedControlPlane.Name)
-			if clientPort, peerPort, metricsPort, err := er.reconcileStatefulSet(ctx,
-				hostedControlPlane,
-				name,
-			); err != nil {
+			if clientPort, peerPort, metricsPort, err := er.reconcileStatefulSet(ctx, hostedControlPlane); err != nil {
 				return fmt.Errorf("failed to reconcile etcd StatefulSet: %w", err)
 			} else {
-				if err := er.reconcileService(ctx,
-					name, hostedControlPlane, clientPort, peerPort, metricsPort,
-				); err != nil {
+				if err := er.reconcileService(ctx, hostedControlPlane, clientPort, peerPort, metricsPort); err != nil {
 					return fmt.Errorf("failed to reconcile etcd service: %w", err)
 				}
 			}
@@ -66,14 +64,13 @@ func (er *EtcdClusterReconciler) ReconcileEtcdCluster(
 
 func (er *EtcdClusterReconciler) reconcileService(
 	ctx context.Context,
-	serviceName string,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	clientPort *corev1ac.ContainerPortApplyConfiguration,
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
 ) error {
-	service := corev1ac.Service(serviceName, hostedControlPlane.Namespace).
-		WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+	service := corev1ac.Service(names.GetEtcdServiceName(hostedControlPlane.Name), hostedControlPlane.Namespace).
+		WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, ComponentETCD)).
 		WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 		WithSpec(corev1ac.ServiceSpec().
 			WithType(corev1.ServiceTypeClusterIP).
@@ -96,7 +93,7 @@ func (er *EtcdClusterReconciler) reconcileService(
 					WithTargetPort(intstr.FromString(*metricsPort.Name)).
 					WithProtocol(corev1.ProtocolTCP),
 			).
-			WithSelector(names.GetEtcdLabels(hostedControlPlane.Name)),
+			WithSelector(names.GetControlPlaneLabels(hostedControlPlane.Name, ComponentETCD)),
 		)
 
 	_, err := er.kubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).
@@ -108,7 +105,6 @@ func (er *EtcdClusterReconciler) reconcileService(
 func (er *EtcdClusterReconciler) reconcileStatefulSet(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	name string,
 ) (
 	*corev1ac.ContainerPortApplyConfiguration,
 	*corev1ac.ContainerPortApplyConfiguration,
@@ -135,10 +131,12 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 		etcdCertificatesVolumeMount,
 	)
 	template := corev1ac.PodTemplateSpec().
-		WithLabels(names.GetEtcdLabels(hostedControlPlane.Name)).
+		WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, ComponentETCD)).
 		WithSpec(corev1ac.PodSpec().
 			WithTopologySpreadConstraints(
-				operatorutil.CreatePodTopologySpreadConstraints(names.GetEtcdSelector(hostedControlPlane.Name)),
+				operatorutil.CreatePodTopologySpreadConstraints(
+					names.GetControlPlaneSelector(hostedControlPlane.Name, ComponentETCD),
+				),
 			).
 			WithContainers(container).
 			WithVolumes(etcdDataVolume, etcdCertificatesVolume),
@@ -152,20 +150,21 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 		return nil, nil, nil, fmt.Errorf("failed to calculate etcd secret checksum: %w", err)
 	}
 
-	statefulSet := appsacv1.StatefulSet(name, hostedControlPlane.Namespace).
-		WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+	statefulSetName := names.GetEtcdStatefulSetName(hostedControlPlane.Name)
+	statefulSet := appsacv1.StatefulSet(statefulSetName, hostedControlPlane.Namespace).
+		WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, ComponentETCD)).
 		WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 		WithAnnotations(map[string]string{
 			"checksum/secrets": secretChecksum,
 		}).
 		WithSpec(appsacv1.StatefulSetSpec().
-			WithServiceName(name).
+			WithServiceName(names.GetEtcdServiceName(hostedControlPlane.Name)).
 			WithReplicas(3).
 			WithPodManagementPolicy(appsv1.ParallelPodManagement).
 			WithUpdateStrategy(appsacv1.StatefulSetUpdateStrategy().WithRollingUpdate(
 				appsacv1.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
 			)).
-			WithSelector(names.GetEtcdSelector(hostedControlPlane.Name)).
+			WithSelector(names.GetControlPlaneSelector(hostedControlPlane.Name, ComponentETCD)).
 			WithTemplate(template.WithAnnotations(map[string]string{
 				"checksum/secrets": secretChecksum,
 			})).
@@ -175,11 +174,12 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 			),
 		)
 
-	_, err = er.kubernetesClient.AppsV1().StatefulSets(hostedControlPlane.Namespace).
+	statefulSetObj, err := er.kubernetesClient.AppsV1().StatefulSets(hostedControlPlane.Namespace).
 		Apply(ctx, statefulSet, applyOptions)
 
 	if apierrors.IsInvalid(err) {
-		if err := er.kubernetesClient.AppsV1().StatefulSets(hostedControlPlane.Namespace).Delete(ctx, name,
+		if err := er.kubernetesClient.AppsV1().StatefulSets(hostedControlPlane.Namespace).Delete(ctx,
+			statefulSetName,
 			metav1.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationOrphan)},
 		); err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to delete existing etcd StatefulSet: %w", err)
@@ -187,7 +187,16 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 		return nil, nil, nil, ErrStatefulSetRecreateRequired
 	}
 
-	return clientPort, peerPort, metricsPort, errorsUtil.IfErrErrorf("failed to apply etcd StatefulSet: %w", err)
+	if err != nil {
+		return nil, nil, nil, errorsUtil.IfErrErrorf("failed to apply etcd StatefulSet: %w", err)
+	}
+
+	// Check if the StatefulSet is ready
+	if statefulSetObj.Status.ReadyReplicas != *statefulSetObj.Spec.Replicas {
+		return nil, nil, nil, ErrStatefulsetNotReady
+	}
+
+	return clientPort, peerPort, metricsPort, nil
 }
 
 func (er *EtcdClusterReconciler) createVolumeFromTemplate(

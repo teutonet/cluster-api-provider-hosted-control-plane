@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
 
 func Start(ctx context.Context, version string, operatorConfig etc.Config) (err error) {
@@ -154,10 +155,16 @@ func setupControllers(
 		return fmt.Errorf("failed to create cert-manager client: %w", err)
 	}
 
+	gatewayClient, err := gwclient.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		return fmt.Errorf("failed to create gateway client: %w", err)
+	}
+
 	if err := (&hostedcontrolplane.HostedControlPlaneReconciler{
 		Client:            client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
 		KubernetesClient:  kubernetesClient,
 		CertManagerClient: certManagerClient,
+		GatewayClient:     gatewayClient,
 		ManagementCluster: &hostedcontrolplane.Management{
 			KubernetesClient: kubernetesClient,
 			TracingWrapper:   tracingWrapper,

@@ -18,7 +18,6 @@ import (
 //+kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
 //+kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 //+kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type == "Ready")].status`
-//+kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 //+kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 //+kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
 //+kubebuilder:metadata:annotations={"cert-manager.io/inject-ca-from=system/controller-manager-serving-certificate"}
@@ -92,6 +91,8 @@ type HostedControlPlaneStatus struct {
 	Initialized bool `json:"initialized"`
 	//+kubebuilder:validation:Optional
 	Ready bool `json:"ready"`
+	//+kubebuilder:validation:Optional
+	Version string `json:"version,omitempty"`
 
 	// Compatibility with upstream CAPI v1beta2 fields
 	//+kubebuilder:validation:Optional
