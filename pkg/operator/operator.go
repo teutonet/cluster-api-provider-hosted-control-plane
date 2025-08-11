@@ -59,9 +59,10 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (err 
 	if err != nil {
 		return fmt.Errorf("failed to get Kubernetes client config: %w", err)
 	}
-	config.Wrap(func(rt http.RoundTripper) http.RoundTripper {
+	tracingWraper := func(rt http.RoundTripper) http.RoundTripper {
 		return otelhttp.NewTransport(rt)
-	})
+	}
+	config.Wrap(tracingWraper)
 
 	options.LeaderElection = operatorConfig.LeaderElection
 	options.LeaderElectionID = api.GroupName
@@ -80,6 +81,7 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (err 
 
 	if err := setupControllers(ctx, mgr,
 		operatorConfig.MaxConcurrentReconciles,
+		tracingWraper,
 	); err != nil {
 		return err
 	}
@@ -133,6 +135,7 @@ func setupControllers(
 	ctx context.Context,
 	mgr manager.Manager,
 	maxConcurrentReconciles int,
+	tracingWrapper func(rt http.RoundTripper) http.RoundTripper,
 ) error {
 	hostedControlPlaneControllerName := "hcp-controller"
 	predicateLogger, err := logr.FromContext(ctx)
@@ -155,7 +158,11 @@ func setupControllers(
 		Client:            client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
 		KubernetesClient:  kubernetesClient,
 		CertManagerClient: certManagerClient,
-		Recorder:          mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
+		ManagementCluster: &hostedcontrolplane.Management{
+			KubernetesClient: kubernetesClient,
+			TracingWrapper:   tracingWrapper,
+		},
+		Recorder: mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
 	}).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}

@@ -26,7 +26,6 @@ type KubeconfigConfig struct {
 	Name                  string
 	SecretName            string
 	CertificateSecretName string
-	CertName              string
 	ClusterName           string
 	ApiServerEndpoint     capiv1.APIEndpoint
 }
@@ -49,39 +48,40 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 			kubeconfigs := []KubeconfigConfig{
 				{
 					Name:                  "admin",
-					SecretName:            names.GetKubeconfigSecretName(hostedControlPlane.Name, ""),
-					CertificateSecretName: names.GetAdminSecretName(hostedControlPlane.Name),
-					CertName:              names.GetAdminCertificateName(hostedControlPlane.Name),
+					SecretName:            fmt.Sprintf("%s-kubeconfig", hostedControlPlane.Name),
+					CertificateSecretName: names.GetAdminKubeconfigCertificateSecretName(hostedControlPlane.Name),
 					ClusterName:           hostedControlPlane.Name,
 					ApiServerEndpoint:     endpoint,
 				},
 				{
 					Name:                  konstants.KubeControllerManager,
-					CertificateSecretName: names.GetControllerManagerSecretName(hostedControlPlane.Name),
-					CertName:              names.GetControllerManagerCertificateName(hostedControlPlane.Name),
+					CertificateSecretName: names.GetControllerManagerKubeconfigCertificateSecretName(hostedControlPlane.Name),
 					ClusterName:           hostedControlPlane.Name,
 					ApiServerEndpoint:     localEndpoint,
 				},
 				{
 					Name:                  konstants.KubeScheduler,
-					CertificateSecretName: names.GetSchedulerSecretName(hostedControlPlane.Name),
-					CertName:              names.GetSchedulerCertificateName(hostedControlPlane.Name),
+					CertificateSecretName: names.GetSchedulerKubeconfigCertificateSecretName(hostedControlPlane.Name),
 					ClusterName:           hostedControlPlane.Name,
 					ApiServerEndpoint:     localEndpoint,
 				},
 				{
 					Name:                  "konnectivity-client",
-					CertificateSecretName: names.GetKonnectivityClientSecretName(hostedControlPlane.Name),
-					CertName:              names.GetKonnectivityClientCertificateName(hostedControlPlane.Name),
+					CertificateSecretName: names.GetKonnectivityClientKubeconfigCertificateSecretName(hostedControlPlane.Name),
 					ClusterName:           hostedControlPlane.Name,
 					ApiServerEndpoint:     localEndpoint,
 				},
 				{
 					Name:                  "controller",
-					CertificateSecretName: names.GetControllerSecretName(hostedControlPlane.Name),
-					CertName:              names.GetControllerCertificateName(hostedControlPlane.Name),
+					CertificateSecretName: names.GetControllerKubeconfigCertificateSecretName(hostedControlPlane.Name),
 					ClusterName:           hostedControlPlane.Name,
-					ApiServerEndpoint:     localEndpoint,
+					ApiServerEndpoint: capiv1.APIEndpoint{
+						Host: fmt.Sprintf("%s.%s.svc",
+							names.GetServiceName(hostedControlPlane.Name),
+							hostedControlPlane.Namespace,
+						),
+						Port: 443,
+					},
 				},
 			}
 
@@ -99,7 +99,7 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 	)
 }
 
-//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;update;patch
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;patch
 
 func (kr *KubeconfigReconciler) reconcileKubeconfig(
 	ctx context.Context,
@@ -111,7 +111,6 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 			span.SetAttributes(
 				attribute.String("KubeconfigName", kubeconfig.Name),
 				attribute.String("CertificateSecretName", kubeconfig.CertificateSecretName),
-				attribute.String("CertificateName", kubeconfig.CertName),
 			)
 
 			certSecret, err := kr.kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
