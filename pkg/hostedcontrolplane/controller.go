@@ -11,9 +11,9 @@ import (
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	"github.com/go-logr/logr"
+	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
-
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
@@ -40,15 +40,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
+	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
+
+var ErrRequeueRequired = errors.New("requeue required")
 
 const (
 	hostedControlPlaneReconcilerTracer = "HostedControlPlaneReconciler"
 	hostedControlPlaneControllerName   = "hosted-control-plane-controller"
+	certificateRenewBefore             = int32(90)
 )
-
-var certificateRenewBefore = int32(90)
 
 var applyOptions = metav1.ApplyOptions{
 	FieldManager: hostedControlPlaneControllerName,
@@ -69,15 +71,11 @@ func getOwnerReferenceApplyConfiguration(
 
 var hostedControlPlaneFinalizer = fmt.Sprintf("hcp.%s", api.GroupName)
 
-var (
-	ErrCANotReady          = errors.New("CA not ready")
-	ErrCertificateNotReady = errors.New("certificate not ready")
-)
-
 type HostedControlPlaneReconciler struct {
 	Client            client.Client
 	KubernetesClient  kubernetes.Interface
 	CertManagerClient cmclient.Interface
+	GatewayClient     gwclient.Interface
 	Recorder          record.EventRecorder
 	ManagementCluster ManagementCluster
 }
@@ -87,7 +85,7 @@ type HostedControlPlaneReconciler struct {
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=watch;list
 //+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=watch;list
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=watch;list
-//+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=watch;list
+//+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=tlsroutes,verbs=watch;list
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=watch;list
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes,verbs=watch;list
 
@@ -105,7 +103,7 @@ func (r *HostedControlPlaneReconciler) SetupWithManager(
 			Owns(&corev1.ConfigMap{}).
 			Owns(&appsv1.StatefulSet{}).
 			Owns(&appsv1.Deployment{}).
-			Owns(&gwv1.HTTPRoute{}).
+			Owns(&gwv1alpha2.TLSRoute{}).
 			Watches(
 				&capiv1.Cluster{},
 				handler.EnqueueRequestsFromMapFunc(r.clusterToHostedControlPlane),
@@ -170,12 +168,6 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 			}
 
 			defer func() {
-				if err := r.updateStatus(ctx, hostedControlPlane); err != nil {
-					reterr = kerrors.NewAggregate([]error{reterr, err})
-				}
-
-				r.updateV1Beta2Status(ctx, hostedControlPlane)
-
 				if err := r.patch(ctx, patchHelper, hostedControlPlane); err != nil {
 					reterr = kerrors.NewAggregate([]error{reterr, err})
 				}
@@ -198,8 +190,8 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 			if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, hostedControlPlane); err != nil ||
 				isPaused ||
 				requeue {
-				if err == nil && isPaused {
-					r.pauseDeployment(ctx, hostedControlPlane)
+				if err == nil || isPaused || requeue {
+					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 				}
 				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to verify paused condition: %w", err)
 			}
@@ -216,18 +208,23 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 func (r *HostedControlPlaneReconciler) patch(
 	ctx context.Context,
 	patchHelper *patch.Helper,
-	teutonetesCluster *v1alpha1.HostedControlPlane,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
 	options ...patch.Option,
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "Patch",
 		func(ctx context.Context, span trace.Span) error {
-			applicableConditions := []capiv1.ConditionType{
-				// TODO: add conditions
-			}
-
-			conditions.SetSummary(teutonetesCluster,
-				conditions.WithConditions(applicableConditions...),
+			applicableConditions := slices.FilterMap(hostedControlPlane.Status.Conditions,
+				func(condition capiv1.Condition, _ int) (capiv1.ConditionType, bool) {
+					if condition.Type != capiv1.ReadyCondition {
+						return condition.Type, true
+					} else {
+						return "", false
+					}
+				},
 			)
+			conditions.SetSummary(hostedControlPlane, conditions.WithConditions(
+				applicableConditions...,
+			))
 
 			options = append(options,
 				patch.WithOwnedConditions{
@@ -235,7 +232,7 @@ func (r *HostedControlPlaneReconciler) patch(
 				},
 			)
 			return errorsUtil.IfErrErrorf("failed to patch HostedControlPlane: %w",
-				patchHelper.Patch(ctx, teutonetesCluster, options...),
+				patchHelper.Patch(ctx, hostedControlPlane, options...),
 			)
 		},
 	)
@@ -261,8 +258,8 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 
 			certificateReconciler := &CertificateReconciler{
 				certManagerClient:     r.CertManagerClient,
-				caCertificateDuration: 1 * time.Hour,
-				certificateDuration:   1 * time.Hour,
+				caCertificateDuration: 365 * 24 * time.Hour,
+				certificateDuration:   (365 * 24 * time.Hour) / 12,
 			}
 			phases := []Phase{
 				{
@@ -288,7 +285,7 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 						return kubeconfigReconciler.ReconcileKubeconfigs(
 							ctx,
 							hostedControlPlane,
-							cluster.Spec.ControlPlaneEndpoint,
+							cluster,
 						)
 					},
 					Condition:    v1alpha1.KubeconfigReadyCondition,
@@ -332,10 +329,12 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					FailedReason: v1alpha1.WorkloadClusterResourcesFailedReason,
 				},
 				{
-					Name:         "HTTPRoute",
-					Reconcile:    r.reconcileHTTPRoute,
-					Condition:    v1alpha1.HTTPRouteReadyCondition,
-					FailedReason: v1alpha1.HTTPRouteFailedReason,
+					Name: "TLSRoute",
+					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
+						return r.reconcileTLSRoute(ctx, hostedControlPlane, cluster)
+					},
+					Condition:    v1alpha1.TLSRouteReadyCondition,
+					FailedReason: v1alpha1.TLSRouteFailedReason,
 				},
 			}
 
@@ -348,9 +347,7 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 						capiv1.ConditionSeverityError,
 						"Reconciling %s failed: %v", phase.Name, err,
 					)
-					if errors.Is(err, ErrCANotReady) ||
-						errors.Is(err, ErrCertificateNotReady) ||
-						errors.Is(err, ErrStatefulSetRecreateRequired) {
+					if errors.Is(err, ErrRequeueRequired) {
 						return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 					}
 					return reconcile.Result{}, err
@@ -364,7 +361,6 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 	)
 }
 
-// reconcileDelete handles the deletion of the HostedControlPlane resource.
 func (r *HostedControlPlaneReconciler) reconcileDelete(
 	ctx context.Context,
 	_ *patch.Helper,
@@ -374,33 +370,9 @@ func (r *HostedControlPlaneReconciler) reconcileDelete(
 		func(ctx context.Context, span trace.Span) (ctrl.Result, error) {
 			controllerutil.RemoveFinalizer(hostedControlPlane, hostedControlPlaneFinalizer)
 
+			// all resources will be cleaned up by the garbage collector because of the owner references
+
 			return ctrl.Result{}, nil
 		},
 	)
-}
-
-func (r *HostedControlPlaneReconciler) updateStatus(
-	ctx context.Context,
-	_ *v1alpha1.HostedControlPlane,
-) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "UpdateStatus",
-		func(ctx context.Context, span trace.Span) error {
-			// TODO: Implement status update logic
-			return nil
-		},
-	)
-}
-
-func (r *HostedControlPlaneReconciler) updateV1Beta2Status(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) {
-	// TODO: Implement v1beta2 status update logic
-}
-
-func (r *HostedControlPlaneReconciler) pauseDeployment(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) {
-	// TODO: Implement deployment pause logic
 }

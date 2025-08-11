@@ -54,7 +54,7 @@ func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 				names.GetKonnectivityConfigMapName(hostedControlPlane.Name),
 				hostedControlPlane.Namespace,
 			).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string]string{
 					EgressSelectorConfigurationFileName: buf.String(),

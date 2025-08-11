@@ -12,16 +12,15 @@ import (
 	certmanagermetav1ac "github.com/cert-manager/cert-manager/pkg/client/applyconfigurations/meta/v1"
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	slices "github.com/samber/lo"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
+	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-
-	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
-	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
-	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
-	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 )
 
 type CertificateReconciler struct {
@@ -29,6 +28,11 @@ type CertificateReconciler struct {
 	caCertificateDuration time.Duration
 	certificateDuration   time.Duration
 }
+
+var (
+	ErrCANotReady          = fmt.Errorf("CA not ready: %w", ErrRequeueRequired)
+	ErrCertificateNotReady = fmt.Errorf("certificate not ready: %w", ErrRequeueRequired)
+)
 
 //+kubebuilder:rbac:groups=cert-manager.io,resources=issuers,verbs=create;update;patch
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=create;update;patch
@@ -63,7 +67,7 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 			}
 
 			rootIssuer := certmanagerv1ac.Issuer(names.GetRootIssuerName(hostedControlPlane.Name), hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithSelfSigned(certmanagerv1ac.SelfSignedIssuer()),
@@ -91,7 +95,7 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 			}
 
 			caIssuer := certmanagerv1ac.Issuer(names.GetCAIssuerName(hostedControlPlane.Name), hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
@@ -122,7 +126,7 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 			frontProxyCAIssuer := certmanagerv1ac.Issuer(
 				names.GetFrontProxyCAName(hostedControlPlane.Name), hostedControlPlane.Namespace,
 			).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
@@ -153,7 +157,7 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 			etcdCAIssuer := certmanagerv1ac.Issuer(
 				names.GetEtcdCAName(hostedControlPlane.Name), hostedControlPlane.Namespace,
 			).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
@@ -169,7 +173,7 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 
 func (cr *CertificateReconciler) createCertificateSpecs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	clusterDomain string,
+	cluster *capiv1.Cluster,
 ) []struct {
 	name string
 	spec *certmanagerv1ac.CertificateSpecApplyConfiguration
@@ -229,13 +233,8 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 					names.GetServiceName(hostedControlPlane.Name),
 					hostedControlPlane.Namespace,
 				),
-				names.GetInternalServiceEndpoint(hostedControlPlane.Name, hostedControlPlane.Namespace),
-				fmt.Sprintf(
-					"%s.%s.svc.%s",
-					names.GetServiceName(hostedControlPlane.Name),
-					hostedControlPlane.Namespace,
-					clusterDomain,
-				),
+				names.GetInternalServiceHost(hostedControlPlane.Name, hostedControlPlane.Namespace),
+				cluster.Spec.ControlPlaneEndpoint.Host,
 			),
 		},
 		{
@@ -354,12 +353,7 @@ func (cr *CertificateReconciler) ReconcileCertificates(
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileCertificates",
 		func(ctx context.Context, span trace.Span) error {
-			clusterDomain := "cluster.local"
-			if cluster.Spec.ClusterNetwork != nil && cluster.Spec.ClusterNetwork.ServiceDomain != "" {
-				clusterDomain = cluster.Spec.ClusterNetwork.ServiceDomain
-			}
-
-			for _, cert := range cr.createCertificateSpecs(hostedControlPlane, clusterDomain) {
+			for _, cert := range cr.createCertificateSpecs(hostedControlPlane, cluster) {
 				if certObj, err := cr.reconcileCertificate(ctx, hostedControlPlane, cert.name, cert.spec); err != nil {
 					return fmt.Errorf("failed to reconcile certificate: %w", err)
 				} else if !cr.isCertificateReady(certObj) {
@@ -389,11 +383,11 @@ func (cr *CertificateReconciler) reconcileCertificate(
 			)
 
 			certificate := certmanagerv1ac.Certificate(name, hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(spec.WithRevisionHistoryLimit(1).
 					WithSecretTemplate(certmanagerv1ac.CertificateSecretTemplate().
-						WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)),
+						WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")),
 					),
 				)
 

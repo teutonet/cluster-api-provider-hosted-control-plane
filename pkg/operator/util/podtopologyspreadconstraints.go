@@ -10,7 +10,7 @@ func CreatePodTopologySpreadConstraints(
 	labelSelector *metav1ac.LabelSelectorApplyConfiguration,
 ) *corev1ac.TopologySpreadConstraintApplyConfiguration {
 	return corev1ac.TopologySpreadConstraint().
-		WithTopologyKey("kubernetes.io/hostname").
+		WithTopologyKey(corev1.LabelHostname).
 		WithLabelSelector(labelSelector).
 		WithMaxSkew(1).
 		WithWhenUnsatisfiable(corev1.ScheduleAnyway)

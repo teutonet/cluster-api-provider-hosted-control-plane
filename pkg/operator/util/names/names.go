@@ -64,7 +64,6 @@ func GetServiceAccountSecretName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-service-account", controlPlaneName)
 }
 
-// Services cannot start with numbers, so we prefix with "s-".
 func GetServiceName(controlPlaneName string) string {
 	return fmt.Sprintf("s-%s", controlPlaneName)
 }
@@ -150,14 +149,14 @@ func GetEtcdAPIServerClientSecretName(controlPlaneName string) string {
 }
 
 func GetEtcdServiceName(controlPlaneName string) string {
-	return fmt.Sprintf("e-%s", controlPlaneName)
+	return fmt.Sprintf("e-%s-etcd", controlPlaneName)
 }
 
 func GetEtcdStatefulSetName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-etcd", controlPlaneName)
 }
 
-func GetInternalServiceEndpoint(controlPlaneName string, namespace string) string {
+func GetInternalServiceHost(controlPlaneName string, namespace string) string {
 	return fmt.Sprintf("%s.%s.svc", GetServiceName(controlPlaneName), namespace)
 }
 

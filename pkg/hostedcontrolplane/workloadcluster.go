@@ -40,6 +40,18 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 					Condition:    v1alpha1.KubeletConfigRBACReadyCondition,
 					FailedReason: v1alpha1.KubeletConfigRBACFailedReason,
 				},
+				{
+					Name:         "node RBAC",
+					Reconcile:    workloadClusterReconciler.ReconcileNodeRBAC,
+					Condition:    v1alpha1.NodeRBACReadyCondition,
+					FailedReason: v1alpha1.NodeRBACFailedReason,
+				},
+				{
+					Name:         "cluster admin binding",
+					Reconcile:    workloadClusterReconciler.ReconcileClusterAdminBinding,
+					Condition:    v1alpha1.ClusterAdminBindingReadyCondition,
+					FailedReason: v1alpha1.ClusterAdminBindingFailedReason,
+				},
 				// TODO: Add more workload phases here
 				// {
 				//     Name: "kube-proxy",
@@ -66,6 +78,8 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 					conditions.MarkTrue(hostedControlPlane, phase.Condition)
 				}
 			}
+
+			hostedControlPlane.Status.Initialized = true
 
 			return nil
 		},

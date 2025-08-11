@@ -26,13 +26,16 @@ var workloadApplyOptions = metav1.ApplyOptions{
 	Force:        true,
 }
 
+var nodeBootstrapTokenAuthGroup = "system:bootstrappers:kubeadm:default-node-token"
+
 func (wr *WorkloadClusterReconciler) ReconcileKubeletConfigRBAC(
 	ctx context.Context,
 	_ *v1alpha1.HostedControlPlane,
 ) error {
 	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileKubeletConfigRBAC",
 		func(ctx context.Context, span trace.Span) error {
-			role := rbacv1ac.Role("kubeadm:kubelet-config", metav1.NamespaceSystem).
+			name := "kubeadm:kubelet-config"
+			role := rbacv1ac.Role(name, metav1.NamespaceSystem).
 				WithRules(
 					rbacv1ac.PolicyRule().
 						WithAPIGroups("").
@@ -46,7 +49,7 @@ func (wr *WorkloadClusterReconciler) ReconcileKubeletConfigRBAC(
 				return errorsUtil.IfErrErrorf("failed to apply kubelet config role: %w", err)
 			}
 
-			roleBinding := rbacv1ac.RoleBinding("kubelet-config-role-binding", metav1.NamespaceSystem).
+			roleBinding := rbacv1ac.RoleBinding(name, metav1.NamespaceSystem).
 				WithRoleRef(
 					rbacv1ac.RoleRef().
 						WithAPIGroup(rbacv1.GroupName).
@@ -59,13 +62,81 @@ func (wr *WorkloadClusterReconciler) ReconcileKubeletConfigRBAC(
 						WithName("system:nodes"),
 					rbacv1ac.Subject().
 						WithKind(rbacv1.GroupKind).
-						WithName("system:bootstrappers:kubeadm:default-node-token"),
+						WithName(nodeBootstrapTokenAuthGroup),
 				)
 
 			_, err = wr.kubernetesClient.RbacV1().RoleBindings(metav1.NamespaceSystem).Apply(ctx,
 				roleBinding, workloadApplyOptions,
 			)
 			return errorsUtil.IfErrErrorf("failed to apply kubelet config role binding: %w", err)
+		},
+	)
+}
+
+func (wr *WorkloadClusterReconciler) ReconcileNodeRBAC(
+	ctx context.Context,
+	_ *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileNodeRBAC",
+		func(ctx context.Context, span trace.Span) error {
+			name := "kubeadm:get-nodes"
+			clusterRole := rbacv1ac.ClusterRole(name).
+				WithRules(
+					rbacv1ac.PolicyRule().
+						WithAPIGroups("").
+						WithResources("nodes").
+						WithVerbs("get"),
+				)
+
+			_, err := wr.kubernetesClient.RbacV1().ClusterRoles().Apply(ctx, clusterRole, workloadApplyOptions)
+			if err != nil {
+				return errorsUtil.IfErrErrorf("failed to apply node cluster role: %w", err)
+			}
+
+			clusterRoleBinding := rbacv1ac.ClusterRoleBinding(name).
+				WithRoleRef(
+					rbacv1ac.RoleRef().
+						WithAPIGroup(rbacv1.GroupName).
+						WithKind(*clusterRole.Kind).
+						WithName(*clusterRole.Name),
+				).
+				WithSubjects(
+					rbacv1ac.Subject().
+						WithKind(rbacv1.GroupKind).
+						WithName(nodeBootstrapTokenAuthGroup),
+				)
+
+			_, err = wr.kubernetesClient.RbacV1().
+				ClusterRoleBindings().
+				Apply(ctx, clusterRoleBinding, workloadApplyOptions)
+			return errorsUtil.IfErrErrorf("failed to apply node cluster role binding: %w", err)
+		},
+	)
+}
+
+func (wr *WorkloadClusterReconciler) ReconcileClusterAdminBinding(
+	ctx context.Context,
+	_ *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileClusterAdminBinding",
+		func(ctx context.Context, span trace.Span) error {
+			clusterRoleBinding := rbacv1ac.ClusterRoleBinding("kubeadm:cluster-admins").
+				WithRoleRef(
+					rbacv1ac.RoleRef().
+						WithAPIGroup(rbacv1.GroupName).
+						WithKind("ClusterRole").
+						WithName("cluster-admin"),
+				).
+				WithSubjects(
+					rbacv1ac.Subject().
+						WithKind(rbacv1.GroupKind).
+						WithName("kubeadm:cluster-admins"),
+				)
+
+			_, err := wr.kubernetesClient.RbacV1().
+				ClusterRoleBindings().
+				Apply(ctx, clusterRoleBinding, workloadApplyOptions)
+			return errorsUtil.IfErrErrorf("failed to apply cluster admin binding: %w", err)
 		},
 	)
 }

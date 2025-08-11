@@ -10,6 +10,7 @@ import (
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	kubeadmv1 "sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 func NewScheme() (*runtime.Scheme, error) {
@@ -23,6 +24,7 @@ func NewScheme() (*runtime.Scheme, error) {
 		v1alpha1.AddToScheme,
 		certmanagerv1.AddToScheme,
 		gwv1.Install,
+		gwv1alpha2.Install,
 	}
 
 	for _, f := range addToSchemeFuncs {

@@ -37,7 +37,7 @@ type KubeconfigReconciler struct {
 func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	endpoint capiv1.APIEndpoint,
+	cluster *capiv1.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKubeconfig",
 		func(ctx context.Context, span trace.Span) error {
@@ -45,50 +45,49 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 				Host: "localhost",
 				Port: 6443,
 			}
+			controlPlaneName := hostedControlPlane.Name
+			internalServiceHost := names.GetInternalServiceHost(controlPlaneName, hostedControlPlane.Namespace)
+			internalServiceEndpoint := capiv1.APIEndpoint{
+				Host: internalServiceHost,
+				Port: 443,
+			}
 			kubeconfigs := []KubeconfigConfig{
 				{
 					Name:                  "admin",
-					SecretName:            fmt.Sprintf("%s-kubeconfig", hostedControlPlane.Name),
-					CertificateSecretName: names.GetAdminKubeconfigCertificateSecretName(hostedControlPlane.Name),
-					ClusterName:           hostedControlPlane.Name,
-					ApiServerEndpoint:     endpoint,
+					SecretName:            fmt.Sprintf("%s-kubeconfig", cluster.Name),
+					CertificateSecretName: names.GetAdminKubeconfigCertificateSecretName(controlPlaneName),
+					ClusterName:           controlPlaneName,
+					ApiServerEndpoint:     cluster.Spec.ControlPlaneEndpoint,
 				},
 				{
-					Name: konstants.KubeControllerManager,
-					CertificateSecretName: names.GetControllerManagerKubeconfigCertificateSecretName(
-						hostedControlPlane.Name,
-					),
-					ClusterName:       hostedControlPlane.Name,
-					ApiServerEndpoint: localEndpoint,
+					Name:                  konstants.KubeControllerManager,
+					CertificateSecretName: names.GetControllerManagerKubeconfigCertificateSecretName(controlPlaneName),
+					ClusterName:           controlPlaneName,
+					ApiServerEndpoint:     internalServiceEndpoint,
 				},
 				{
 					Name:                  konstants.KubeScheduler,
-					CertificateSecretName: names.GetSchedulerKubeconfigCertificateSecretName(hostedControlPlane.Name),
-					ClusterName:           hostedControlPlane.Name,
+					CertificateSecretName: names.GetSchedulerKubeconfigCertificateSecretName(controlPlaneName),
+					ClusterName:           controlPlaneName,
+					ApiServerEndpoint:     internalServiceEndpoint,
+				},
+				{
+					Name:                  "konnectivity-client",
+					CertificateSecretName: names.GetKonnectivityClientKubeconfigCertificateSecretName(controlPlaneName),
+					ClusterName:           controlPlaneName,
 					ApiServerEndpoint:     localEndpoint,
 				},
 				{
-					Name: "konnectivity-client",
-					CertificateSecretName: names.GetKonnectivityClientKubeconfigCertificateSecretName(
-						hostedControlPlane.Name,
-					),
-					ClusterName:       hostedControlPlane.Name,
-					ApiServerEndpoint: localEndpoint,
-				},
-				{
 					Name:                  "controller",
-					CertificateSecretName: names.GetControllerKubeconfigCertificateSecretName(hostedControlPlane.Name),
-					ClusterName:           hostedControlPlane.Name,
-					ApiServerEndpoint: capiv1.APIEndpoint{
-						Host: names.GetInternalServiceEndpoint(hostedControlPlane.Name, hostedControlPlane.Namespace),
-						Port: 443,
-					},
+					CertificateSecretName: names.GetControllerKubeconfigCertificateSecretName(controlPlaneName),
+					ClusterName:           controlPlaneName,
+					ApiServerEndpoint:     internalServiceEndpoint,
 				},
 			}
 
 			for _, kubeconfig := range kubeconfigs {
 				if kubeconfig.SecretName == "" {
-					kubeconfig.SecretName = names.GetKubeconfigSecretName(hostedControlPlane.Name, kubeconfig.Name)
+					kubeconfig.SecretName = names.GetKubeconfigSecretName(controlPlaneName, kubeconfig.Name)
 				}
 				if err := kr.reconcileKubeconfig(ctx, hostedControlPlane, kubeconfig); err != nil {
 					return fmt.Errorf("failed to reconcile kubeconfig: %w", err)
@@ -133,7 +132,7 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 			}
 
 			kubeconfigSecret := corev1ac.Secret(kubeconfig.SecretName, hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
+				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string][]byte{
 					capisecretutil.KubeconfigDataName: kr.generateKubeconfig(
