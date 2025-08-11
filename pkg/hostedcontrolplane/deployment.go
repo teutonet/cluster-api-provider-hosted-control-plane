@@ -50,7 +50,6 @@ func (dr *APIServerResourcesReconciler) ReconcileAPIServerResources(
 	return errorsUtil.IfErrErrorf("failed to reconcile API server service: %w",
 		dr.reconcileAPIServerService(ctx, hostedControlPlane, apiPort),
 	)
-
 }
 
 func (dr *APIServerResourcesReconciler) reconcileAPIServerDeployment(
@@ -432,7 +431,7 @@ func (dr *APIServerResourcesReconciler) buildAPIServerArgs(
 			EgressSelectorConfigurationFileName,
 		),
 		"allow-privileged":                   "true",
-		"authorization-mode":                 strings.Join([]string{konstants.ModeNode, konstants.ModeRBAC}, ","),
+		"authorization-mode":                 konstants.ModeNode + "," + konstants.ModeRBAC,
 		"client-ca-file":                     path.Join(certificatesDir, konstants.CACertName),
 		"enable-bootstrap-token-auth":        "true",
 		"kubelet-client-certificate":         path.Join(certificatesDir, konstants.APIServerKubeletClientCertName),

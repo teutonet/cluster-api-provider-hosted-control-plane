@@ -229,10 +229,7 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 					names.GetServiceName(hostedControlPlane.Name),
 					hostedControlPlane.Namespace,
 				),
-				fmt.Sprintf("%s.%s.svc",
-					names.GetServiceName(hostedControlPlane.Name),
-					hostedControlPlane.Namespace,
-				),
+				names.GetInternalServiceEndpoint(hostedControlPlane.Name, hostedControlPlane.Namespace),
 				fmt.Sprintf(
 					"%s.%s.svc.%s",
 					names.GetServiceName(hostedControlPlane.Name),

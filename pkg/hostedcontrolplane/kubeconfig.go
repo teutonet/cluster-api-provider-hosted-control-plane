@@ -54,10 +54,12 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 					ApiServerEndpoint:     endpoint,
 				},
 				{
-					Name:                  konstants.KubeControllerManager,
-					CertificateSecretName: names.GetControllerManagerKubeconfigCertificateSecretName(hostedControlPlane.Name),
-					ClusterName:           hostedControlPlane.Name,
-					ApiServerEndpoint:     localEndpoint,
+					Name: konstants.KubeControllerManager,
+					CertificateSecretName: names.GetControllerManagerKubeconfigCertificateSecretName(
+						hostedControlPlane.Name,
+					),
+					ClusterName:       hostedControlPlane.Name,
+					ApiServerEndpoint: localEndpoint,
 				},
 				{
 					Name:                  konstants.KubeScheduler,
@@ -66,20 +68,19 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 					ApiServerEndpoint:     localEndpoint,
 				},
 				{
-					Name:                  "konnectivity-client",
-					CertificateSecretName: names.GetKonnectivityClientKubeconfigCertificateSecretName(hostedControlPlane.Name),
-					ClusterName:           hostedControlPlane.Name,
-					ApiServerEndpoint:     localEndpoint,
+					Name: "konnectivity-client",
+					CertificateSecretName: names.GetKonnectivityClientKubeconfigCertificateSecretName(
+						hostedControlPlane.Name,
+					),
+					ClusterName:       hostedControlPlane.Name,
+					ApiServerEndpoint: localEndpoint,
 				},
 				{
 					Name:                  "controller",
 					CertificateSecretName: names.GetControllerKubeconfigCertificateSecretName(hostedControlPlane.Name),
 					ClusterName:           hostedControlPlane.Name,
 					ApiServerEndpoint: capiv1.APIEndpoint{
-						Host: fmt.Sprintf("%s.%s.svc",
-							names.GetServiceName(hostedControlPlane.Name),
-							hostedControlPlane.Namespace,
-						),
+						Host: names.GetInternalServiceEndpoint(hostedControlPlane.Name, hostedControlPlane.Namespace),
 						Port: 443,
 					},
 				},

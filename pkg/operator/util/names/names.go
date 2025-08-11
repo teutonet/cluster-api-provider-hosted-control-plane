@@ -154,7 +154,11 @@ func GetEtcdServiceName(controlPlaneName string) string {
 }
 
 func GetEtcdStatefulSetName(controlPlaneName string) string {
-	return GetEtcdServiceName(controlPlaneName)
+	return fmt.Sprintf("%s-etcd", controlPlaneName)
+}
+
+func GetInternalServiceEndpoint(controlPlaneName string, namespace string) string {
+	return fmt.Sprintf("%s.%s.svc", GetServiceName(controlPlaneName), namespace)
 }
 
 func GetEtcdDNSNames(hostedControlPlane *v1alpha1.HostedControlPlane) map[string]string {
