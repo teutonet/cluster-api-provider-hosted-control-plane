@@ -3,50 +3,51 @@ package hostedcontrolplane
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
-	"k8s.io/client-go/rest"
-	"sigs.k8s.io/cluster-api/controllers/clustercache"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/cluster-api/util/secret"
 )
 
 type ManagementCluster interface {
-	client.Reader
-
-	GetWorkloadCluster(ctx context.Context, clusterKey client.ObjectKey) (WorkloadCluster, error)
+	GetWorkloadClusterClient(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) (*kubernetes.Clientset, error)
 }
 
 type Management struct {
-	Client       client.Reader
-	ClusterCache clustercache.ClusterCache
+	KubernetesClient kubernetes.Interface
+	TracingWrapper   func(rt http.RoundTripper) http.RoundTripper
 }
 
 var _ ManagementCluster = &Management{}
 
-func (m *Management) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	return fmt.Errorf("failed to get object: %w", m.Client.Get(ctx, key, obj, opts...))
-}
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
-func (m *Management) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	return fmt.Errorf("failed to list objects: %w", m.Client.List(ctx, list, opts...))
-}
-
-func (m *Management) GetWorkloadCluster(ctx context.Context, clusterKey client.ObjectKey) (WorkloadCluster, error) {
-	restConfig, err := m.ClusterCache.GetRESTConfig(ctx, clusterKey)
+func (m *Management) GetWorkloadClusterClient(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) (*kubernetes.Clientset, error) {
+	kubeConfigSecret, err := m.KubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
+		Get(ctx, names.GetKubeconfigSecretName(hostedControlPlane.Name, "controller"), metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get REST config: %w", err)
-	}
-	restConfig = rest.CopyConfig(restConfig)
-	restConfig.Timeout = 30 * time.Second
-
-	workloadClusterClient, err := m.ClusterCache.GetClient(ctx, clusterKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get workload cluster client: %w", err)
+		return nil, fmt.Errorf("failed to get kubeconfig for workload cluster: %w", err)
 	}
 
-	return &Workload{
-		restConfig:      restConfig,
-		Client:          workloadClusterClient,
-		CoreDNSMigrator: &CoreDNSMigrator{},
-	}, nil
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeConfigSecret.Data[secret.KubeconfigDataName])
+	if err != nil {
+		return nil, fmt.Errorf("failed to get REST config for workload cluster: %w", err)
+	}
+	restConfig.Timeout = 10 * time.Second
+	restConfig.Wrap(m.TracingWrapper)
+
+	workloadClusterClient, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes client for workload cluster: %w", err)
+	}
+
+	return workloadClusterClient, nil
 }

@@ -274,47 +274,47 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(hostedControlPlane.Name),
 				"kubernetes-admin",
-				names.GetAdminSecretName(hostedControlPlane.Name),
+				names.GetAdminKubeconfigCertificateSecretName(hostedControlPlane.Name),
 				certmanagerv1.UsageClientAuth,
 			).WithSubject(certmanagerv1ac.X509Subject().
 				WithOrganizations(konstants.SystemPrivilegedGroup),
 			),
 		},
 		{
-			name: names.GetControllerManagerCertificateName(hostedControlPlane.Name),
+			name: names.GetControllerManagerKubeconfigCertificateName(hostedControlPlane.Name),
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(hostedControlPlane.Name),
 				konstants.ControllerManagerUser,
-				names.GetControllerManagerSecretName(hostedControlPlane.Name),
+				names.GetControllerManagerKubeconfigCertificateSecretName(hostedControlPlane.Name),
 				certmanagerv1.UsageClientAuth,
 			),
 		},
 		{
-			name: names.GetSchedulerCertificateName(hostedControlPlane.Name),
+			name: names.GetSchedulerKubeconfigCertificateName(hostedControlPlane.Name),
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(hostedControlPlane.Name),
 				konstants.SchedulerUser,
-				names.GetSchedulerSecretName(hostedControlPlane.Name),
+				names.GetSchedulerKubeconfigCertificateSecretName(hostedControlPlane.Name),
 				certmanagerv1.UsageClientAuth,
 			),
 		},
 		{
-			name: names.GetKonnectivityClientCertificateName(hostedControlPlane.Name),
+			name: names.GetKonnectivityClientKubeconfigCertificateName(hostedControlPlane.Name),
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(hostedControlPlane.Name),
 				"system:konnectivity-server",
-				names.GetKonnectivityClientSecretName(hostedControlPlane.Name),
+				names.GetKonnectivityClientKubeconfigCertificateSecretName(hostedControlPlane.Name),
 				certmanagerv1.UsageClientAuth, certmanagerv1.UsageServerAuth, certmanagerv1.UsageCodeSigning,
 			).WithSubject(certmanagerv1ac.X509Subject().
 				WithOrganizations(konstants.SystemPrivilegedGroup),
 			),
 		},
 		{
-			name: names.GetControllerCertificateName(hostedControlPlane.Name),
+			name: names.GetControllerKubeconfigCertificateName(hostedControlPlane.Name),
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(hostedControlPlane.Name),
 				"system:controller",
-				names.GetControllerSecretName(hostedControlPlane.Name),
+				names.GetControllerKubeconfigCertificateSecretName(hostedControlPlane.Name),
 				certmanagerv1.UsageClientAuth,
 			).WithSubject(certmanagerv1ac.X509Subject().
 				WithOrganizations(konstants.SystemPrivilegedGroup),

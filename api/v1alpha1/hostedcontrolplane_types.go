@@ -49,8 +49,6 @@ type HostedControlPlaneSpec struct {
 	Replicas *int32 `json:"replicas,omitempty"`
 	//+kubebuilder:validation:Optional
 	Deployment HostedControlPlaneDeployment `json:"deployment,omitempty"`
-	//+kubebuilder:validation:Optional
-	ControlPlaneEndpoint *capiv1.APIEndpoint `json:"controlPlaneEndpoint"`
 }
 
 type HostedControlPlaneDeployment struct {

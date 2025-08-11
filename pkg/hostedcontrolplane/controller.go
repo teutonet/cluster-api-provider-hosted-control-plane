@@ -27,7 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	apiserverv1beta1 "k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
@@ -77,12 +76,8 @@ func getOwnerReferenceApplyConfiguration(
 var hostedControlPlaneFinalizer = fmt.Sprintf("hcp.%s", api.GroupName)
 
 var (
-	ErrCloudNotReady            = errors.New("TeutonetesCloud is not ready")
-	ErrDomainNotFound           = errors.New("OpenStack domain not found")
-	ErrFlavorNotFound           = errors.New("OpenStack flavor not found")
-	ErrAvailabilityZoneNotFound = errors.New("OpenStack availability zone not found")
-	ErrCANotReady               = errors.New("CA not ready")
-	ErrCertificateNotReady      = errors.New("certificate not ready")
+	ErrCANotReady          = errors.New("CA not ready")
+	ErrCertificateNotReady = errors.New("certificate not ready")
 )
 
 type HostedControlPlaneReconciler struct {
@@ -90,6 +85,7 @@ type HostedControlPlaneReconciler struct {
 	KubernetesClient  kubernetes.Interface
 	CertManagerClient cmclient.Interface
 	Recorder          record.EventRecorder
+	ManagementCluster ManagementCluster
 }
 
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=watch;list
@@ -262,17 +258,6 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to ensure finalizer: %w", err)
 			}
 
-			if hostedControlPlane.Spec.ControlPlaneEndpoint == nil {
-				if cluster.Spec.ControlPlaneEndpoint.IsZero() {
-					hostedControlPlane.Spec.ControlPlaneEndpoint = &capiv1.APIEndpoint{
-						Host: cluster.Name + "." + cluster.Namespace + ".svc",
-						Port: 443,
-					}
-				} else {
-					hostedControlPlane.Spec.ControlPlaneEndpoint = &cluster.Spec.ControlPlaneEndpoint
-				}
-			}
-
 			type Phase struct {
 				Reconcile    func(context.Context, *v1alpha1.HostedControlPlane) error
 				Condition    capiv1.ConditionType
@@ -286,12 +271,6 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				certificateDuration:   1 * time.Hour,
 			}
 			phases := []Phase{
-				{
-					Name:         "service",
-					Reconcile:    r.reconcileService,
-					Condition:    v1alpha1.ServiceReadyCondition,
-					FailedReason: v1alpha1.ServiceFailedReason,
-				},
 				{
 					Name:         "CA certificates",
 					Reconcile:    certificateReconciler.ReconcileCACertificates,
@@ -340,15 +319,23 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					FailedReason: v1alpha1.EtcdClusterFailedReason,
 				},
 				{
-					Name: "deployment",
+					Name: "apiserver resources",
 					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
-						deploymentReconciler := &DeploymentReconciler{
+						apiServerReconciler := &APIServerResourcesReconciler{
 							kubernetesClient: r.KubernetesClient,
 						}
-						return deploymentReconciler.ReconcileDeployment(ctx, hostedControlPlane)
+						return apiServerReconciler.ReconcileAPIServerResources(ctx, hostedControlPlane)
 					},
-					Condition:    v1alpha1.DeploymentReadyCondition,
+					Condition:    v1alpha1.APIServerResourcesReadyCondition,
 					FailedReason: v1alpha1.DeploymentFailedReason,
+				},
+				{
+					Name: "workload cluster resources",
+					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
+						return r.reconcileWorkloadClusterResources(ctx, hostedControlPlane)
+					},
+					Condition:    v1alpha1.WorkloadClusterResourcesReadyCondition,
+					FailedReason: v1alpha1.WorkloadClusterResourcesFailedReason,
 				},
 				{
 					Name:         "HTTPRoute",
@@ -394,37 +381,6 @@ func (r *HostedControlPlaneReconciler) reconcileDelete(
 			controllerutil.RemoveFinalizer(hostedControlPlane, hostedControlPlaneFinalizer)
 
 			return ctrl.Result{}, nil
-		},
-	)
-}
-
-//+kubebuilder:rbac:groups=core,resources=services,verbs=create;update;patch
-
-func (r *HostedControlPlaneReconciler) reconcileService(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileService",
-		func(ctx context.Context, span trace.Span) error {
-			service := corev1ac.Service(names.GetServiceName(hostedControlPlane.Name), hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name)).
-				WithSpec(corev1ac.ServiceSpec().
-					WithType(corev1.ServiceTypeClusterIP).
-					WithSelector(names.GetControlPlaneLabels(hostedControlPlane.Name)).
-					WithPorts(corev1ac.ServicePort().
-						WithName(APIServerPortName).
-						WithPort(443).
-						WithTargetPort(intstr.FromString(APIServerPortName)).
-						WithProtocol(corev1.ProtocolTCP),
-					),
-				).
-				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane))
-			_, err := r.KubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).Apply(ctx,
-				service,
-				applyOptions,
-			)
-
-			return errorsUtil.IfErrErrorf("failed to patch service: %w", err)
 		},
 	)
 }
@@ -494,49 +450,61 @@ func ToYaml(obj runtime.Object) (*bytes.Buffer, error) {
 	return buf, nil
 }
 
-func (r *HostedControlPlaneReconciler) reconcileKubeadmConfig(
+func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 ) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKubeadmConfigs",
+	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileWorkloadSetup",
 		func(ctx context.Context, span trace.Span) error {
-			// TODO: Implement kubeadm config reconciliation
-			return nil
-		},
-	)
-}
+			type WorkloadPhase struct {
+				Reconcile    func(context.Context, *v1alpha1.HostedControlPlane) error
+				Condition    capiv1.ConditionType
+				FailedReason string
+				Name         string
+			}
 
-func (r *HostedControlPlaneReconciler) reconcileKubeletConfig(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKubeletConfig",
-		func(ctx context.Context, span trace.Span) error {
-			// TODO: Implement kubelet config reconciliation
-			return nil
-		},
-	)
-}
+			workloadClusterClient, err := r.ManagementCluster.GetWorkloadClusterClient(ctx, hostedControlPlane)
+			if err != nil {
+				return fmt.Errorf("failed to get workload cluster client: %w", err)
+			}
 
-func (r *HostedControlPlaneReconciler) reconcileBootstrapToken(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileBootstrapToken",
-		func(ctx context.Context, span trace.Span) error {
-			// TODO: Implement bootstrap token reconciliation
-			return nil
-		},
-	)
-}
+			workloadClusterReconciler := &WorkloadClusterReconciler{
+				kubernetesClient: workloadClusterClient,
+			}
 
-func (r *HostedControlPlaneReconciler) reconcileClusterAdminRBAC(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileClusterAdminRBAC",
-		func(ctx context.Context, span trace.Span) error {
-			// TODO: Implement cluster admin RBAC reconciliation
+			workloadPhases := []WorkloadPhase{
+				{
+					Name:         "kubelet config RBAC",
+					Reconcile:    workloadClusterReconciler.ReconcileKubeletConfigRBAC,
+					Condition:    v1alpha1.KubeletConfigRBACReadyCondition,
+					FailedReason: v1alpha1.KubeletConfigRBACFailedReason,
+				},
+				// TODO: Add more workload phases here
+				// {
+				//     Name: "kube-proxy",
+				//     Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane, workloadClusterClient WorkloadCluster) error {
+				//         return workloadClusterClient.ReconcileKubeProxy(ctx, hostedControlPlane)
+				//     },
+				//     Condition:    v1alpha1.KubeProxyReadyCondition,
+				//     FailedReason: v1alpha1.KubeProxyFailedReason,
+				// },
+			}
+
+			for _, phase := range workloadPhases {
+				if err := phase.Reconcile(ctx, hostedControlPlane); err != nil {
+					conditions.MarkFalse(
+						hostedControlPlane,
+						phase.Condition,
+						phase.FailedReason,
+						capiv1.ConditionSeverityError,
+						"Reconciling workload %s failed: %v", phase.Name, err,
+					)
+					return err
+				} else {
+					conditions.MarkTrue(hostedControlPlane, phase.Condition)
+				}
+			}
+
 			return nil
 		},
 	)

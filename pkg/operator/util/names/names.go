@@ -73,23 +73,23 @@ func GetAdminCertificateName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-admin", controlPlaneName)
 }
 
-func GetAdminSecretName(controlPlaneName string) string {
+func GetAdminKubeconfigCertificateSecretName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-admin", controlPlaneName)
 }
 
-func GetControllerManagerCertificateName(controlPlaneName string) string {
+func GetControllerManagerKubeconfigCertificateName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-controller-manager", controlPlaneName)
 }
 
-func GetControllerManagerSecretName(controlPlaneName string) string {
+func GetControllerManagerKubeconfigCertificateSecretName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-controller-manager", controlPlaneName)
 }
 
-func GetSchedulerCertificateName(controlPlaneName string) string {
+func GetSchedulerKubeconfigCertificateName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-scheduler", controlPlaneName)
 }
 
-func GetSchedulerSecretName(controlPlaneName string) string {
+func GetSchedulerKubeconfigCertificateSecretName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-scheduler", controlPlaneName)
 }
 
@@ -97,19 +97,19 @@ func GetKonnectivityConfigMapName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-konnectivity", controlPlaneName)
 }
 
-func GetKonnectivityClientCertificateName(controlPlaneName string) string {
+func GetKonnectivityClientKubeconfigCertificateName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-konnectivity-client", controlPlaneName)
 }
 
-func GetKonnectivityClientSecretName(controlPlaneName string) string {
+func GetKonnectivityClientKubeconfigCertificateSecretName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-konnectivity-client", controlPlaneName)
 }
 
-func GetControllerCertificateName(controlPlaneName string) string {
+func GetControllerKubeconfigCertificateName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-controller", controlPlaneName)
 }
 
-func GetControllerSecretName(controlPlaneName string) string {
+func GetControllerKubeconfigCertificateSecretName(controlPlaneName string) string {
 	return fmt.Sprintf("%s-controller", controlPlaneName)
 }
 

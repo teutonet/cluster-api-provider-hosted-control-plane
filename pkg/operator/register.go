@@ -4,6 +4,7 @@ package operator
 import (
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -16,6 +17,7 @@ func NewScheme() (*runtime.Scheme, error) {
 
 	addToSchemeFuncs := []func(*runtime.Scheme) error{
 		clientgoscheme.AddToScheme,
+		appsv1.AddToScheme,
 		capiv1.AddToScheme,
 		kubeadmv1.AddToScheme,
 		v1alpha1.AddToScheme,
