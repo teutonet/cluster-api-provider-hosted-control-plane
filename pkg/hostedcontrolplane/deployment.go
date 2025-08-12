@@ -25,6 +25,7 @@ import (
 	appsacv1 "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
+	names2 "k8s.io/kubernetes/cmd/kube-controller-manager/names"
 	kubeadm "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -105,17 +106,28 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerDeployment(
 				WithMountPath(egressSelectorConfigMountPath).
 				WithReadOnly(true)
 
+			volumes := []*corev1ac.VolumeApplyConfiguration{
+				apiServerCertificatesVolume,
+				egressSelectorConfigVolume,
+			}
+
+			additionalVolumes, additionalVolumeMounts := dr.extractAdditionalVolumesAndMounts(
+				hostedControlPlane.Spec.Deployment.APIServer.Mounts,
+			)
+
+			volumes = append(volumes, additionalVolumes...)
+
+			if err := validateMounts(additionalVolumeMounts, volumes); err != nil {
+				return nil, err
+			}
+
 			apiPort, container := dr.createAPIServerContainer(
 				hostedControlPlane,
 				cluster,
 				apiServerCertificatesVolumeMount,
 				egressSelectorConfigVolumeMount,
+				additionalVolumeMounts,
 			)
-
-			volumes := []*corev1ac.VolumeApplyConfiguration{
-				apiServerCertificatesVolume,
-				egressSelectorConfigVolume,
-			}
 
 			if deployment, err := dr.reconcileDeployment(
 				ctx,
@@ -133,15 +145,68 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerDeployment(
 					return nil, fmt.Errorf("failed to convert label selector: %w", err)
 				}
 				hostedControlPlane.Status.Selector = selector.String()
-				hostedControlPlane.Status.ReadyReplicas = deployment.Status.ReadyReplicas
 				hostedControlPlane.Status.Replicas = deployment.Status.Replicas
-				hostedControlPlane.Status.UpdatedReplicas = deployment.Status.UpdatedReplicas
 				hostedControlPlane.Status.UnavailableReplicas = deployment.Status.UnavailableReplicas
+				hostedControlPlane.Status.ReadyReplicas = deployment.Status.ReadyReplicas
+				hostedControlPlane.Status.UpdatedReplicas = deployment.Status.UpdatedReplicas
 			}
 
 			return apiPort, nil
 		},
 	)
+}
+
+func validateMounts(
+	additionalVolumeMounts []*corev1ac.VolumeMountApplyConfiguration,
+	volumes []*corev1ac.VolumeApplyConfiguration,
+) error {
+	if slices.ContainsBy(additionalVolumeMounts, func(mount *corev1ac.VolumeMountApplyConfiguration) bool {
+		return slices.NoneBy(volumes, func(volume *corev1ac.VolumeApplyConfiguration) bool {
+			return *mount.Name == *volume.Name
+		})
+	}) {
+		return errors.New("additional volume mount using non-existing volume")
+	}
+	return nil
+}
+
+func (dr *APIServerResourcesReconciler) extractAdditionalVolumesAndMounts(
+	mounts map[string]v1alpha1.HostedControlPlaneMount,
+) ([]*corev1ac.VolumeApplyConfiguration, []*corev1ac.VolumeMountApplyConfiguration) {
+	entries := slices.MapEntries(mounts, func(
+		name string, mount v1alpha1.HostedControlPlaneMount,
+	) (*corev1ac.VolumeApplyConfiguration, *corev1ac.VolumeMountApplyConfiguration) {
+		convertItems := func(items []corev1.KeyToPath) []*corev1ac.KeyToPathApplyConfiguration {
+			return slices.Map(items, func(item corev1.KeyToPath, _ int) *corev1ac.KeyToPathApplyConfiguration {
+				return corev1ac.KeyToPath().
+					WithKey(item.Key).
+					WithPath(item.Path)
+			})
+		}
+		volume := corev1ac.Volume().
+			WithName(name)
+		if mount.Secret != nil {
+			items := mount.Secret.Items
+			volume = volume.WithSecret(corev1ac.SecretVolumeSource().
+				WithSecretName(mount.Secret.SecretName).
+				WithOptional(false).
+				WithItems(convertItems(items)...),
+			)
+		}
+		if mount.ConfigMap != nil {
+			volume = volume.WithConfigMap(corev1ac.ConfigMapVolumeSource().
+				WithName(mount.ConfigMap.Name).
+				WithOptional(false).
+				WithItems(convertItems(mount.ConfigMap.Items)...),
+			)
+		}
+
+		return volume, corev1ac.VolumeMount().
+			WithName(name).
+			WithMountPath(mount.Path).
+			WithReadOnly(true)
+	})
+	return slices.Keys(entries), slices.Values(entries)
 }
 
 func (dr *APIServerResourcesReconciler) reconcileControllerManagerDeployment(
@@ -650,11 +715,19 @@ func (dr *APIServerResourcesReconciler) createAPIServerContainer(
 	cluster *capiv1.Cluster,
 	apiServerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	egressSelectorConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
+	additionalVolumeMounts []*corev1ac.VolumeMountApplyConfiguration,
 ) (*corev1ac.ContainerPortApplyConfiguration, *corev1ac.ContainerApplyConfiguration) {
 	apiPort := corev1ac.ContainerPort().
 		WithName("api").
 		WithContainerPort(konstants.KubeAPIServerPort).
 		WithProtocol(corev1.ProtocolTCP)
+
+	volumeMounts := []*corev1ac.VolumeMountApplyConfiguration{
+		apiServerCertificatesVolumeMount,
+		egressSelectorConfigVolumeMount,
+	}
+
+	volumeMounts = append(volumeMounts, additionalVolumeMounts...)
 
 	return apiPort, corev1ac.Container().
 		WithName(konstants.KubeAPIServer).
@@ -670,10 +743,7 @@ func (dr *APIServerResourcesReconciler) createAPIServerContainer(
 		WithStartupProbe(dr.createStartupProbe(apiPort, "/livez")).
 		WithReadinessProbe(dr.createReadinessProbe(apiPort, "/readyz")).
 		WithLivenessProbe(dr.createLivenessProbe(apiPort, "/livez")).
-		WithVolumeMounts(
-			apiServerCertificatesVolumeMount,
-			egressSelectorConfigVolumeMount,
-		)
+		WithVolumeMounts(volumeMounts...)
 }
 
 func (dr *APIServerResourcesReconciler) createStartupProbe(
@@ -810,6 +880,7 @@ func (dr *APIServerResourcesReconciler) buildControllerManagerArgs(
 
 	// TODO: use map[string]any as soon as https://github.com/kubernetes-sigs/controller-tools/issues/636 is resolved
 	certificatesDir := *controllerManagerCertificatesVolumeMount.MountPath
+	enabledControllers := []string{"*", names2.BootstrapSignerController, names2.TokenCleanerController}
 	args := map[string]string{
 		"allocate-node-cidrs":              "true",
 		"authentication-kubeconfig":        kubeconfigPath,
@@ -821,7 +892,7 @@ func (dr *APIServerResourcesReconciler) buildControllerManagerArgs(
 		"client-ca-file":                   path.Join(certificatesDir, konstants.CACertName),
 		"cluster-signing-cert-file":        path.Join(certificatesDir, konstants.CACertName),
 		"cluster-signing-key-file":         path.Join(certificatesDir, konstants.CAKeyName),
-		"controllers":                      "*,bootstrapsigner,tokencleaner",
+		"controllers":                      strings.Join(enabledControllers, ","),
 		"service-cluster-ip-range":         "10.96.0.0/16",
 		"cluster-cidr":                     "10.244.0.0/16",
 		"requestheader-client-ca-file":     path.Join(certificatesDir, konstants.FrontProxyCACertName),

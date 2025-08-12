@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
@@ -19,8 +20,13 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
+	kubelettypes "k8s.io/kubelet/config/v1beta1"
+	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
+	kubeadmconstants "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/phases/bootstraptoken/clusterinfo"
+	"k8s.io/kubernetes/cmd/kubeadm/app/util/config"
+	kubeletv1beta1 "k8s.io/kubernetes/pkg/kubelet/apis/config/v1beta1"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
@@ -95,15 +101,16 @@ func (wr *WorkloadClusterReconciler) ReconcileWorkloadRBAC(ctx context.Context) 
 						Apply(ctx, clusterRole, workloadApplyOptions)
 					if err != nil {
 						if apierrors.IsInvalid(err) {
-							if deleteErr := wr.kubernetesClient.RbacV1().ClusterRoles().Delete(ctx, *clusterRole.Name, metav1.DeleteOptions{}); deleteErr != nil {
-								return fmt.Errorf("failed to delete invalid cluster role %s: %w", *clusterRole.Name, deleteErr)
+							if err := wr.kubernetesClient.RbacV1().ClusterRoles().
+								Delete(ctx, *clusterRole.Name, metav1.DeleteOptions{}); err != nil {
+								return fmt.Errorf(
+									"failed to delete invalid cluster role %s: %w",
+									*clusterRole.Name, err,
+								)
 							}
-							if _, retryErr := wr.kubernetesClient.RbacV1().ClusterRoles().Apply(ctx, clusterRole, workloadApplyOptions); retryErr != nil {
-								return fmt.Errorf("failed to apply cluster role %s after deletion: %w", *clusterRole.Name, retryErr)
-							}
-						} else {
-							return fmt.Errorf("failed to apply cluster role %s: %w", *clusterRole.Name, err)
+							return ErrRequeueRequired
 						}
+						return fmt.Errorf("failed to apply cluster role %s: %w", *clusterRole.Name, err)
 					}
 				}
 
@@ -111,6 +118,16 @@ func (wr *WorkloadClusterReconciler) ReconcileWorkloadRBAC(ctx context.Context) 
 					_, err := wr.kubernetesClient.RbacV1().ClusterRoleBindings().
 						Apply(ctx, clusterRoleBinding, workloadApplyOptions)
 					if err != nil {
+						if apierrors.IsInvalid(err) {
+							if err := wr.kubernetesClient.RbacV1().ClusterRoleBindings().
+								Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{}); err != nil {
+								return fmt.Errorf(
+									"failed to delete invalid cluster role binding %s: %w",
+									*clusterRoleBinding.Name, err,
+								)
+							}
+							return ErrRequeueRequired
+						}
 						return fmt.Errorf("failed to apply cluster role binding %s: %w", *clusterRoleBinding.Name, err)
 					}
 				}
@@ -119,11 +136,19 @@ func (wr *WorkloadClusterReconciler) ReconcileWorkloadRBAC(ctx context.Context) 
 					_, err := wr.kubernetesClient.RbacV1().Roles(*role.Namespace).
 						Apply(ctx, role, workloadApplyOptions)
 					if err != nil {
+						if apierrors.IsInvalid(err) {
+							if err := wr.kubernetesClient.RbacV1().Roles(*role.Namespace).
+								Delete(ctx, *role.Name, metav1.DeleteOptions{}); err != nil {
+								return fmt.Errorf(
+									"failed to delete invalid role %s in namespace %s: %w",
+									*role.Name, *role.Namespace, err,
+								)
+							}
+							return ErrRequeueRequired
+						}
 						return fmt.Errorf(
 							"failed to apply role %s in namespace %s: %w",
-							*role.Name,
-							*role.Namespace,
-							err,
+							*role.Name, *role.Namespace, err,
 						)
 					}
 				}
@@ -132,11 +157,19 @@ func (wr *WorkloadClusterReconciler) ReconcileWorkloadRBAC(ctx context.Context) 
 					_, err := wr.kubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
 						Apply(ctx, roleBinding, workloadApplyOptions)
 					if err != nil {
+						if apierrors.IsInvalid(err) {
+							if err := wr.kubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
+								Delete(ctx, *roleBinding.Name, metav1.DeleteOptions{}); err != nil {
+								return fmt.Errorf(
+									"failed to delete invalid role binding %s in namespace %s: %w",
+									*roleBinding.Name, *roleBinding.Namespace, err,
+								)
+							}
+							return ErrRequeueRequired
+						}
 						return fmt.Errorf(
 							"failed to apply role binding %s in namespace %s: %w",
-							*roleBinding.Name,
-							*roleBinding.Namespace,
-							err,
+							*roleBinding.Name, *roleBinding.Namespace, err,
 						)
 					}
 				}
@@ -314,10 +347,10 @@ func (wr *WorkloadClusterReconciler) generateNodeBootstrapTokenPostCSRs() (*RBAC
 
 func (wr *WorkloadClusterReconciler) ReconcileClusterInfoConfigMap(
 	ctx context.Context,
-	kubernetesClient kubernetes.Interface,
+	managementClient kubernetes.Interface,
 	cluster *capiv1.Cluster,
 ) error {
-	caSecret, err := kubernetesClient.CoreV1().Secrets(cluster.Namespace).
+	caSecret, err := managementClient.CoreV1().Secrets(cluster.Namespace).
 		Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get CA secret: %w", err)
@@ -344,4 +377,87 @@ func (wr *WorkloadClusterReconciler) ReconcileClusterInfoConfigMap(
 		ConfigMaps(metav1.NamespacePublic).
 		Apply(ctx, configMap, workloadApplyOptions)
 	return errorsUtil.IfErrErrorf("failed to apply cluster info configmap: %w", err)
+}
+
+func (wr *WorkloadClusterReconciler) ReconcileKubeadmConfig(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+) error {
+	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileKubeadmConfig",
+		func(ctx context.Context, span trace.Span) error {
+			conf, err := config.DefaultedStaticInitConfiguration()
+			if err != nil {
+				return fmt.Errorf("failed to get defaulted static init configuration: %w", err)
+			}
+			conf.ClusterConfiguration.ComponentConfigs = nil
+
+			conf.Networking = kubeadm.Networking{
+				DNSDomain:     "cluster.local",
+				PodSubnet:     "10.244.0.0/16",
+				ServiceSubnet: "10.96.0.0/12",
+			}
+			conf.KubernetesVersion = hostedControlPlane.Spec.Version
+			conf.ControlPlaneEndpoint = cluster.Spec.ControlPlaneEndpoint.String()
+			conf.ClusterName = cluster.Name
+
+			clusterConfiguration, err := ToYaml(conf)
+			if err != nil {
+				return fmt.Errorf("failed to convert cluster configuration to YAML: %w", err)
+			}
+			configMap := corev1ac.ConfigMap(konstants.KubeadmConfigConfigMap, metav1.NamespaceSystem).
+				WithData(
+					map[string]string{
+						konstants.ClusterConfigurationKind: clusterConfiguration.String(),
+					},
+				)
+
+			_, err = wr.kubernetesClient.CoreV1().
+				ConfigMaps(metav1.NamespaceSystem).
+				Apply(ctx, configMap, workloadApplyOptions)
+			return errorsUtil.IfErrErrorf("failed to apply kubeadm config configmap: %w", err)
+		},
+	)
+}
+
+func (wr *WorkloadClusterReconciler) ReconcileKubeletConfig(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+) error {
+	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileKubeadmConfig",
+		func(ctx context.Context, span trace.Span) error {
+			var kubeletConfiguration kubelettypes.KubeletConfiguration
+
+			kubeletv1beta1.SetDefaults_KubeletConfiguration(&kubeletConfiguration)
+
+			kubeletConfiguration.APIVersion = kubelettypes.SchemeGroupVersion.String()
+			kubeletConfiguration.Kind = "KubeletConfiguration"
+			kubeletConfiguration.Authentication.X509.ClientCAFile = "/etc/kubernetes/pki/ca.crt"
+			kubeletConfiguration.CgroupDriver = konstants.CgroupDriverSystemd
+			kubeletConfiguration.ClusterDNS = []string{"10.96.0.10"}
+			kubeletConfiguration.ClusterDomain = "cluster.local"
+			kubeletConfiguration.RotateCertificates = true
+			kubeletConfiguration.StaticPodPath = kubeadmconstants.DefaultManifestsDir
+			kubeletConfiguration.Logging.FlushFrequency.SerializeAsString = false
+			kubeletConfiguration.ResolverConfig = nil
+
+			content, err := ToYaml(&kubeletConfiguration)
+			if err != nil {
+				return fmt.Errorf("failed to convert kubelet configuration to YAML: %w", err)
+			}
+
+			configMap := corev1ac.ConfigMap(konstants.KubeletBaseConfigurationConfigMap, metav1.NamespaceSystem).
+				WithData(
+					map[string]string{
+						konstants.KubeletBaseConfigurationConfigMapKey: content.String(),
+					},
+				)
+
+			_, err = wr.kubernetesClient.CoreV1().
+				ConfigMaps(metav1.NamespaceSystem).
+				Apply(ctx, configMap, workloadApplyOptions)
+			return errorsUtil.IfErrErrorf("failed to apply kubeadm config configmap: %w", err)
+		},
+	)
 }

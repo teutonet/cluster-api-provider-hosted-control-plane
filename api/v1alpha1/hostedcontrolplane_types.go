@@ -5,6 +5,7 @@ Copyright 2022 teuto.net Netzdienste GmbH.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -54,7 +55,7 @@ type HostedControlPlaneDeployment struct {
 	//+kubebuilder:validation:Optional
 	Scheduler HostedControlPlaneComponent `json:"scheduler,omitempty"`
 	//+kubebuilder:validation:Optional
-	APIServer HostedControlPlaneComponent `json:"apiServer,omitempty"`
+	APIServer HostedControlPlaneAPIServerComponent `json:"apiServer,omitempty"`
 	//+kubebuilder:validation:Optional
 	ControllerManager HostedControlPlaneComponent `json:"controllerManager,omitempty"`
 	//+kubebuilder:validation:Optional
@@ -64,6 +65,24 @@ type HostedControlPlaneDeployment struct {
 type HostedControlPlaneComponent struct {
 	//+kubebuilder:validation:Optional
 	Args map[string]string `json:"args,omitempty"`
+}
+
+type HostedControlPlaneAPIServerComponent struct {
+	HostedControlPlaneComponent `json:",inline"`
+	//+kubebuilder:validation:Optional
+	Mounts map[string]HostedControlPlaneMount `json:"mounts,omitempty"`
+}
+
+//+kubebuilder:validation:MinProperties=2
+//+kubebuilder:validation:MaxProperties=2
+
+type HostedControlPlaneMount struct {
+	//+kubebuilder:validation:Required
+	Path string `json:"path"`
+	//+kubebuilder:validation:Optional
+	ConfigMap *corev1.ConfigMapVolumeSource `json:"configMap,omitempty"`
+	//+kubebuilder:validation:Optional
+	Secret *corev1.SecretVolumeSource `json:"secret,omitempty"`
 }
 
 type HostedControlPlaneStatus struct {

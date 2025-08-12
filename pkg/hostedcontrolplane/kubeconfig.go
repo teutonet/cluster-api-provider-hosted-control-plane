@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	slices "github.com/samber/lo"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
@@ -116,20 +115,25 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 
 			kubeconfig, err := kr.generateKubeconfig(ctx,
 				cluster,
+				kubeconfigConfig.ApiServerEndpoint,
 				kubeconfigConfig.Name,
 				kubeconfigConfig.CertificateSecretName,
 			)
 			if err != nil {
 				return fmt.Errorf("failed to generate kubeconfig: %w", err)
 			}
-			kubeconfigSecret := corev1ac.Secret(kubeconfigConfig.SecretName, hostedControlPlane.Namespace).
+			yaml, err := ToYaml(kubeconfig)
+			if err != nil {
+				return fmt.Errorf("failed to convert kubeconfig to YAML: %w", err)
+			}
+			kubeconfigSecret := corev1ac.Secret(kubeconfigConfig.SecretName, cluster.Namespace).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string][]byte{
-					capisecretutil.KubeconfigDataName: slices.Must(ToYaml(kubeconfig)).Bytes(),
+					capisecretutil.KubeconfigDataName: yaml.Bytes(),
 				})
 
-			_, err = kr.kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
+			_, err = kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
 				Apply(ctx, kubeconfigSecret, applyOptions)
 			return errorsUtil.IfErrErrorf("failed to patch kubeconfig secret: %w", err)
 		},
@@ -141,12 +145,12 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 func (kr *KubeconfigReconciler) generateKubeconfig(
 	ctx context.Context,
 	cluster *capiv1.Cluster,
+	apiEndpoint capiv1.APIEndpoint,
 	userName string,
 	kubeconfiCertificateSecretName string,
 ) (*v1.Config, error) {
 	clusterName := cluster.Name
 	contextName := fmt.Sprintf("%s@%s", userName, clusterName)
-	apiServerURL := fmt.Sprintf("https://%s", cluster.Spec.ControlPlaneEndpoint.String())
 
 	certSecret, err := kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
 		Get(ctx, kubeconfiCertificateSecretName, metav1.GetOptions{})
@@ -167,7 +171,7 @@ func (kr *KubeconfigReconciler) generateKubeconfig(
 			{
 				Name: clusterName,
 				Cluster: v1.Cluster{
-					Server:                   apiServerURL,
+					Server:                   fmt.Sprintf("https://%s", apiEndpoint.String()),
 					CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
 				},
 			},

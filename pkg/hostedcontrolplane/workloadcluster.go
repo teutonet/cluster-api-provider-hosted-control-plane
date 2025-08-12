@@ -51,6 +51,22 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 					Condition:    v1alpha1.WorkloadClusterInfoReadyCondition,
 					FailedReason: v1alpha1.WorkloadClusterInfoFailedReason,
 				},
+				{
+					Name: "kubeadm-config",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return workloadClusterReconciler.ReconcileKubeadmConfig(ctx, hostedControlPlane, cluster)
+					},
+					Condition:    v1alpha1.WorkloadKubeadmConfigReadyCondition,
+					FailedReason: v1alpha1.WorkloadKubeadmConfigFailedReason,
+				},
+				{
+					Name: "kubelet-config",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return workloadClusterReconciler.ReconcileKubeletConfig(ctx, hostedControlPlane, cluster)
+					},
+					Condition:    v1alpha1.WorkloadKubeletConfigReadyCondition,
+					FailedReason: v1alpha1.WorkloadKubeletConfigFailedReason,
+				},
 				// TODO: Add more workload phases here
 				// {
 				//     Name: "kube-proxy",
