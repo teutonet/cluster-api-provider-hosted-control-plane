@@ -5,9 +5,9 @@ import (
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
-func GetControlPlaneLabels(controlPlaneName string, component string) map[string]string {
+func GetControlPlaneLabels(cluster *capiv1.Cluster, component string) map[string]string {
 	labels := map[string]string{
-		capiv1.ClusterNameLabel: controlPlaneName,
+		"cluster.x-k8s.io/cluster-name": cluster.Name,
 	}
 	if component != "" {
 		labels["component"] = component
@@ -15,7 +15,15 @@ func GetControlPlaneLabels(controlPlaneName string, component string) map[string
 	return labels
 }
 
-func GetControlPlaneSelector(controlPlaneName string, component string) *metav1ac.LabelSelectorApplyConfiguration {
-	return metav1ac.LabelSelector().
-		WithMatchLabels(GetControlPlaneLabels(controlPlaneName, component))
+func GetControlPlaneSelector(cluster *capiv1.Cluster, component string) *metav1ac.LabelSelectorApplyConfiguration {
+	selector := metav1ac.LabelSelector()
+	selector.WithMatchLabels(map[string]string{
+		"cluster.x-k8s.io/cluster-name": cluster.Name,
+	})
+	if component != "" {
+		selector.WithMatchLabels(map[string]string{
+			"component": component,
+		})
+	}
+	return selector
 }

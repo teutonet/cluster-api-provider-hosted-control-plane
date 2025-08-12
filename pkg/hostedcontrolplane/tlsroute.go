@@ -27,25 +27,25 @@ func (r *HostedControlPlaneReconciler) reconcileTLSRoute(
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileTLSRoute",
 		func(ctx context.Context, span trace.Span) error {
-			tlsRoute := gwv1alpha2ac.TLSRoute(hostedControlPlane.Name, hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
+			tlsRoute := gwv1alpha2ac.TLSRoute(names.GetTLSRouteName(cluster), cluster.Namespace).
+				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(gwv1alpha2ac.TLSRouteSpec().
 					WithHostnames(gwv1alpha2.Hostname(cluster.Spec.ControlPlaneEndpoint.Host)).
 					WithParentRefs(gwv1ac.ParentReference().
 						WithName("capi").
-						WithNamespace(gwv1.Namespace(hostedControlPlane.Namespace)),
+						WithNamespace(gwv1.Namespace(cluster.Namespace)),
 					).
 					WithRules(gwv1alpha2ac.TLSRouteRule().
 						WithBackendRefs(gwv1ac.BackendRef().
-							WithName(gwv1.ObjectName(names.GetServiceName(hostedControlPlane.Name))).
+							WithName(gwv1.ObjectName(names.GetServiceName(cluster))).
 							WithPort(gwv1.PortNumber(443)).
 							WithWeight(1),
 						),
 					),
 				)
 
-			appliedTLSRoute, err := r.GatewayClient.GatewayV1alpha2().TLSRoutes(hostedControlPlane.Namespace).
+			appliedTLSRoute, err := r.GatewayClient.GatewayV1alpha2().TLSRoutes(cluster.Namespace).
 				Apply(ctx, tlsRoute, applyOptions)
 			if err != nil {
 				return errorsUtil.IfErrErrorf("failed to apply TLSRoute: %w", err)

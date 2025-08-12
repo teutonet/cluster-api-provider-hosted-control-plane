@@ -40,6 +40,7 @@ var (
 func (cr *CertificateReconciler) ReconcileCACertificates(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileCACertificates",
 		func(ctx context.Context, span trace.Span) error {
@@ -66,8 +67,8 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 					WithRenewBeforePercentage(certificateRenewBefore)
 			}
 
-			rootIssuer := certmanagerv1ac.Issuer(names.GetRootIssuerName(hostedControlPlane.Name), hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
+			rootIssuer := certmanagerv1ac.Issuer(names.GetRootIssuerName(cluster), hostedControlPlane.Namespace).
+				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithSelfSigned(certmanagerv1ac.SelfSignedIssuer()),
@@ -79,11 +80,11 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 				return fmt.Errorf("failed to patch self-signed issuer: %w", err)
 			}
 
-			cert, err := cr.reconcileCertificate(ctx, hostedControlPlane,
-				names.GetCACertificateName(hostedControlPlane.Name),
+			cert, err := cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
+				names.GetCACertificateName(cluster),
 				createCertificateSpec(
 					rootIssuer,
-					names.GetCASecretName(hostedControlPlane.Name),
+					names.GetCASecretName(cluster),
 					"kubernetes",
 				),
 			)
@@ -94,12 +95,12 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 				return ErrCANotReady
 			}
 
-			caIssuer := certmanagerv1ac.Issuer(names.GetCAIssuerName(hostedControlPlane.Name), hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
+			caIssuer := certmanagerv1ac.Issuer(names.GetCAIssuerName(cluster), hostedControlPlane.Namespace).
+				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
-						WithSecretName(names.GetCASecretName(hostedControlPlane.Name)),
+						WithSecretName(names.GetCASecretName(cluster)),
 					),
 				)
 
@@ -108,11 +109,11 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 				return fmt.Errorf("failed to patch CA issuer: %w", err)
 			}
 
-			cert, err = cr.reconcileCertificate(ctx, hostedControlPlane,
-				names.GetFrontProxyCAName(hostedControlPlane.Name),
+			cert, err = cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
+				names.GetFrontProxyCAName(cluster),
 				createCertificateSpec(
 					caIssuer,
-					names.GetFrontProxyCASecretName(hostedControlPlane.Name),
+					names.GetFrontProxyCASecretName(cluster),
 					"front-proxy-ca",
 				),
 			)
@@ -124,13 +125,13 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 			}
 
 			frontProxyCAIssuer := certmanagerv1ac.Issuer(
-				names.GetFrontProxyCAName(hostedControlPlane.Name), hostedControlPlane.Namespace,
+				names.GetFrontProxyCAName(cluster), hostedControlPlane.Namespace,
 			).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
+				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
-						WithSecretName(names.GetFrontProxyCASecretName(hostedControlPlane.Name)),
+						WithSecretName(names.GetFrontProxyCASecretName(cluster)),
 					),
 				)
 
@@ -139,11 +140,11 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 				return fmt.Errorf("failed to patch front-proxy CA issuer: %w", err)
 			}
 
-			cert, err = cr.reconcileCertificate(ctx, hostedControlPlane,
-				names.GetEtcdCAName(hostedControlPlane.Name),
+			cert, err = cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
+				names.GetEtcdCAName(cluster),
 				createCertificateSpec(
 					caIssuer,
-					names.GetEtcdCASecretName(hostedControlPlane.Name),
+					names.GetEtcdCASecretName(cluster),
 					"etcd-ca",
 				),
 			)
@@ -155,13 +156,13 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 			}
 
 			etcdCAIssuer := certmanagerv1ac.Issuer(
-				names.GetEtcdCAName(hostedControlPlane.Name), hostedControlPlane.Namespace,
+				names.GetEtcdCAName(cluster), hostedControlPlane.Namespace,
 			).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
+				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
-						WithSecretName(names.GetEtcdCASecretName(hostedControlPlane.Name)),
+						WithSecretName(names.GetEtcdCASecretName(cluster)),
 					),
 				)
 
@@ -205,10 +206,10 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 		"localhost",
 	}
 
-	dnsNames := names.GetEtcdDNSNames(hostedControlPlane)
+	dnsNames := names.GetEtcdDNSNames(cluster)
 	etcdDNSNames = append(etcdDNSNames, slices.Keys(dnsNames)...)
 	etcdDNSNames = append(etcdDNSNames, slices.Values(dnsNames)...)
-	etcdDNSNames = append(etcdDNSNames, names.GetEtcdServiceName(hostedControlPlane.Name))
+	etcdDNSNames = append(etcdDNSNames, names.GetEtcdServiceName(cluster))
 
 	sort.Strings(etcdDNSNames)
 
@@ -217,131 +218,128 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 		spec *certmanagerv1ac.CertificateSpecApplyConfiguration
 	}{
 		{
-			name: names.GetAPIServerCertificateName(hostedControlPlane.Name),
+			name: names.GetAPIServerCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetCAIssuerName(hostedControlPlane.Name),
+				names.GetCAIssuerName(cluster),
 				konstants.APIServerCertCommonName,
-				names.GetAPIServerSecretName(hostedControlPlane.Name),
+				names.GetAPIServerSecretName(cluster),
 				certmanagerv1.UsageServerAuth,
 			).WithDNSNames(
 				"localhost",
 				"kubernetes",
 				"kubernetes.default",
 				"kubernetes.default.svc",
-				names.GetServiceName(hostedControlPlane.Name),
-				fmt.Sprintf("%s.%s",
-					names.GetServiceName(hostedControlPlane.Name),
-					hostedControlPlane.Namespace,
-				),
-				names.GetInternalServiceHost(hostedControlPlane.Name, hostedControlPlane.Namespace),
+				names.GetServiceName(cluster),
+				fmt.Sprintf("%s.%s", names.GetServiceName(cluster), hostedControlPlane.Namespace),
+				names.GetInternalServiceHost(cluster),
 				cluster.Spec.ControlPlaneEndpoint.Host,
 			),
 		},
 		{
-			name: names.GetAPIServerKubeletClientCertificateName(hostedControlPlane.Name),
+			name: names.GetAPIServerKubeletClientCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetCAIssuerName(hostedControlPlane.Name),
+				names.GetCAIssuerName(cluster),
 				konstants.APIServerKubeletClientCertCommonName,
-				names.GetAPIServerKubeletClientSecretName(hostedControlPlane.Name),
+				names.GetAPIServerKubeletClientSecretName(cluster),
 				certmanagerv1.UsageClientAuth,
 			).WithSubject(certmanagerv1ac.X509Subject().
 				WithOrganizations(konstants.ClusterAdminsGroupAndClusterRoleBinding),
 			),
 		},
 		{
-			name: names.GetFrontProxyCertificateName(hostedControlPlane.Name),
+			name: names.GetFrontProxyCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetFrontProxyCAName(hostedControlPlane.Name),
+				names.GetFrontProxyCAName(cluster),
 				konstants.FrontProxyClientCertCommonName,
-				names.GetFrontProxySecretName(hostedControlPlane.Name),
+				names.GetFrontProxySecretName(cluster),
 				certmanagerv1.UsageClientAuth,
 			),
 		},
 		{
-			name: names.GetServiceAccountCertificateName(hostedControlPlane.Name),
+			name: names.GetServiceAccountCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetCAIssuerName(hostedControlPlane.Name),
+				names.GetCAIssuerName(cluster),
 				"service-account",
-				names.GetServiceAccountSecretName(hostedControlPlane.Name),
+				names.GetServiceAccountSecretName(cluster),
 			),
 		},
 		{
-			name: names.GetAdminCertificateName(hostedControlPlane.Name),
+			name: names.GetAdminCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetCAIssuerName(hostedControlPlane.Name),
+				names.GetCAIssuerName(cluster),
 				"kubernetes-admin",
-				names.GetAdminKubeconfigCertificateSecretName(hostedControlPlane.Name),
+				names.GetAdminKubeconfigCertificateSecretName(cluster),
 				certmanagerv1.UsageClientAuth,
 			).WithSubject(certmanagerv1ac.X509Subject().
 				WithOrganizations(konstants.SystemPrivilegedGroup),
 			),
 		},
 		{
-			name: names.GetControllerManagerKubeconfigCertificateName(hostedControlPlane.Name),
+			name: names.GetControllerManagerKubeconfigCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetCAIssuerName(hostedControlPlane.Name),
+				names.GetCAIssuerName(cluster),
 				konstants.ControllerManagerUser,
-				names.GetControllerManagerKubeconfigCertificateSecretName(hostedControlPlane.Name),
+				names.GetControllerManagerKubeconfigCertificateSecretName(cluster),
 				certmanagerv1.UsageClientAuth,
 			),
 		},
 		{
-			name: names.GetSchedulerKubeconfigCertificateName(hostedControlPlane.Name),
+			name: names.GetSchedulerKubeconfigCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetCAIssuerName(hostedControlPlane.Name),
+				names.GetCAIssuerName(cluster),
 				konstants.SchedulerUser,
-				names.GetSchedulerKubeconfigCertificateSecretName(hostedControlPlane.Name),
+				names.GetSchedulerKubeconfigCertificateSecretName(cluster),
 				certmanagerv1.UsageClientAuth,
 			),
 		},
 		{
-			name: names.GetKonnectivityClientKubeconfigCertificateName(hostedControlPlane.Name),
+			name: names.GetKonnectivityClientKubeconfigCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetCAIssuerName(hostedControlPlane.Name),
+				names.GetCAIssuerName(cluster),
 				"system:konnectivity-server",
-				names.GetKonnectivityClientKubeconfigCertificateSecretName(hostedControlPlane.Name),
+				names.GetKonnectivityClientKubeconfigCertificateSecretName(cluster),
 				certmanagerv1.UsageClientAuth, certmanagerv1.UsageServerAuth, certmanagerv1.UsageCodeSigning,
 			).WithSubject(certmanagerv1ac.X509Subject().
 				WithOrganizations(konstants.SystemPrivilegedGroup),
 			),
 		},
 		{
-			name: names.GetControllerKubeconfigCertificateName(hostedControlPlane.Name),
+			name: names.GetControllerKubeconfigCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetCAIssuerName(hostedControlPlane.Name),
+				names.GetCAIssuerName(cluster),
 				"system:controller",
-				names.GetControllerKubeconfigCertificateSecretName(hostedControlPlane.Name),
+				names.GetControllerKubeconfigCertificateSecretName(cluster),
 				certmanagerv1.UsageClientAuth,
 			).WithSubject(certmanagerv1ac.X509Subject().
 				WithOrganizations(konstants.SystemPrivilegedGroup),
 			),
 		},
 		{
-			name: names.GetEtcdServerCertificateName(hostedControlPlane.Name),
+			name: names.GetEtcdServerCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetEtcdCAName(hostedControlPlane.Name),
+				names.GetEtcdCAName(cluster),
 				"etcd-server",
-				names.GetEtcdServerSecretName(hostedControlPlane.Name),
+				names.GetEtcdServerSecretName(cluster),
 				certmanagerv1.UsageServerAuth, certmanagerv1.UsageClientAuth,
 			).WithDNSNames(etcdDNSNames...).WithIPAddresses("127.0.0.1"),
 		},
 		{
-			name: names.GetEtcdPeerCertificateName(hostedControlPlane.Name),
+			name: names.GetEtcdPeerCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetEtcdCAName(hostedControlPlane.Name),
+				names.GetEtcdCAName(cluster),
 				"etcd-peer",
-				names.GetEtcdPeerSecretName(hostedControlPlane.Name),
+				names.GetEtcdPeerSecretName(cluster),
 				certmanagerv1.UsageServerAuth, certmanagerv1.UsageClientAuth,
 			).WithDNSNames(etcdDNSNames...).WithIPAddresses("127.0.0.1"),
 		},
 		{
-			name: names.GetEtcdAPIServerClientCertificateName(hostedControlPlane.Name),
+			name: names.GetEtcdAPIServerClientCertificateName(cluster),
 			spec: createCertificateSpec(
-				names.GetEtcdCAName(hostedControlPlane.Name),
+				names.GetEtcdCAName(cluster),
 				"apiserver-etcd-client",
-				names.GetEtcdAPIServerClientSecretName(hostedControlPlane.Name),
+				names.GetEtcdAPIServerClientSecretName(cluster),
 				certmanagerv1.UsageClientAuth,
-			).WithDNSNames(names.GetServiceName(hostedControlPlane.Name)),
+			).WithDNSNames(names.GetServiceName(cluster)),
 		},
 	}
 }
@@ -353,14 +351,21 @@ func (cr *CertificateReconciler) ReconcileCertificates(
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileCertificates",
 		func(ctx context.Context, span trace.Span) error {
+			needsRequeue := false
 			for _, cert := range cr.createCertificateSpecs(hostedControlPlane, cluster) {
-				if certObj, err := cr.reconcileCertificate(ctx, hostedControlPlane, cert.name, cert.spec); err != nil {
+				if certObj, err := cr.reconcileCertificate(ctx,
+					hostedControlPlane, cluster,
+					cert.name, cert.spec,
+				); err != nil {
 					return fmt.Errorf("failed to reconcile certificate: %w", err)
 				} else if !cr.isCertificateReady(certObj) {
-					return ErrCertificateNotReady
+					needsRequeue = true
 				}
 			}
 
+			if needsRequeue {
+				return ErrCertificateNotReady
+			}
 			return nil
 		},
 	)
@@ -371,6 +376,7 @@ func (cr *CertificateReconciler) ReconcileCertificates(
 func (cr *CertificateReconciler) reconcileCertificate(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 	name string,
 	spec *certmanagerv1ac.CertificateSpecApplyConfiguration,
 ) (*certmanagerv1.Certificate, error) {
@@ -383,11 +389,11 @@ func (cr *CertificateReconciler) reconcileCertificate(
 			)
 
 			certificate := certmanagerv1ac.Certificate(name, hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
+				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(spec.WithRevisionHistoryLimit(1).
 					WithSecretTemplate(certmanagerv1ac.CertificateSecretTemplate().
-						WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")),
+						WithLabels(names.GetControlPlaneLabels(cluster, "")),
 					),
 				)
 

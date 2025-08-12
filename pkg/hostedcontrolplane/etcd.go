@@ -25,6 +25,7 @@ import (
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
+	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -46,18 +47,35 @@ var ComponentETCD = "etcd"
 func (er *EtcdClusterReconciler) ReconcileEtcdCluster(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileEtcdCluster",
 		func(ctx context.Context, span trace.Span) error {
-			if clientPort, peerPort, metricsPort, err := er.reconcileStatefulSet(ctx, hostedControlPlane); err != nil {
-				return fmt.Errorf("failed to reconcile etcd StatefulSet: %w", err)
-			} else {
-				if err := er.reconcileService(ctx, hostedControlPlane, clientPort, peerPort, metricsPort); err != nil {
-					return fmt.Errorf("failed to reconcile etcd service: %w", err)
-				}
+			clientPort := corev1ac.ContainerPort().
+				WithName("client").
+				WithContainerPort(2379).
+				WithProtocol(corev1.ProtocolTCP)
+
+			peerPort := corev1ac.ContainerPort().
+				WithName("peer").
+				WithContainerPort(2380).
+				WithProtocol(corev1.ProtocolTCP)
+
+			metricsPort := corev1ac.ContainerPort().
+				WithName("metrics").
+				WithContainerPort(2381).
+				WithProtocol(corev1.ProtocolTCP)
+
+			if err := er.reconcileService(ctx,
+				hostedControlPlane, cluster,
+				clientPort, peerPort, metricsPort,
+			); err != nil {
+				return fmt.Errorf("failed to reconcile etcd service: %w", err)
 			}
 
-			return nil
+			return errorsUtil.IfErrErrorf("failed to reconcile etcd StatefulSet: %w",
+				er.reconcileStatefulSet(ctx, hostedControlPlane, cluster, clientPort, peerPort, metricsPort),
+			)
 		},
 	)
 }
@@ -65,12 +83,13 @@ func (er *EtcdClusterReconciler) ReconcileEtcdCluster(
 func (er *EtcdClusterReconciler) reconcileService(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 	clientPort *corev1ac.ContainerPortApplyConfiguration,
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
 ) error {
-	service := corev1ac.Service(names.GetEtcdServiceName(hostedControlPlane.Name), hostedControlPlane.Namespace).
-		WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, ComponentETCD)).
+	service := corev1ac.Service(names.GetEtcdServiceName(cluster), hostedControlPlane.Namespace).
+		WithLabels(names.GetControlPlaneLabels(cluster, ComponentETCD)).
 		WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 		WithSpec(corev1ac.ServiceSpec().
 			WithType(corev1.ServiceTypeClusterIP).
@@ -93,7 +112,7 @@ func (er *EtcdClusterReconciler) reconcileService(
 					WithTargetPort(intstr.FromString(*metricsPort.Name)).
 					WithProtocol(corev1.ProtocolTCP),
 			).
-			WithSelector(names.GetControlPlaneLabels(hostedControlPlane.Name, ComponentETCD)),
+			WithSelector(names.GetControlPlaneLabels(cluster, ComponentETCD)),
 		)
 
 	_, err := er.kubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).
@@ -105,13 +124,12 @@ func (er *EtcdClusterReconciler) reconcileService(
 func (er *EtcdClusterReconciler) reconcileStatefulSet(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-) (
-	*corev1ac.ContainerPortApplyConfiguration,
-	*corev1ac.ContainerPortApplyConfiguration,
-	*corev1ac.ContainerPortApplyConfiguration,
-	error,
-) {
-	etcdCertificatesVolume := er.createEtcdCertificatesVolume(hostedControlPlane)
+	cluster *capiv1.Cluster,
+	clientPort *corev1ac.ContainerPortApplyConfiguration,
+	peerPort *corev1ac.ContainerPortApplyConfiguration,
+	metricsPort *corev1ac.ContainerPortApplyConfiguration,
+) error {
+	etcdCertificatesVolume := er.createEtcdCertificatesVolume(cluster)
 
 	etcdDataVolumeClaimTemplate := er.createEtcdDataVolumeClaimTemplate()
 	etcdDataVolume := er.createVolumeFromTemplate(etcdDataVolumeClaimTemplate)
@@ -125,17 +143,17 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 		WithMountPath("/etc/etcd").
 		WithReadOnly(true)
 
-	clientPort, peerPort, metricsPort, container := er.createEtcdContainer(
-		hostedControlPlane,
-		etcdDataVolumeMount,
-		etcdCertificatesVolumeMount,
+	container := er.createEtcdContainer(
+		hostedControlPlane, cluster,
+		etcdDataVolumeMount, etcdCertificatesVolumeMount,
+		clientPort, peerPort, metricsPort,
 	)
 	template := corev1ac.PodTemplateSpec().
-		WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, ComponentETCD)).
+		WithLabels(names.GetControlPlaneLabels(cluster, ComponentETCD)).
 		WithSpec(corev1ac.PodSpec().
 			WithTopologySpreadConstraints(
 				operatorutil.CreatePodTopologySpreadConstraints(
-					names.GetControlPlaneSelector(hostedControlPlane.Name, ComponentETCD),
+					names.GetControlPlaneSelector(cluster, ComponentETCD),
 				),
 			).
 			WithContainers(container).
@@ -147,24 +165,24 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 		extractSecretNames(template.Spec.Volumes),
 	)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to calculate etcd secret checksum: %w", err)
+		return fmt.Errorf("failed to calculate etcd secret checksum: %w", err)
 	}
 
-	statefulSetName := names.GetEtcdStatefulSetName(hostedControlPlane.Name)
+	statefulSetName := names.GetEtcdStatefulSetName(cluster)
 	statefulSet := appsacv1.StatefulSet(statefulSetName, hostedControlPlane.Namespace).
-		WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, ComponentETCD)).
+		WithLabels(names.GetControlPlaneLabels(cluster, ComponentETCD)).
 		WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 		WithAnnotations(map[string]string{
 			"checksum/secrets": secretChecksum,
 		}).
 		WithSpec(appsacv1.StatefulSetSpec().
-			WithServiceName(names.GetEtcdServiceName(hostedControlPlane.Name)).
+			WithServiceName(names.GetEtcdServiceName(cluster)).
 			WithReplicas(3).
 			WithPodManagementPolicy(appsv1.ParallelPodManagement).
 			WithUpdateStrategy(appsacv1.StatefulSetUpdateStrategy().WithRollingUpdate(
 				appsacv1.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
 			)).
-			WithSelector(names.GetControlPlaneSelector(hostedControlPlane.Name, ComponentETCD)).
+			WithSelector(names.GetControlPlaneSelector(cluster, ComponentETCD)).
 			WithTemplate(template.WithAnnotations(map[string]string{
 				"checksum/secrets": secretChecksum,
 			})).
@@ -182,21 +200,20 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 			statefulSetName,
 			metav1.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationOrphan)},
 		); err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to delete existing etcd StatefulSet: %w", err)
+			return fmt.Errorf("failed to delete existing etcd StatefulSet: %w", err)
 		}
-		return nil, nil, nil, ErrStatefulSetRecreateRequired
+		return ErrStatefulSetRecreateRequired
 	}
 
 	if err != nil {
-		return nil, nil, nil, errorsUtil.IfErrErrorf("failed to apply etcd StatefulSet: %w", err)
+		return errorsUtil.IfErrErrorf("failed to apply etcd StatefulSet: %w", err)
 	}
 
-	// Check if the StatefulSet is ready
 	if statefulSetObj.Status.ReadyReplicas != *statefulSetObj.Spec.Replicas {
-		return nil, nil, nil, ErrStatefulsetNotReady
+		return ErrStatefulsetNotReady
 	}
 
-	return clientPort, peerPort, metricsPort, nil
+	return nil
 }
 
 func (er *EtcdClusterReconciler) createVolumeFromTemplate(
@@ -218,14 +235,14 @@ func (er *EtcdClusterReconciler) createEtcdDataVolumeClaimTemplate() *corev1ac.P
 }
 
 func (er *EtcdClusterReconciler) createEtcdCertificatesVolume(
-	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
 		WithName("etcd-certificates").
 		WithProjected(corev1ac.ProjectedVolumeSource().
 			WithSources(
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
-					WithName(names.GetEtcdCASecretName(hostedControlPlane.Name)).
+					WithName(names.GetEtcdCASecretName(cluster)).
 					WithItems(
 						corev1ac.KeyToPath().
 							WithKey(corev1.TLSCertKey).
@@ -233,7 +250,7 @@ func (er *EtcdClusterReconciler) createEtcdCertificatesVolume(
 					),
 				),
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
-					WithName(names.GetEtcdServerSecretName(hostedControlPlane.Name)).
+					WithName(names.GetEtcdServerSecretName(cluster)).
 					WithItems(
 						corev1ac.KeyToPath().
 							WithKey(corev1.TLSCertKey).
@@ -244,7 +261,7 @@ func (er *EtcdClusterReconciler) createEtcdCertificatesVolume(
 					),
 				),
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
-					WithName(names.GetEtcdPeerSecretName(hostedControlPlane.Name)).
+					WithName(names.GetEtcdPeerSecretName(cluster)).
 					WithItems(
 						corev1ac.KeyToPath().
 							WithKey(corev1.TLSCertKey).
@@ -260,36 +277,20 @@ func (er *EtcdClusterReconciler) createEtcdCertificatesVolume(
 
 func (er *EtcdClusterReconciler) createEtcdContainer(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 	etcdDataVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	etcdCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-) (
-	*corev1ac.ContainerPortApplyConfiguration,
-	*corev1ac.ContainerPortApplyConfiguration,
-	*corev1ac.ContainerPortApplyConfiguration,
-	*corev1ac.ContainerApplyConfiguration,
-) {
-	clientPort := corev1ac.ContainerPort().
-		WithName("client").
-		WithContainerPort(2379).
-		WithProtocol(corev1.ProtocolTCP)
-
-	peerPort := corev1ac.ContainerPort().
-		WithName("peer").
-		WithContainerPort(2380).
-		WithProtocol(corev1.ProtocolTCP)
-
-	metricsPort := corev1ac.ContainerPort().
-		WithName("metrics").
-		WithContainerPort(2381).
-		WithProtocol(corev1.ProtocolTCP)
-
-	return clientPort, peerPort, metricsPort, corev1ac.Container().
+	clientPort *corev1ac.ContainerPortApplyConfiguration,
+	peerPort *corev1ac.ContainerPortApplyConfiguration,
+	metricsPort *corev1ac.ContainerPortApplyConfiguration,
+) *corev1ac.ContainerApplyConfiguration {
+	return corev1ac.Container().
 		WithName("etcd").
 		WithImage("registry.k8s.io/etcd:3.5.21-0").
 		WithImagePullPolicy(corev1.PullAlways).
 		WithCommand("etcd").
 		WithArgs(er.buildEtcdArgs(
-			hostedControlPlane,
+			hostedControlPlane, cluster,
 			etcdDataVolumeMount, etcdCertificatesVolumeMount,
 			clientPort, peerPort, metricsPort,
 		)...).
@@ -323,6 +324,7 @@ func (er *EtcdClusterReconciler) createEtcdContainer(
 
 func (er *EtcdClusterReconciler) buildEtcdArgs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 	etcdDataVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	etcdCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	clientPort *corev1ac.ContainerPortApplyConfiguration,
@@ -332,7 +334,7 @@ func (er *EtcdClusterReconciler) buildEtcdArgs(
 	certificatesDir := *etcdCertificatesVolumeMount.MountPath
 	podUrl := fmt.Sprintf(
 		"https://$(POD_NAME).%s.%s.svc",
-		names.GetEtcdServiceName(hostedControlPlane.Name), hostedControlPlane.Namespace,
+		names.GetEtcdServiceName(cluster), hostedControlPlane.Namespace,
 	)
 
 	args := map[string]string{
@@ -343,7 +345,7 @@ func (er *EtcdClusterReconciler) buildEtcdArgs(
 		"advertise-client-urls":       fmt.Sprintf("%s:%d", podUrl, *clientPort.ContainerPort),
 		"initial-cluster-state":       "new",
 		"initial-cluster-token":       "etcd-cluster",
-		"initial-cluster":             er.buildInitialCluster(hostedControlPlane, peerPort),
+		"initial-cluster":             er.buildInitialCluster(cluster, peerPort),
 		"initial-advertise-peer-urls": fmt.Sprintf("%s:%d", podUrl, *peerPort.ContainerPort),
 		"listen-metrics-urls":         fmt.Sprintf("http://0.0.0.0:%d", *metricsPort.ContainerPort),
 		"auto-compaction-mode":        "revision",
@@ -363,10 +365,10 @@ func (er *EtcdClusterReconciler) buildEtcdArgs(
 }
 
 func (er *EtcdClusterReconciler) buildInitialCluster(
-	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 ) string {
-	entries := slices.MapToSlice(names.GetEtcdDNSNames(hostedControlPlane),
+	entries := slices.MapToSlice(names.GetEtcdDNSNames(cluster),
 		func(host string, serviceSuffix string) string {
 			return fmt.Sprintf("%s=https://%s:%d", host, serviceSuffix, *peerPort.ContainerPort)
 		},
@@ -381,8 +383,8 @@ func (er *EtcdClusterReconciler) createStartupProbe(
 	return er.createProbe("/readyz", probePort).
 		WithInitialDelaySeconds(0).
 		WithTimeoutSeconds(10).
-		WithFailureThreshold(10).
-		WithPeriodSeconds(5)
+		WithFailureThreshold(30).
+		WithPeriodSeconds(3)
 }
 
 func (er *EtcdClusterReconciler) createReadinessProbe(

@@ -3,7 +3,6 @@ package hostedcontrolplane
 import (
 	"context"
 
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -30,7 +29,6 @@ var nodeBootstrapTokenAuthGroup = "system:bootstrappers:kubeadm:default-node-tok
 
 func (wr *WorkloadClusterReconciler) ReconcileKubeletConfigRBAC(
 	ctx context.Context,
-	_ *v1alpha1.HostedControlPlane,
 ) error {
 	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileKubeletConfigRBAC",
 		func(ctx context.Context, span trace.Span) error {
@@ -75,7 +73,6 @@ func (wr *WorkloadClusterReconciler) ReconcileKubeletConfigRBAC(
 
 func (wr *WorkloadClusterReconciler) ReconcileNodeRBAC(
 	ctx context.Context,
-	_ *v1alpha1.HostedControlPlane,
 ) error {
 	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileNodeRBAC",
 		func(ctx context.Context, span trace.Span) error {
@@ -116,7 +113,6 @@ func (wr *WorkloadClusterReconciler) ReconcileNodeRBAC(
 
 func (wr *WorkloadClusterReconciler) ReconcileClusterAdminBinding(
 	ctx context.Context,
-	_ *v1alpha1.HostedControlPlane,
 ) error {
 	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileClusterAdminBinding",
 		func(ctx context.Context, span trace.Span) error {

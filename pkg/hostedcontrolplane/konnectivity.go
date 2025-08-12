@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
 	apiserverv1beta1 "k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 //+kubebuilder:rbac:groups=core,resources=configmaps,verbs=create;update;patch
@@ -22,6 +23,7 @@ import (
 func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKonnectivityConfig",
 		func(ctx context.Context, span trace.Span) error {
@@ -51,10 +53,10 @@ func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 			}
 
 			configMap := corev1ac.ConfigMap(
-				names.GetKonnectivityConfigMapName(hostedControlPlane.Name),
+				names.GetKonnectivityConfigMapName(cluster),
 				hostedControlPlane.Namespace,
 			).
-				WithLabels(names.GetControlPlaneLabels(hostedControlPlane.Name, "")).
+				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string]string{
 					EgressSelectorConfigurationFileName: buf.String(),
