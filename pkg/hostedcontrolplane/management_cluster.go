@@ -6,19 +6,16 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 )
 
 type ManagementCluster interface {
-	GetWorkloadClusterClient(
-		ctx context.Context,
-		hostedControlPlane *v1alpha1.HostedControlPlane,
-	) (*kubernetes.Clientset, error)
+	GetWorkloadClusterClient(ctx context.Context, cluster *capiv1.Cluster) (*kubernetes.Clientset, error)
 }
 
 type Management struct {
@@ -32,10 +29,10 @@ var _ ManagementCluster = &Management{}
 
 func (m *Management) GetWorkloadClusterClient(
 	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 ) (*kubernetes.Clientset, error) {
-	kubeConfigSecret, err := m.KubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
-		Get(ctx, names.GetKubeconfigSecretName(hostedControlPlane.Name, "controller"), metav1.GetOptions{})
+	kubeConfigSecret, err := m.KubernetesClient.CoreV1().Secrets(cluster.Namespace).
+		Get(ctx, names.GetKubeconfigSecretName(cluster, "controller"), metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get kubeconfig for workload cluster: %w", err)
 	}

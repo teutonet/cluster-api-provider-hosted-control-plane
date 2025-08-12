@@ -250,7 +250,7 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 			}
 
 			type Phase struct {
-				Reconcile    func(context.Context, *v1alpha1.HostedControlPlane) error
+				Reconcile    func(context.Context, *v1alpha1.HostedControlPlane, *capiv1.Cluster) error
 				Condition    capiv1.ConditionType
 				FailedReason string
 				Name         string
@@ -261,6 +261,16 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				caCertificateDuration: 365 * 24 * time.Hour,
 				certificateDuration:   (365 * 24 * time.Hour) / 12,
 			}
+			kubeconfigReconciler := &KubeconfigReconciler{
+				kubernetesClient: r.KubernetesClient,
+			}
+			etcdClusterReconciler := &EtcdClusterReconciler{
+				client:           r.Client,
+				kubernetesClient: r.KubernetesClient,
+			}
+			apiServerReconciler := &APIServerResourcesReconciler{
+				kubernetesClient: r.KubernetesClient,
+			}
 			phases := []Phase{
 				{
 					Name:         "CA certificates",
@@ -269,25 +279,14 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					FailedReason: v1alpha1.CACertificatesFailedReason,
 				},
 				{
-					Name: "certificates",
-					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
-						return certificateReconciler.ReconcileCertificates(ctx, hostedControlPlane, cluster)
-					},
+					Name:         "certificates",
+					Reconcile:    certificateReconciler.ReconcileCertificates,
 					Condition:    v1alpha1.CertificatesReadyCondition,
 					FailedReason: v1alpha1.CertificatesFailedReason,
 				},
 				{
-					Name: "kubeconfig",
-					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
-						kubeconfigReconciler := &KubeconfigReconciler{
-							kubernetesClient: r.KubernetesClient,
-						}
-						return kubeconfigReconciler.ReconcileKubeconfigs(
-							ctx,
-							hostedControlPlane,
-							cluster,
-						)
-					},
+					Name:         "kubeconfig",
+					Reconcile:    kubeconfigReconciler.ReconcileKubeconfigs,
 					Condition:    v1alpha1.KubeconfigReadyCondition,
 					FailedReason: v1alpha1.KubeconfigFailedReason,
 				},
@@ -298,48 +297,33 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					FailedReason: v1alpha1.KonnectivityConfigFailedReason,
 				},
 				{
-					Name: "etcd cluster",
-					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
-						etcdClusterReconciler := &EtcdClusterReconciler{
-							client:           r.Client,
-							kubernetesClient: r.KubernetesClient,
-						}
-						return etcdClusterReconciler.ReconcileEtcdCluster(ctx, hostedControlPlane)
-					},
+					Name:         "etcd cluster",
+					Reconcile:    etcdClusterReconciler.ReconcileEtcdCluster,
 					Condition:    v1alpha1.EtcdClusterReadyCondition,
 					FailedReason: v1alpha1.EtcdClusterFailedReason,
 				},
 				{
-					Name: "apiserver resources",
-					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
-						apiServerReconciler := &APIServerResourcesReconciler{
-							kubernetesClient: r.KubernetesClient,
-						}
-						return apiServerReconciler.ReconcileAPIServerResources(ctx, hostedControlPlane)
-					},
+					Name:         "apiserver resources",
+					Reconcile:    apiServerReconciler.ReconcileAPIServerResources,
 					Condition:    v1alpha1.APIServerResourcesReadyCondition,
 					FailedReason: v1alpha1.DeploymentFailedReason,
 				},
 				{
-					Name: "workload cluster resources",
-					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
-						return r.reconcileWorkloadClusterResources(ctx, hostedControlPlane)
-					},
+					Name:         "workload cluster resources",
+					Reconcile:    r.reconcileWorkloadClusterResources,
 					Condition:    v1alpha1.WorkloadClusterResourcesReadyCondition,
 					FailedReason: v1alpha1.WorkloadClusterResourcesFailedReason,
 				},
 				{
-					Name: "TLSRoute",
-					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) error {
-						return r.reconcileTLSRoute(ctx, hostedControlPlane, cluster)
-					},
+					Name:         "TLSRoute",
+					Reconcile:    r.reconcileTLSRoute,
 					Condition:    v1alpha1.TLSRouteReadyCondition,
 					FailedReason: v1alpha1.TLSRouteFailedReason,
 				},
 			}
 
 			for _, phase := range phases {
-				if err := phase.Reconcile(ctx, hostedControlPlane); err != nil {
+				if err := phase.Reconcile(ctx, hostedControlPlane, cluster); err != nil {
 					conditions.MarkFalse(
 						hostedControlPlane,
 						phase.Condition,

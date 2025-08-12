@@ -14,17 +14,18 @@ import (
 func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileWorkloadSetup",
 		func(ctx context.Context, span trace.Span) error {
 			type WorkloadPhase struct {
-				Reconcile    func(context.Context, *v1alpha1.HostedControlPlane) error
+				Reconcile    func(context.Context) error
 				Condition    capiv1.ConditionType
 				FailedReason string
 				Name         string
 			}
 
-			workloadClusterClient, err := r.ManagementCluster.GetWorkloadClusterClient(ctx, hostedControlPlane)
+			workloadClusterClient, err := r.ManagementCluster.GetWorkloadClusterClient(ctx, cluster)
 			if err != nil {
 				return fmt.Errorf("failed to get workload cluster client: %w", err)
 			}
@@ -65,7 +66,7 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 			}
 
 			for _, phase := range workloadPhases {
-				if err := phase.Reconcile(ctx, hostedControlPlane); err != nil {
+				if err := phase.Reconcile(ctx); err != nil {
 					conditions.MarkFalse(
 						hostedControlPlane,
 						phase.Condition,

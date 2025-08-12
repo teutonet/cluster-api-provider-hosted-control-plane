@@ -5,166 +5,170 @@ import (
 	"fmt"
 
 	slices "github.com/samber/lo"
-	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
+	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
-func GetRootIssuerName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-root-issuer", controlPlaneName)
+func GetRootIssuerName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-root"
 }
 
-func GetCAIssuerName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-ca", controlPlaneName)
+func GetCAIssuerName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-ca"
 }
 
-func GetCASecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-ca", controlPlaneName)
+func GetCASecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-ca"
 }
 
-func GetCACertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-ca", controlPlaneName)
+func GetCACertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-ca"
 }
 
-func GetAPIServerCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-apiserver", controlPlaneName)
+func GetAPIServerCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-apiserver"
 }
 
-func GetAPIServerSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-apiserver", controlPlaneName)
+func GetAPIServerSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-apiserver"
 }
 
-func GetAPIServerKubeletClientCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-apiserver-kubelet-client", controlPlaneName)
+func GetAPIServerKubeletClientCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-apiserver-kubelet-client"
 }
 
-func GetAPIServerKubeletClientSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-apiserver-kubelet-client", controlPlaneName)
+func GetAPIServerKubeletClientSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-apiserver-kubelet-client"
 }
 
-func GetFrontProxyCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-front-proxy", controlPlaneName)
+func GetFrontProxyCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-front-proxy"
 }
 
-func GetFrontProxySecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-front-proxy", controlPlaneName)
+func GetFrontProxySecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-front-proxy"
 }
 
-func GetFrontProxyCAName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-front-proxy-ca", controlPlaneName)
+func GetFrontProxyCAName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-front-proxy-ca"
 }
 
-func GetFrontProxyCASecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-front-proxy-ca", controlPlaneName)
+func GetFrontProxyCASecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-front-proxy-ca"
 }
 
-func GetServiceAccountCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-service-account", controlPlaneName)
+func GetServiceAccountCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-service-account"
 }
 
-func GetServiceAccountSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-service-account", controlPlaneName)
+func GetServiceAccountSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-service-account"
 }
 
-func GetServiceName(controlPlaneName string) string {
-	return fmt.Sprintf("s-%s", controlPlaneName)
+func GetServiceName(cluster *capiv1.Cluster) string {
+	return "s-" + cluster.Name
 }
 
-func GetAdminCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-admin", controlPlaneName)
+func GetAdminCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-admin"
 }
 
-func GetAdminKubeconfigCertificateSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-admin", controlPlaneName)
+func GetAdminKubeconfigCertificateSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-admin"
 }
 
-func GetControllerManagerKubeconfigCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-controller-manager", controlPlaneName)
+func GetControllerManagerKubeconfigCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-controller-manager"
 }
 
-func GetControllerManagerKubeconfigCertificateSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-controller-manager", controlPlaneName)
+func GetControllerManagerKubeconfigCertificateSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-controller-manager"
 }
 
-func GetSchedulerKubeconfigCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-scheduler", controlPlaneName)
+func GetSchedulerKubeconfigCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-scheduler"
 }
 
-func GetSchedulerKubeconfigCertificateSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-scheduler", controlPlaneName)
+func GetSchedulerKubeconfigCertificateSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-scheduler"
 }
 
-func GetKonnectivityConfigMapName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-konnectivity", controlPlaneName)
+func GetKonnectivityConfigMapName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-konnectivity"
 }
 
-func GetKonnectivityClientKubeconfigCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-konnectivity-client", controlPlaneName)
+func GetKonnectivityClientKubeconfigCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-konnectivity-client"
 }
 
-func GetKonnectivityClientKubeconfigCertificateSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-konnectivity-client", controlPlaneName)
+func GetKonnectivityClientKubeconfigCertificateSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-konnectivity-client"
 }
 
-func GetControllerKubeconfigCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-controller", controlPlaneName)
+func GetControllerKubeconfigCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-controller"
 }
 
-func GetControllerKubeconfigCertificateSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-controller", controlPlaneName)
+func GetControllerKubeconfigCertificateSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-controller"
 }
 
-func GetKubeconfigSecretName(controlPlaneName string, kubeconfigName string) string {
-	return fmt.Sprintf("%s-%s-kubeconfig", controlPlaneName, kubeconfigName)
+func GetKubeconfigSecretName(cluster *capiv1.Cluster, kubeconfigName string) string {
+	return cluster.Name + "-" + kubeconfigName + "-kubeconfig"
 }
 
-func GetEtcdCAName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-etcd-ca", controlPlaneName)
+func GetEtcdCAName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-etcd-ca"
 }
 
-func GetEtcdCASecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-etcd-ca", controlPlaneName)
+func GetEtcdCASecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-etcd-ca"
 }
 
-func GetEtcdServerCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-etcd-server", controlPlaneName)
+func GetEtcdServerCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-etcd-server"
 }
 
-func GetEtcdServerSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-etcd-server", controlPlaneName)
+func GetEtcdServerSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-etcd-server"
 }
 
-func GetEtcdPeerCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-etcd-peer", controlPlaneName)
+func GetEtcdPeerCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-etcd-peer"
 }
 
-func GetEtcdPeerSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-etcd-peer", controlPlaneName)
+func GetEtcdPeerSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-etcd-peer"
 }
 
-func GetEtcdAPIServerClientCertificateName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-apiserver-etcd-client", controlPlaneName)
+func GetEtcdAPIServerClientCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-etcd-apiserver-client"
 }
 
-func GetEtcdAPIServerClientSecretName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-apiserver-etcd-client", controlPlaneName)
+func GetEtcdAPIServerClientSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-etcd-apiserver-client"
 }
 
-func GetEtcdServiceName(controlPlaneName string) string {
-	return fmt.Sprintf("e-%s-etcd", controlPlaneName)
+func GetEtcdServiceName(cluster *capiv1.Cluster) string {
+	return "e-" + cluster.Name + "-etcd"
 }
 
-func GetEtcdStatefulSetName(controlPlaneName string) string {
-	return fmt.Sprintf("%s-etcd", controlPlaneName)
+func GetEtcdStatefulSetName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-etcd"
 }
 
-func GetInternalServiceHost(controlPlaneName string, namespace string) string {
-	return fmt.Sprintf("%s.%s.svc", GetServiceName(controlPlaneName), namespace)
+func GetInternalServiceHost(cluster *capiv1.Cluster) string {
+	return GetServiceName(cluster) + "." + cluster.Namespace + ".svc"
 }
 
-func GetEtcdDNSNames(hostedControlPlane *v1alpha1.HostedControlPlane) map[string]string {
-	serviceName := GetEtcdServiceName(hostedControlPlane.Name)
+func GetEtcdDNSNames(cluster *capiv1.Cluster) map[string]string {
+	serviceName := GetEtcdServiceName(cluster)
 	return slices.Associate(slices.RepeatBy(3, func(i int) string {
-		return fmt.Sprintf("%s-%d", GetEtcdStatefulSetName(hostedControlPlane.Name), i)
+		return fmt.Sprintf("%s-%d", GetEtcdStatefulSetName(cluster), i)
 	}), func(host string) (string, string) {
-		return host, fmt.Sprintf("%s.%s.%s.svc", host, serviceName, hostedControlPlane.Namespace)
+		return host, fmt.Sprintf("%s.%s.%s.svc", host, serviceName, cluster.Namespace)
 	})
+}
+
+func GetTLSRouteName(cluster *capiv1.Cluster) string {
+	return cluster.Name
 }
