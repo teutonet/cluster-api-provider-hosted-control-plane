@@ -31,7 +31,6 @@ import (
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/finalizers"
 	"sigs.k8s.io/cluster-api/util/patch"
-	"sigs.k8s.io/cluster-api/util/paused"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -125,7 +124,7 @@ func (r *HostedControlPlaneReconciler) clusterToHostedControlPlane(
 	}
 
 	controlPlaneRef := c.Spec.ControlPlaneRef
-	if controlPlaneRef != nil && controlPlaneRef.Kind == (&v1alpha1.HostedControlPlane{}).Kind {
+	if controlPlaneRef != nil && controlPlaneRef.Kind == "HostedControlPlane" {
 		return []reconcile.Request{
 			{
 				NamespacedName: client.ObjectKey{
@@ -187,14 +186,14 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				attribute.String("ClusterName", cluster.Name),
 			)
 
-			if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, hostedControlPlane); err != nil ||
-				isPaused ||
-				requeue {
-				if err == nil || isPaused || requeue {
-					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-				}
-				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to verify paused condition: %w", err)
-			}
+			// if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, hostedControlPlane); err != nil ||
+			//	isPaused ||
+			//	requeue {
+			//	if err == nil || isPaused || requeue {
+			//		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			//	}
+			//	return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to verify paused condition: %w", err)
+			//}
 
 			if !hostedControlPlane.DeletionTimestamp.IsZero() {
 				return r.reconcileDelete(ctx, patchHelper, hostedControlPlane)

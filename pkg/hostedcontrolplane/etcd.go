@@ -9,7 +9,7 @@ import (
 
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
-	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
+	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
@@ -152,7 +152,7 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 		WithLabels(names.GetControlPlaneLabels(cluster, ComponentETCD)).
 		WithSpec(corev1ac.PodSpec().
 			WithTopologySpreadConstraints(
-				util.CreatePodTopologySpreadConstraints(
+				operatorutil.CreatePodTopologySpreadConstraints(
 					names.GetControlPlaneSelector(cluster, ComponentETCD),
 				),
 			).
@@ -361,7 +361,7 @@ func (er *EtcdClusterReconciler) buildEtcdArgs(
 		"quota-backend-bytes":         "8589934592",
 	}
 
-	return util.ArgsToSlice(args)
+	return operatorutil.ArgsToSlice(args)
 }
 
 func (er *EtcdClusterReconciler) buildInitialCluster(

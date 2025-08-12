@@ -5,6 +5,7 @@ import (
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
@@ -16,7 +17,7 @@ func NewScheme() (*runtime.Scheme, error) {
 	scheme := runtime.NewScheme()
 
 	addToSchemeFuncs := []func(*runtime.Scheme) error{
-		scheme.AddToScheme,
+		corev1.AddToScheme,
 		appsv1.AddToScheme,
 		capiv1.AddToScheme,
 		v1beta1.AddToScheme,

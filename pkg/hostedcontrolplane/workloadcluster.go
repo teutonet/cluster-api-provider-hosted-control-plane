@@ -36,10 +36,20 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 
 			workloadPhases := []WorkloadPhase{
 				{
-					Name:         "workload RBAC",
-					Reconcile:    workloadClusterReconciler.ReconcileWorkloadRBAC,
+					Name: "RBAC",
+					Reconcile: func(ctx context.Context, _ *capiv1.Cluster) error {
+						return workloadClusterReconciler.ReconcileWorkloadRBAC(ctx)
+					},
 					Condition:    v1alpha1.WorkloadRBACReadyCondition,
 					FailedReason: v1alpha1.WorkloadRBACFailedReason,
+				},
+				{
+					Name: "cluster-info",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return workloadClusterReconciler.ReconcileClusterInfoConfigMap(ctx, r.KubernetesClient, cluster)
+					},
+					Condition:    v1alpha1.WorkloadClusterInfoReadyCondition,
+					FailedReason: v1alpha1.WorkloadClusterInfoFailedReason,
 				},
 				// TODO: Add more workload phases here
 				// {
@@ -60,7 +70,7 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 						phase.Condition,
 						phase.FailedReason,
 						capiv1.ConditionSeverityError,
-						"Reconciling workload %s failed: %v", phase.Name, err,
+						"Reconciling phase %s failed: %v", phase.Name, err,
 					)
 					return err
 				} else {

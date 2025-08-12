@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 
+	semver "github.com/blang/semver/v4"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -67,8 +68,8 @@ func (w *hostedControlPlaneWebhook) castObjectToHostedControlPlane(
 
 func (w *hostedControlPlaneWebhook) parseVersion(
 	hostedControlPlane *HostedControlPlane,
-) (*v4.Version, *field.Error) {
-	controlPlaneVersion, err := v4.ParseTolerant(hostedControlPlane.Spec.Version)
+) (*semver.Version, *field.Error) {
+	controlPlaneVersion, err := semver.ParseTolerant(hostedControlPlane.Spec.Version)
 	if err != nil {
 		return nil, field.Invalid(
 			w.specPath.Child("version"),

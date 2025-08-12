@@ -127,6 +127,10 @@ linters:
           alias: kubeadm
         - pkg: k8s.io/kubernetes/cmd/kubeadm/app/constants
           alias: konstants
+        - pkg: k8s.io/client-go/applyconfigurations/rbac/v1
+          alias: rbacv1ac
+        - pkg: k8s.io/cluster-bootstrap/token/api
+          alias: bootstrapapi
 
         # Gateway API
         - pkg: sigs.k8s.io/gateway-api/apis/v1
@@ -161,10 +165,14 @@ linters:
           alias: certmanagermetav1ac
         - pkg: github.com/cert-manager/cert-manager/pkg/client/clientset/versioned
           alias: cmclient
-        # Third Party Libraries
 
+        # Third Party Libraries
         - pkg: github.com/samber/lo
           alias: slices
+        - pkg: github.com/blang/semver/v4
+          alias: semver
+        - pkg: github.com/caarlos0/env/v6
+          alias: env
 
         # OpenTelemetry
         - pkg: go.opentelemetry.io/otel/semconv/v1.34.0
@@ -175,6 +183,8 @@ linters:
           alias: errorsUtil
         - pkg: github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/controller
           alias: controllerUtil
+        - pkg: github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util
+          alias: operatorutil
 
     nolintlint:
       allow-unused: false
