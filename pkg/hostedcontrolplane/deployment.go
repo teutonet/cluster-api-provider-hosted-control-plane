@@ -12,7 +12,7 @@ import (
 
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
-	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
@@ -243,7 +243,7 @@ func (dr *APIServerResourcesReconciler) reconcileDeployment(
 		WithLabels(names.GetControlPlaneLabels(cluster, component)).
 		WithSpec(corev1ac.PodSpec().
 			WithTopologySpreadConstraints(
-				operatorutil.CreatePodTopologySpreadConstraints(
+				util.CreatePodTopologySpreadConstraints(
 					names.GetControlPlaneSelector(cluster, component),
 				),
 			).
@@ -642,7 +642,7 @@ func (dr *APIServerResourcesReconciler) buildAPIServerArgs(
 		"etcd-keyfile":  path.Join(certificatesDir, konstants.APIServerEtcdClientKeyName),
 	}
 
-	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.APIServer.Args, args)
+	return util.ArgsToSlice(hostedControlPlane.Spec.Deployment.APIServer.Args, args)
 }
 
 func (dr *APIServerResourcesReconciler) createAPIServerContainer(
@@ -795,7 +795,7 @@ func (dr *APIServerResourcesReconciler) buildSchedulerArgs(
 		"leader-elect":              "true",
 	}
 
-	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.Scheduler.Args, args)
+	return util.ArgsToSlice(hostedControlPlane.Spec.Deployment.Scheduler.Args, args)
 }
 
 func (dr *APIServerResourcesReconciler) buildControllerManagerArgs(
@@ -830,5 +830,5 @@ func (dr *APIServerResourcesReconciler) buildControllerManagerArgs(
 		"use-service-account-credentials":  "true",
 	}
 
-	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.ControllerManager.Args, args)
+	return util.ArgsToSlice(hostedControlPlane.Spec.Deployment.ControllerManager.Args, args)
 }

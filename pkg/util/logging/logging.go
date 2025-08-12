@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/samber/lo"
+	slices "github.com/samber/lo"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -30,7 +30,7 @@ func (h deduplicatingLoggingHandler) Enabled(ctx context.Context, level slog.Lev
 func (h deduplicatingLoggingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return deduplicatingLoggingHandler{
 		Handler: h.Handler,
-		attributes: lo.Assign(h.attributes, lo.SliceToMap(attrs, func(attr slog.Attr) (string, slog.Attr) {
+		attributes: slices.Assign(h.attributes, slices.SliceToMap(attrs, func(attr slog.Attr) (string, slog.Attr) {
 			return attr.Key, attr
 		})),
 	}
@@ -54,7 +54,7 @@ func (h deduplicatingLoggingHandler) Handle(ctx context.Context, record slog.Rec
 	}
 	record = slog.NewRecord(record.Time, record.Level, record.Message, record.PC)
 	if numRecordAttributes+len(h.attributes) > 0 {
-		record.AddAttrs(lo.Values(lo.Assign(h.attributes, attributes))...)
+		record.AddAttrs(slices.Values(slices.Assign(h.attributes, attributes))...)
 	}
 
 	//nolint:wrapcheck // this is just a wrapper function

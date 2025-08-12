@@ -3,8 +3,6 @@ package etc
 
 import (
 	"fmt"
-
-	"github.com/caarlos0/env/v6"
 )
 
 type LogFormat string
@@ -26,7 +24,7 @@ type Config struct {
 func GetOperatorConfig() (Config, error) {
 	var config Config
 
-	if err := env.Parse(&config); err != nil {
+	if err := v6.Parse(&config); err != nil {
 		return Config{}, fmt.Errorf("failed to parse operator config: %w", err)
 	}
 

@@ -102,10 +102,13 @@ linters:
       require-string-key: true
     importas:
       no-unaliased: true
+      no-extra-aliases: true
       alias:
         # Kubernetes
         - pkg: k8s.io/api/core/v1
           alias: corev1
+        - pkg: k8s.io/api/apps/v1
+          alias: appsv1
         - pkg: k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1
           alias: apiextensionsv1
         - pkg: k8s.io/apimachinery/pkg/apis/meta/v1
@@ -120,15 +123,25 @@ linters:
           alias: metav1ac
         - pkg: k8s.io/client-go/applyconfigurations/core/v1
           alias: corev1ac
-        - pkg: k8s.io/client-go/apps/v1
-          alias: appsv1
+        - pkg: k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3
+          alias: kubeadm
+        - pkg: k8s.io/kubernetes/cmd/kubeadm/app/constants
+          alias: konstants
+
+        # Gateway API
         - pkg: sigs.k8s.io/gateway-api/apis/v1
           alias: gwv1
+        - pkg: sigs.k8s.io/gateway-api/apis/v1alpha2
+          alias: gwv1alpha2
         - pkg: sigs.k8s.io/gateway-api/applyconfigurations/apis/v1
           alias: gwacv1
+        - pkg: sigs.k8s.io/gateway-api/pkg/client/clientset/versioned
+          alias: gwclient
         # Controller Runtime
         - pkg: sigs.k8s.io/controller-runtime
           alias: ctrl
+        - pkg: sigs.k8s.io/controller-runtime/pkg/controller/controllerutil
+          alias: controllerutil
         # CAPI
         - pkg: sigs.k8s.io/cluster-api/api/v1beta1
           alias: capiv1
@@ -136,6 +149,27 @@ linters:
           alias: addonsv1
         - pkg: sigs.k8s.io/cluster-api/util/secret
           alias: capisecretutil
+
+        # Cert Manager
+        - pkg: github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1
+          alias: certmanagerv1
+        - pkg: github.com/cert-manager/cert-manager/pkg/apis/meta/v1
+          alias: certmanagermetav1
+        - pkg: github.com/cert-manager/cert-manager/pkg/client/applyconfigurations/certmanager/v1
+          alias: certmanagerv1ac
+        - pkg: github.com/cert-manager/cert-manager/pkg/client/applyconfigurations/meta/v1
+          alias: certmanagermetav1ac
+        - pkg: github.com/cert-manager/cert-manager/pkg/client/clientset/versioned
+          alias: cmclient
+        # Third Party Libraries
+
+        - pkg: github.com/samber/lo
+          alias: slices
+
+        # OpenTelemetry
+        - pkg: go.opentelemetry.io/otel/semconv/v1.34.0
+          alias: semconv
+
         # hcp
         - pkg: github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors
           alias: errorsUtil
@@ -156,9 +190,9 @@ linters:
           msg: use v1beta1 package instead
         - pkg: github.com/gophercloud/(gophercloud|utils)/([^v]|v[^2])
           msg: use v2 package instead
-#        - pattern: ^controllerutil\.CreateOrPatch$
-#          msg: use SSA instead
-          # original regex: slog\.Logger\.(Info|Error|Debug|Warn)(?!Context)
+        #        - pattern: ^controllerutil\.CreateOrPatch$
+        #          msg: use SSA instead
+        # original regex: slog\.Logger\.(Info|Error|Debug|Warn)(?!Context)
         - pattern: ^slog\.Logger\.(Info|Error|Debug|Warn)(|[^C]|C[^o]|Co[^n]|Con[^t]|Cont[^e]|Conte[^x]|Contex[^t])$
           msg: Use the Context version
         # - pattern: ^controllerruntime.LoggerFrom$

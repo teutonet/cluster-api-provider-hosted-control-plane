@@ -9,14 +9,14 @@ import (
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
+	v1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
+	v1 "k8s.io/client-go/applyconfigurations/rbac/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
+	"k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/cluster-bootstrap/token/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/phases/bootstraptoken/clusterinfo"
 	"k8s.io/kubernetes/cmd/kubeadm/app/phases/bootstraptoken/node"
@@ -76,16 +76,16 @@ func (wr *WorkloadClusterReconciler) ReconcileWorkloadRBAC(
 func (wr *WorkloadClusterReconciler) reconcileClusterAdminBinding(
 	ctx context.Context,
 ) error {
-	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.ClusterAdminsGroupAndClusterRoleBinding).
+	clusterRoleBinding := v1.ClusterRoleBinding(konstants.ClusterAdminsGroupAndClusterRoleBinding).
 		WithRoleRef(
-			rbacv1ac.RoleRef().
-				WithAPIGroup(rbacv1.GroupName).
-				WithKind(rbacv1.ClusterRole{}.Kind).
+			v1.RoleRef().
+				WithAPIGroup(v1.GroupName).
+				WithKind(v1.ClusterRole{}.Kind).
 				WithName("cluster-admin"),
 		).
 		WithSubjects(
-			rbacv1ac.Subject().
-				WithKind(rbacv1.GroupKind).
+			v1.Subject().
+				WithKind(v1.GroupKind).
 				WithName(konstants.ClusterAdminsGroupAndClusterRoleBinding),
 		)
 
@@ -104,8 +104,8 @@ func (wr *WorkloadClusterReconciler) reconcileClusterInfoConfigMap(
 	if err != nil {
 		return fmt.Errorf("failed to get CA secret: %w", err)
 	}
-	kubeconfig := &clientcmdapi.Config{
-		Clusters: map[string]*clientcmdapi.Cluster{
+	kubeconfig := &api.Config{
+		Clusters: map[string]*api.Cluster{
 			"": {
 				Server:                   cluster.Spec.ControlPlaneEndpoint.String(),
 				CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
@@ -117,9 +117,9 @@ func (wr *WorkloadClusterReconciler) reconcileClusterInfoConfigMap(
 		return errorsUtil.IfErrErrorf("failed to marshal kubeconfig: %w", err)
 	}
 
-	configMap := corev1ac.ConfigMap(bootstrapapi.ConfigMapClusterInfo, metav1.NamespacePublic).
+	configMap := corev1ac.ConfigMap(api.ConfigMapClusterInfo, metav1.NamespacePublic).
 		WithData(map[string]string{
-			bootstrapapi.KubeConfigKey: string(kubeconfigBytes),
+			api.KubeConfigKey: string(kubeconfigBytes),
 		})
 
 	_, err = wr.kubernetesClient.CoreV1().

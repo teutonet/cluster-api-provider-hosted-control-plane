@@ -5,7 +5,7 @@ import (
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	controllerutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 var titleCaser = cases.Title(language.English)

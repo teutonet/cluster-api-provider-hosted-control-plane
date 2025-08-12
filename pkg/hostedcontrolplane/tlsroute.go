@@ -14,8 +14,8 @@ import (
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
-	gwv1ac "sigs.k8s.io/gateway-api/applyconfiguration/apis/v1"
-	gwv1alpha2ac "sigs.k8s.io/gateway-api/applyconfiguration/apis/v1alpha2"
+	v1 "sigs.k8s.io/gateway-api/applyconfiguration/apis/v1"
+	"sigs.k8s.io/gateway-api/applyconfiguration/apis/v1alpha2"
 )
 
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=tlsroutes,verbs=create;patch
@@ -27,17 +27,17 @@ func (r *HostedControlPlaneReconciler) reconcileTLSRoute(
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileTLSRoute",
 		func(ctx context.Context, span trace.Span) error {
-			tlsRoute := gwv1alpha2ac.TLSRoute(names.GetTLSRouteName(cluster), cluster.Namespace).
+			tlsRoute := v1alpha2.TLSRoute(names.GetTLSRouteName(cluster), cluster.Namespace).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
-				WithSpec(gwv1alpha2ac.TLSRouteSpec().
+				WithSpec(v1alpha2.TLSRouteSpec().
 					WithHostnames(gwv1alpha2.Hostname(cluster.Spec.ControlPlaneEndpoint.Host)).
-					WithParentRefs(gwv1ac.ParentReference().
+					WithParentRefs(v1.ParentReference().
 						WithName("capi").
 						WithNamespace(gwv1.Namespace(cluster.Namespace)),
 					).
-					WithRules(gwv1alpha2ac.TLSRouteRule().
-						WithBackendRefs(gwv1ac.BackendRef().
+					WithRules(v1alpha2.TLSRouteRule().
+						WithBackendRefs(v1.BackendRef().
 							WithName(gwv1.ObjectName(names.GetServiceName(cluster))).
 							WithPort(gwv1.PortNumber(443)).
 							WithWeight(1),

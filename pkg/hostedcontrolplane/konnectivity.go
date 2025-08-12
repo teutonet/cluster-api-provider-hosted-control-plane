@@ -13,7 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer/json"
-	apiserverv1beta1 "k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
+	"k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
@@ -27,18 +27,18 @@ func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKonnectivityConfig",
 		func(ctx context.Context, span trace.Span) error {
-			egressSelectorConfig := &apiserverv1beta1.EgressSelectorConfiguration{
+			egressSelectorConfig := &v1beta1.EgressSelectorConfiguration{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "apiserver.k8s.io/v1beta1",
 					Kind:       "EgressSelectorConfiguration",
 				},
-				EgressSelections: []apiserverv1beta1.EgressSelection{
+				EgressSelections: []v1beta1.EgressSelection{
 					{
 						Name: "cluster",
-						Connection: apiserverv1beta1.Connection{
-							ProxyProtocol: apiserverv1beta1.ProtocolGRPC,
-							Transport: &apiserverv1beta1.Transport{
-								UDS: &apiserverv1beta1.UDSTransport{
+						Connection: v1beta1.Connection{
+							ProxyProtocol: v1beta1.ProtocolGRPC,
+							Transport: &v1beta1.Transport{
+								UDS: &v1beta1.UDSTransport{
 									UDSName: "/run/konnectivity/konnectivity-server.sock",
 								},
 							},

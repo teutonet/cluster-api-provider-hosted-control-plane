@@ -9,7 +9,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	containerutil "sigs.k8s.io/cluster-api/util/container"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -48,7 +47,7 @@ func (w *Workload) ReconcileKubeProxy(ctx context.Context, hostedControlPlane *v
 		return nil
 	}
 
-	newImageName, err := containerutil.ModifyImageTag(container.Image, hostedControlPlane.Spec.Version)
+	newImageName, err := container.ModifyImageTag(container.Image, hostedControlPlane.Spec.Version)
 	if err != nil {
 		return fmt.Errorf("failed to modify image tag: %w", err)
 	}
