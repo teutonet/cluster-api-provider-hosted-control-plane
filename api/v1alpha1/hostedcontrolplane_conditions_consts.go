@@ -41,10 +41,6 @@ const (
 	WorkloadClusterFailedReason                                 = "WorkloadClusterFailed"
 	WorkloadClusterResourcesReadyCondition capiv1.ConditionType = "WorkloadSetupReady"
 	WorkloadClusterResourcesFailedReason                        = "WorkloadSetupFailed"
-	KubeletConfigRBACReadyCondition        capiv1.ConditionType = "KubeletConfigRBACReady"
-	KubeletConfigRBACFailedReason                               = "KubeletConfigRBACFailed"
-	NodeRBACReadyCondition                 capiv1.ConditionType = "NodeRBACReady"
-	NodeRBACFailedReason                                        = "NodeRBACFailed"
-	ClusterAdminBindingReadyCondition      capiv1.ConditionType = "ClusterAdminBindingReady"
-	ClusterAdminBindingFailedReason                             = "ClusterAdminBindingFailed"
+	WorkloadRBACReadyCondition             capiv1.ConditionType = "WorkloadRBACReady"
+	WorkloadRBACFailedReason                                    = "WorkloadRBACFailed"
 )

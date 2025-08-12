@@ -54,7 +54,8 @@ func (r *HostedControlPlaneReconciler) reconcileTLSRoute(
 			if !slices.ContainsBy(appliedTLSRoute.Status.RouteStatus.Parents, func(parent gwv1.RouteParentStatus) bool {
 				return parent.ParentRef.Name == *tlsRoute.Spec.ParentRefs[0].Name &&
 					slices.ContainsBy(parent.Conditions, func(condition metav1.Condition) bool {
-						return condition.Type == string(gwv1.RouteConditionAccepted) && condition.Status == metav1.ConditionTrue
+						return condition.Type == string(gwv1.RouteConditionAccepted) &&
+							condition.Status == metav1.ConditionTrue
 					})
 			}) {
 				return fmt.Errorf("TLSRoute is not ready: %w", ErrRequeueRequired)

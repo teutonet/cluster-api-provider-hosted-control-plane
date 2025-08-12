@@ -19,7 +19,7 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileWorkloadSetup",
 		func(ctx context.Context, span trace.Span) error {
 			type WorkloadPhase struct {
-				Reconcile    func(context.Context) error
+				Reconcile    func(context.Context, *capiv1.Cluster) error
 				Condition    capiv1.ConditionType
 				FailedReason string
 				Name         string
@@ -36,22 +36,10 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 
 			workloadPhases := []WorkloadPhase{
 				{
-					Name:         "kubelet config RBAC",
-					Reconcile:    workloadClusterReconciler.ReconcileKubeletConfigRBAC,
-					Condition:    v1alpha1.KubeletConfigRBACReadyCondition,
-					FailedReason: v1alpha1.KubeletConfigRBACFailedReason,
-				},
-				{
-					Name:         "node RBAC",
-					Reconcile:    workloadClusterReconciler.ReconcileNodeRBAC,
-					Condition:    v1alpha1.NodeRBACReadyCondition,
-					FailedReason: v1alpha1.NodeRBACFailedReason,
-				},
-				{
-					Name:         "cluster admin binding",
-					Reconcile:    workloadClusterReconciler.ReconcileClusterAdminBinding,
-					Condition:    v1alpha1.ClusterAdminBindingReadyCondition,
-					FailedReason: v1alpha1.ClusterAdminBindingFailedReason,
+					Name:         "workload RBAC",
+					Reconcile:    workloadClusterReconciler.ReconcileWorkloadRBAC,
+					Condition:    v1alpha1.WorkloadRBACReadyCondition,
+					FailedReason: v1alpha1.WorkloadRBACFailedReason,
 				},
 				// TODO: Add more workload phases here
 				// {
@@ -66,7 +54,7 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 			}
 
 			for _, phase := range workloadPhases {
-				if err := phase.Reconcile(ctx); err != nil {
+				if err := phase.Reconcile(ctx, cluster); err != nil {
 					conditions.MarkFalse(
 						hostedControlPlane,
 						phase.Condition,
