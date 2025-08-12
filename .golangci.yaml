@@ -196,6 +196,9 @@ linters:
           - lll
         source: "^//\\+kubebuilder.*"
       - linters:
+          - lll
+        source: ".*https.*"
+      - linters:
           - govet
         text: 'shadow: declaration of "(err|ctx)" shadows declaration at'
       - linters:

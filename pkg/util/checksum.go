@@ -11,21 +11,21 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-func calculateChecksum(maps ...map[string]any) string {
-	checksums := make([]string, 0, len(maps))
-	for _, m := range maps {
+func calculateChecksum(dataMaps ...map[string]any) string {
+	checksums := make([]string, 0, len(dataMaps))
+	for _, dataMap := range dataMaps {
 		//nolint:gosec // MD5 is used for checksums, not cryptographic security
 		hasher := md5.New()
 
-		keys := make([]string, 0, len(m))
-		for key := range m {
+		keys := make([]string, 0, len(dataMap))
+		for key := range dataMap {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 
 		for _, key := range keys {
 			hasher.Write([]byte(key))
-			value := fmt.Sprintf("%v", m[key])
+			value := fmt.Sprintf("%v", dataMap[key])
 			hasher.Write([]byte(value))
 		}
 		checksums = append(checksums, hex.EncodeToString(hasher.Sum(nil)))

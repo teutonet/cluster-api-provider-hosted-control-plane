@@ -8,7 +8,7 @@ import (
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -35,6 +35,8 @@ var workloadApplyOptions = metav1.ApplyOptions{
 	FieldManager: "workload-cluster-reconciler",
 	Force:        true,
 }
+
+//noling:lll // urls are long 🤷
 
 // ReconcileWorkloadRBAC mimics kuebadm phases, e.g.
 // - https://github.com/kubernetes/kubernetes/blob/6f06cd6e05704a9a7b18e74a048a297e5bdb5498/cmd/kubeadm/app/cmd/phases/init/bootstraptoken.go#L65
@@ -106,7 +108,7 @@ func (wr *WorkloadClusterReconciler) reconcileClusterInfoConfigMap(
 		Clusters: map[string]*clientcmdapi.Cluster{
 			"": {
 				Server:                   cluster.Spec.ControlPlaneEndpoint.String(),
-				CertificateAuthorityData: caSecret.Data[v1.TLSCertKey],
+				CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
 			},
 		},
 	}

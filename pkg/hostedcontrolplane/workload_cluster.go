@@ -9,7 +9,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/rest"
 	containerutil "sigs.k8s.io/cluster-api/util/container"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -22,7 +21,6 @@ type WorkloadCluster interface {
 type Workload struct {
 	Client          client.Client
 	CoreDNSMigrator coreDNSMigrator
-	restConfig      *rest.Config
 }
 
 var _ WorkloadCluster = &Workload{}

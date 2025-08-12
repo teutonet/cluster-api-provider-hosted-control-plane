@@ -51,7 +51,7 @@ func (r *HostedControlPlaneReconciler) reconcileTLSRoute(
 				return errorsUtil.IfErrErrorf("failed to apply TLSRoute: %w", err)
 			}
 
-			if !slices.ContainsBy(appliedTLSRoute.Status.RouteStatus.Parents, func(parent gwv1.RouteParentStatus) bool {
+			if !slices.ContainsBy(appliedTLSRoute.Status.Parents, func(parent gwv1.RouteParentStatus) bool {
 				return parent.ParentRef.Name == *tlsRoute.Spec.ParentRefs[0].Name &&
 					slices.ContainsBy(parent.Conditions, func(condition metav1.Condition) bool {
 						return condition.Type == string(gwv1.RouteConditionAccepted) &&
