@@ -2,14 +2,25 @@ package hostedcontrolplane
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
+	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
+	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	"k8s.io/kubernetes/cmd/kubeadm/app/phases/bootstraptoken/clusterinfo"
+	"k8s.io/kubernetes/cmd/kubeadm/app/phases/bootstraptoken/node"
+	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 const (
@@ -25,114 +36,92 @@ var workloadApplyOptions = metav1.ApplyOptions{
 	Force:        true,
 }
 
-var nodeBootstrapTokenAuthGroup = "system:bootstrappers:kubeadm:default-node-token"
-
-func (wr *WorkloadClusterReconciler) ReconcileKubeletConfigRBAC(
+// ReconcileWorkloadRBAC mimics kuebadm phases, e.g.
+// - https://github.com/kubernetes/kubernetes/blob/6f06cd6e05704a9a7b18e74a048a297e5bdb5498/cmd/kubeadm/app/cmd/phases/init/bootstraptoken.go#L65
+func (wr *WorkloadClusterReconciler) ReconcileWorkloadRBAC(
 	ctx context.Context,
+	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileKubeletConfigRBAC",
+	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileWorkloadRBAC",
 		func(ctx context.Context, span trace.Span) error {
-			name := "kubeadm:kubelet-config"
-			role := rbacv1ac.Role(name, metav1.NamespaceSystem).
-				WithRules(
-					rbacv1ac.PolicyRule().
-						WithAPIGroups("").
-						WithResources("configmaps").
-						WithResourceNames("kubelet-config").
-						WithVerbs("get"),
-				)
-
-			_, err := wr.kubernetesClient.RbacV1().Roles(metav1.NamespaceSystem).Apply(ctx, role, workloadApplyOptions)
-			if err != nil {
-				return errorsUtil.IfErrErrorf("failed to apply kubelet config role: %w", err)
+			kubeadmPhases := []func(kubernetes.Interface) error{
+				node.AllowBootstrapTokensToGetNodes,
+				node.AllowBootstrapTokensToPostCSRs,
+				node.AutoApproveNodeBootstrapTokens,
+				node.AutoApproveNodeCertificateRotation,
+				clusterinfo.CreateClusterInfoRBACRules,
 			}
 
-			roleBinding := rbacv1ac.RoleBinding(name, metav1.NamespaceSystem).
-				WithRoleRef(
-					rbacv1ac.RoleRef().
-						WithAPIGroup(rbacv1.GroupName).
-						WithKind(*role.Kind).
-						WithName(*role.Name),
-				).
-				WithSubjects(
-					rbacv1ac.Subject().
-						WithKind(rbacv1.GroupKind).
-						WithName("system:nodes"),
-					rbacv1ac.Subject().
-						WithKind(rbacv1.GroupKind).
-						WithName(nodeBootstrapTokenAuthGroup),
-				)
+			for _, phase := range kubeadmPhases {
+				if err := phase(wr.kubernetesClient); err != nil {
+					return fmt.Errorf("failed to reconcile kubeadm phase: %w", err)
+				}
+			}
 
-			_, err = wr.kubernetesClient.RbacV1().RoleBindings(metav1.NamespaceSystem).Apply(ctx,
-				roleBinding, workloadApplyOptions,
-			)
-			return errorsUtil.IfErrErrorf("failed to apply kubelet config role binding: %w", err)
+			if err := wr.reconcileClusterInfoConfigMap(ctx, cluster); err != nil {
+				return fmt.Errorf("failed to reconcile cluster info configmap: %w", err)
+			}
+
+			if err := wr.reconcileClusterAdminBinding(ctx); err != nil {
+				return fmt.Errorf("failed to reconcile cluster admin binding: %w", err)
+			}
+
+			return nil
 		},
 	)
 }
 
-func (wr *WorkloadClusterReconciler) ReconcileNodeRBAC(
+func (wr *WorkloadClusterReconciler) reconcileClusterAdminBinding(
 	ctx context.Context,
 ) error {
-	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileNodeRBAC",
-		func(ctx context.Context, span trace.Span) error {
-			name := "kubeadm:get-nodes"
-			clusterRole := rbacv1ac.ClusterRole(name).
-				WithRules(
-					rbacv1ac.PolicyRule().
-						WithAPIGroups("").
-						WithResources("nodes").
-						WithVerbs("get"),
-				)
+	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.ClusterAdminsGroupAndClusterRoleBinding).
+		WithRoleRef(
+			rbacv1ac.RoleRef().
+				WithAPIGroup(rbacv1.GroupName).
+				WithKind(rbacv1.ClusterRole{}.Kind).
+				WithName("cluster-admin"),
+		).
+		WithSubjects(
+			rbacv1ac.Subject().
+				WithKind(rbacv1.GroupKind).
+				WithName(konstants.ClusterAdminsGroupAndClusterRoleBinding),
+		)
 
-			_, err := wr.kubernetesClient.RbacV1().ClusterRoles().Apply(ctx, clusterRole, workloadApplyOptions)
-			if err != nil {
-				return errorsUtil.IfErrErrorf("failed to apply node cluster role: %w", err)
-			}
-
-			clusterRoleBinding := rbacv1ac.ClusterRoleBinding(name).
-				WithRoleRef(
-					rbacv1ac.RoleRef().
-						WithAPIGroup(rbacv1.GroupName).
-						WithKind(*clusterRole.Kind).
-						WithName(*clusterRole.Name),
-				).
-				WithSubjects(
-					rbacv1ac.Subject().
-						WithKind(rbacv1.GroupKind).
-						WithName(nodeBootstrapTokenAuthGroup),
-				)
-
-			_, err = wr.kubernetesClient.RbacV1().
-				ClusterRoleBindings().
-				Apply(ctx, clusterRoleBinding, workloadApplyOptions)
-			return errorsUtil.IfErrErrorf("failed to apply node cluster role binding: %w", err)
-		},
-	)
+	_, err := wr.kubernetesClient.RbacV1().
+		ClusterRoleBindings().
+		Apply(ctx, clusterRoleBinding, workloadApplyOptions)
+	return errorsUtil.IfErrErrorf("failed to apply cluster admin binding: %w", err)
 }
 
-func (wr *WorkloadClusterReconciler) ReconcileClusterAdminBinding(
+func (wr *WorkloadClusterReconciler) reconcileClusterInfoConfigMap(
 	ctx context.Context,
+	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileClusterAdminBinding",
-		func(ctx context.Context, span trace.Span) error {
-			clusterRoleBinding := rbacv1ac.ClusterRoleBinding("kubeadm:cluster-admins").
-				WithRoleRef(
-					rbacv1ac.RoleRef().
-						WithAPIGroup(rbacv1.GroupName).
-						WithKind("ClusterRole").
-						WithName("cluster-admin"),
-				).
-				WithSubjects(
-					rbacv1ac.Subject().
-						WithKind(rbacv1.GroupKind).
-						WithName("kubeadm:cluster-admins"),
-				)
-
-			_, err := wr.kubernetesClient.RbacV1().
-				ClusterRoleBindings().
-				Apply(ctx, clusterRoleBinding, workloadApplyOptions)
-			return errorsUtil.IfErrErrorf("failed to apply cluster admin binding: %w", err)
+	caSecret, err := wr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
+		Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get CA secret: %w", err)
+	}
+	kubeconfig := &clientcmdapi.Config{
+		Clusters: map[string]*clientcmdapi.Cluster{
+			"": {
+				Server:                   cluster.Spec.ControlPlaneEndpoint.String(),
+				CertificateAuthorityData: caSecret.Data[v1.TLSCertKey],
+			},
 		},
-	)
+	}
+	kubeconfigBytes, err := clientcmd.Write(*kubeconfig)
+	if err != nil {
+		return errorsUtil.IfErrErrorf("failed to marshal kubeconfig: %w", err)
+	}
+
+	configMap := corev1ac.ConfigMap(bootstrapapi.ConfigMapClusterInfo, metav1.NamespacePublic).
+		WithData(map[string]string{
+			bootstrapapi.KubeConfigKey: string(kubeconfigBytes),
+		})
+
+	_, err = wr.kubernetesClient.CoreV1().
+		ConfigMaps(metav1.NamespacePublic).
+		Apply(ctx, configMap, workloadApplyOptions)
+	return errorsUtil.IfErrErrorf("failed to apply cluster info configmap: %w", err)
 }

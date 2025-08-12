@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/samber/lo"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -105,45 +105,28 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-	kubeconfig KubeconfigConfig,
+	kubeconfigConfig KubeconfigConfig,
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKubeconfig",
 		func(ctx context.Context, span trace.Span) error {
 			span.SetAttributes(
-				attribute.String("KubeconfigName", kubeconfig.Name),
-				attribute.String("CertificateSecretName", kubeconfig.CertificateSecretName),
+				attribute.String("KubeconfigName", kubeconfigConfig.Name),
+				attribute.String("CertificateSecretName", kubeconfigConfig.CertificateSecretName),
 			)
 
-			certSecret, err := kr.kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
-				Get(ctx, kubeconfig.CertificateSecretName, metav1.GetOptions{})
+			kubeconfig, err := kr.generateKubeconfig(ctx,
+				cluster,
+				kubeconfigConfig.Name,
+				kubeconfigConfig.CertificateSecretName,
+			)
 			if err != nil {
-				if apierrors.IsNotFound(err) {
-					return fmt.Errorf("certificate secret not found: %w", err)
-				}
-				return fmt.Errorf("failed to get certificate secret: %w", err)
+				return fmt.Errorf("failed to generate kubeconfig: %w", err)
 			}
-
-			caSecret, err := kr.kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
-				Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
-			if err != nil {
-				if apierrors.IsNotFound(err) {
-					return fmt.Errorf("CA secret not found: %w", err)
-				}
-				return fmt.Errorf("failed to get CA secret: %w", err)
-			}
-
-			kubeconfigSecret := corev1ac.Secret(kubeconfig.SecretName, hostedControlPlane.Namespace).
+			kubeconfigSecret := corev1ac.Secret(kubeconfigConfig.SecretName, hostedControlPlane.Namespace).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string][]byte{
-					capisecretutil.KubeconfigDataName: kr.generateKubeconfig(
-						kubeconfig.ApiServerEndpoint,
-						kubeconfig.ClusterName,
-						kubeconfig.Name,
-						certSecret.Data[corev1.TLSCertKey],
-						certSecret.Data[corev1.TLSPrivateKeyKey],
-						caSecret.Data[corev1.TLSCertKey],
-					),
+					capisecretutil.KubeconfigDataName: lo.Must(ToYaml(kubeconfig)).Bytes(),
 				})
 
 			_, err = kr.kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
@@ -153,16 +136,29 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 	)
 }
 
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get
+
 func (kr *KubeconfigReconciler) generateKubeconfig(
-	endpoint capiv1.APIEndpoint,
-	clusterName string,
+	ctx context.Context,
+	cluster *capiv1.Cluster,
 	userName string,
-	clientCert []byte,
-	clientKey []byte,
-	caCert []byte,
-) []byte {
+	kubeconfiCertificateSecretName string,
+) (*api.Config, error) {
+	clusterName := cluster.Name
 	contextName := fmt.Sprintf("%s@%s", userName, clusterName)
-	apiServerURL := fmt.Sprintf("https://%s", endpoint.String())
+	apiServerURL := fmt.Sprintf("https://%s", cluster.Spec.ControlPlaneEndpoint.String())
+
+	certSecret, err := kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
+		Get(ctx, kubeconfiCertificateSecretName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get certificate secret: %w", err)
+	}
+
+	caSecret, err := kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
+		Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get CA secret: %w", err)
+	}
 
 	kubeconfig := api.Config{
 		APIVersion: "v1",
@@ -172,7 +168,7 @@ func (kr *KubeconfigReconciler) generateKubeconfig(
 				Name: clusterName,
 				Cluster: api.Cluster{
 					Server:                   apiServerURL,
-					CertificateAuthorityData: caCert,
+					CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
 				},
 			},
 		},
@@ -190,17 +186,12 @@ func (kr *KubeconfigReconciler) generateKubeconfig(
 			{
 				Name: userName,
 				AuthInfo: api.AuthInfo{
-					ClientCertificateData: clientCert,
-					ClientKeyData:         clientKey,
+					ClientCertificateData: certSecret.Data[corev1.TLSCertKey],
+					ClientKeyData:         certSecret.Data[corev1.TLSPrivateKeyKey],
 				},
 			},
 		},
 	}
 
-	data, err := ToYaml(&kubeconfig)
-	if err != nil {
-		panic(err)
-	}
-
-	return data.Bytes()
+	return &kubeconfig, nil
 }
