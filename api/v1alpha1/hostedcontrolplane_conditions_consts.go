@@ -31,4 +31,8 @@ const (
 	WorkloadRBACFailedReason                                    = "WorkloadRBACFailed"
 	WorkloadClusterInfoReadyCondition      capiv1.ConditionType = "WorkloadClusterInfoReady"
 	WorkloadClusterInfoFailedReason                             = "WorkloadClusterInfoFailed"
+	WorkloadKubeadmConfigReadyCondition    capiv1.ConditionType = "WorkloadKubeadmConfigReady"
+	WorkloadKubeadmConfigFailedReason                           = "WorkloadKubeadmConfigFailed"
+	WorkloadKubeletConfigReadyCondition    capiv1.ConditionType = "WorkloadKubeletConfigReady"
+	WorkloadKubeletConfigFailedReason                           = "WorkloadKubeletConfigFailed"
 )
