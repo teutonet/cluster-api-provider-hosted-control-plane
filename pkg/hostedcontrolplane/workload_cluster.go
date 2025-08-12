@@ -9,8 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/rest"
-	containerutil "sigs.k8s.io/cluster-api/util/container"
+	"sigs.k8s.io/cluster-api/util/container"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -22,7 +21,6 @@ type WorkloadCluster interface {
 type Workload struct {
 	Client          client.Client
 	CoreDNSMigrator coreDNSMigrator
-	restConfig      *rest.Config
 }
 
 var _ WorkloadCluster = &Workload{}
@@ -45,17 +43,17 @@ func (w *Workload) ReconcileKubeProxy(ctx context.Context, hostedControlPlane *v
 		}
 		return fmt.Errorf("failed to determine if DaemonSet already exists: %w", err)
 	}
-	container := findKubeProxyContainer(daemonSet)
-	if container == nil {
+	kubeProxyContainer := findKubeProxyContainer(daemonSet)
+	if kubeProxyContainer == nil {
 		return nil
 	}
 
-	newImageName, err := containerutil.ModifyImageTag(container.Image, hostedControlPlane.Spec.Version)
+	newImageName, err := container.ModifyImageTag(kubeProxyContainer.Image, hostedControlPlane.Spec.Version)
 	if err != nil {
 		return fmt.Errorf("failed to modify image tag: %w", err)
 	}
 
-	if container.Image != newImageName {
+	if kubeProxyContainer.Image != newImageName {
 		helper, err := patch.NewHelper(daemonSet, w.Client)
 		if err != nil {
 			return fmt.Errorf("failed to create patch helper: %w", err)

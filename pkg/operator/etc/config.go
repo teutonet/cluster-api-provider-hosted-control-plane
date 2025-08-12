@@ -4,7 +4,7 @@ package etc
 import (
 	"fmt"
 
-	"github.com/caarlos0/env/v6"
+	env "github.com/caarlos0/env/v6"
 )
 
 type LogFormat string

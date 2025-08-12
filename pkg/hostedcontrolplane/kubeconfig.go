@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/samber/lo"
+	slices "github.com/samber/lo"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
-	api "k8s.io/client-go/tools/clientcmd/api/v1"
+	v1 "k8s.io/client-go/tools/clientcmd/api/v1"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
@@ -126,7 +126,7 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string][]byte{
-					capisecretutil.KubeconfigDataName: lo.Must(ToYaml(kubeconfig)).Bytes(),
+					capisecretutil.KubeconfigDataName: slices.Must(ToYaml(kubeconfig)).Bytes(),
 				})
 
 			_, err = kr.kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
@@ -143,7 +143,7 @@ func (kr *KubeconfigReconciler) generateKubeconfig(
 	cluster *capiv1.Cluster,
 	userName string,
 	kubeconfiCertificateSecretName string,
-) (*api.Config, error) {
+) (*v1.Config, error) {
 	clusterName := cluster.Name
 	contextName := fmt.Sprintf("%s@%s", userName, clusterName)
 	apiServerURL := fmt.Sprintf("https://%s", cluster.Spec.ControlPlaneEndpoint.String())
@@ -160,32 +160,32 @@ func (kr *KubeconfigReconciler) generateKubeconfig(
 		return nil, fmt.Errorf("failed to get CA secret: %w", err)
 	}
 
-	kubeconfig := api.Config{
+	kubeconfig := v1.Config{
 		APIVersion: "v1",
 		Kind:       "Config",
-		Clusters: []api.NamedCluster{
+		Clusters: []v1.NamedCluster{
 			{
 				Name: clusterName,
-				Cluster: api.Cluster{
+				Cluster: v1.Cluster{
 					Server:                   apiServerURL,
 					CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
 				},
 			},
 		},
-		Contexts: []api.NamedContext{
+		Contexts: []v1.NamedContext{
 			{
 				Name: contextName,
-				Context: api.Context{
+				Context: v1.Context{
 					Cluster:  clusterName,
 					AuthInfo: userName,
 				},
 			},
 		},
 		CurrentContext: contextName,
-		AuthInfos: []api.NamedAuthInfo{
+		AuthInfos: []v1.NamedAuthInfo{
 			{
 				Name: userName,
-				AuthInfo: api.AuthInfo{
+				AuthInfo: v1.AuthInfo{
 					ClientCertificateData: certSecret.Data[corev1.TLSCertKey],
 					ClientKeyData:         certSecret.Data[corev1.TLSPrivateKeyKey],
 				},

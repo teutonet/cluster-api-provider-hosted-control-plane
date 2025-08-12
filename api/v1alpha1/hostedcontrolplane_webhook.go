@@ -8,7 +8,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/blang/semver/v4"
+	semver "github.com/blang/semver/v4"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"

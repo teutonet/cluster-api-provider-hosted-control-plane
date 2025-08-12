@@ -27,17 +27,16 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	capiutil "sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/finalizers"
 	"sigs.k8s.io/cluster-api/util/patch"
-	"sigs.k8s.io/cluster-api/util/paused"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	controllerutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
@@ -125,7 +124,7 @@ func (r *HostedControlPlaneReconciler) clusterToHostedControlPlane(
 	}
 
 	controlPlaneRef := c.Spec.ControlPlaneRef
-	if controlPlaneRef != nil && controlPlaneRef.Kind == (&v1alpha1.HostedControlPlane{}).Kind {
+	if controlPlaneRef != nil && controlPlaneRef.Kind == "HostedControlPlane" {
 		return []reconcile.Request{
 			{
 				NamespacedName: client.ObjectKey{
@@ -173,7 +172,7 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				}
 			}()
 
-			cluster, err := capiutil.GetOwnerCluster(ctx, r.Client, hostedControlPlane.ObjectMeta)
+			cluster, err := util.GetOwnerCluster(ctx, r.Client, hostedControlPlane.ObjectMeta)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to retrieve owner Cluster: %w", err)
 			}
@@ -187,14 +186,14 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				attribute.String("ClusterName", cluster.Name),
 			)
 
-			if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, hostedControlPlane); err != nil ||
-				isPaused ||
-				requeue {
-				if err == nil || isPaused || requeue {
-					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-				}
-				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to verify paused condition: %w", err)
-			}
+			// if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, hostedControlPlane); err != nil ||
+			//	isPaused ||
+			//	requeue {
+			//	if err == nil || isPaused || requeue {
+			//		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			//	}
+			//	return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to verify paused condition: %w", err)
+			//}
 
 			if !hostedControlPlane.DeletionTimestamp.IsZero() {
 				return r.reconcileDelete(ctx, patchHelper, hostedControlPlane)

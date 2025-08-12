@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 type testSecret struct {
@@ -20,57 +21,66 @@ type testSecret struct {
 	data map[string][]byte
 }
 
+func createTestCluster(name string) *capiv1.Cluster {
+	return &capiv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+	}
+}
+
 func createTestSecrets(hostedControlPlane *v1alpha1.HostedControlPlane, dataSuffix string) []testSecret {
+	cluster := createTestCluster(hostedControlPlane.Name)
 	return []testSecret{
 		{
-			name: names.GetCASecretName(hostedControlPlane.Name),
+			name: names.GetCASecretName(cluster),
 			data: map[string][]byte{
 				"tls.crt": []byte("ca-cert-data" + dataSuffix),
 				"tls.key": []byte("ca-key-data" + dataSuffix),
 			},
 		},
 		{
-			name: names.GetFrontProxyCASecretName(hostedControlPlane.Name),
+			name: names.GetFrontProxyCASecretName(cluster),
 			data: map[string][]byte{
 				"tls.crt": []byte("front-proxy-ca-cert-data" + dataSuffix),
 			},
 		},
 		{
-			name: names.GetFrontProxySecretName(hostedControlPlane.Name),
+			name: names.GetFrontProxySecretName(cluster),
 			data: map[string][]byte{
 				"tls.crt": []byte("front-proxy-cert-data" + dataSuffix),
 				"tls.key": []byte("front-proxy-key-data" + dataSuffix),
 			},
 		},
 		{
-			name: names.GetServiceAccountSecretName(hostedControlPlane.Name),
+			name: names.GetServiceAccountSecretName(cluster),
 			data: map[string][]byte{
 				"tls.crt": []byte("service-account-cert-data" + dataSuffix),
 				"tls.key": []byte("service-account-key-data" + dataSuffix),
 			},
 		},
 		{
-			name: names.GetAPIServerSecretName(hostedControlPlane.Name),
+			name: names.GetAPIServerSecretName(cluster),
 			data: map[string][]byte{
 				"tls.crt": []byte("apiserver-cert-data" + dataSuffix),
 				"tls.key": []byte("apiserver-key-data" + dataSuffix),
 			},
 		},
 		{
-			name: names.GetAPIServerKubeletClientSecretName(hostedControlPlane.Name),
+			name: names.GetAPIServerKubeletClientSecretName(cluster),
 			data: map[string][]byte{
 				"tls.crt": []byte("apiserver-kubelet-client-cert-data" + dataSuffix),
 				"tls.key": []byte("apiserver-kubelet-client-key-data" + dataSuffix),
 			},
 		},
 		{
-			name: names.GetKubeconfigSecretName(hostedControlPlane.Name, konstants.KubeScheduler),
+			name: names.GetKubeconfigSecretName(cluster, konstants.KubeScheduler),
 			data: map[string][]byte{
 				"value": []byte("scheduler-kubeconfig-data" + dataSuffix),
 			},
 		},
 		{
-			name: names.GetKubeconfigSecretName(hostedControlPlane.Name, konstants.KubeControllerManager),
+			name: names.GetKubeconfigSecretName(cluster, konstants.KubeControllerManager),
 			data: map[string][]byte{
 				"value": []byte("controller-manager-kubeconfig-data" + dataSuffix),
 			},
@@ -218,14 +228,14 @@ func TestDeploymentReconciler_calculateSecretChecksum_MissingSecret(t *testing.T
 	// Create only some of the required secrets, leaving one missing
 	testSecrets := []testSecret{
 		{
-			name: names.GetCASecretName(hostedControlPlane.Name),
+			name: names.GetCASecretName(createTestCluster(hostedControlPlane.Name)),
 			data: map[string][]byte{
 				"tls.crt": []byte("ca-cert-data"),
 				"tls.key": []byte("ca-key-data"),
 			},
 		},
 		{
-			name: names.GetFrontProxyCASecretName(hostedControlPlane.Name),
+			name: names.GetFrontProxyCASecretName(createTestCluster(hostedControlPlane.Name)),
 			data: map[string][]byte{
 				"tls.crt": []byte("front-proxy-ca-cert-data"),
 			},

@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
@@ -45,7 +45,7 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (err 
 	options := ctrl.Options{
 		Scheme:                        scheme,
 		LeaderElectionReleaseOnCancel: true,
-		Metrics: metricsserver.Options{
+		Metrics: server.Options{
 			BindAddress:    "0.0.0.0:8080",
 			FilterProvider: filters.WithAuthenticationAndAuthorization,
 		},
