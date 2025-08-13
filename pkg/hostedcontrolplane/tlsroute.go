@@ -16,18 +16,23 @@ import (
 	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 	gwv1ac "sigs.k8s.io/gateway-api/applyconfiguration/apis/v1"
 	"sigs.k8s.io/gateway-api/applyconfiguration/apis/v1alpha2"
+	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
+
+type TLSRoutesReconciler struct {
+	gatewayClient gwclient.Interface
+}
 
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=tlsroutes,verbs=create;patch
 
-func (r *HostedControlPlaneReconciler) reconcileTLSRoutes(
+func (trr *TLSRoutesReconciler) ReconcileTLSRoutes(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileTLSRoute",
 		func(ctx context.Context, span trace.Span) error {
-			apiServerTLSRoute := r.createTLSRoute(
+			apiServerTLSRoute := trr.createTLSRoute(
 				names.GetTLSRouteName(cluster),
 				cluster,
 				hostedControlPlane,
@@ -35,11 +40,11 @@ func (r *HostedControlPlaneReconciler) reconcileTLSRoutes(
 				APIServerServicePort,
 			)
 
-			if err := r.applyAndCheckTLSRoute(ctx, apiServerTLSRoute, cluster.Namespace, "API server"); err != nil {
+			if err := trr.applyAndCheckTLSRoute(ctx, apiServerTLSRoute, cluster.Namespace, "API server"); err != nil {
 				return err
 			}
 
-			konnectivityTLSRoute := r.createTLSRoute(
+			konnectivityTLSRoute := trr.createTLSRoute(
 				names.GetKonnectivityTLSRouteName(cluster),
 				cluster,
 				hostedControlPlane,
@@ -47,7 +52,7 @@ func (r *HostedControlPlaneReconciler) reconcileTLSRoutes(
 				KonnectivityServicePort,
 			)
 
-			if err := r.applyAndCheckTLSRoute(ctx, konnectivityTLSRoute, cluster.Namespace, "Konnectivity"); err != nil {
+			if err := trr.applyAndCheckTLSRoute(ctx, konnectivityTLSRoute, cluster.Namespace, "Konnectivity"); err != nil {
 				return err
 			}
 
@@ -58,7 +63,7 @@ func (r *HostedControlPlaneReconciler) reconcileTLSRoutes(
 	)
 }
 
-func (r *HostedControlPlaneReconciler) createTLSRoute(
+func (trr *TLSRoutesReconciler) createTLSRoute(
 	name string,
 	cluster *capiv1.Cluster,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
@@ -84,13 +89,13 @@ func (r *HostedControlPlaneReconciler) createTLSRoute(
 		)
 }
 
-func (r *HostedControlPlaneReconciler) applyAndCheckTLSRoute(
+func (trr *TLSRoutesReconciler) applyAndCheckTLSRoute(
 	ctx context.Context,
 	tlsRoute *v1alpha2.TLSRouteApplyConfiguration,
 	namespace string,
 	routeType string,
 ) error {
-	appliedTLSRoute, err := r.GatewayClient.GatewayV1alpha2().TLSRoutes(namespace).
+	appliedTLSRoute, err := trr.gatewayClient.GatewayV1alpha2().TLSRoutes(namespace).
 		Apply(ctx, tlsRoute, applyOptions)
 	if err != nil {
 		return errorsUtil.IfErrErrorf("failed to apply %s TLSRoute: %w", routeType, err)

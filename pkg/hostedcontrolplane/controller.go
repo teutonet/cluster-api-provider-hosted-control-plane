@@ -265,11 +265,16 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				kubernetesClient: r.KubernetesClient,
 			}
 			etcdClusterReconciler := &EtcdClusterReconciler{
-				client:           r.Client,
 				kubernetesClient: r.KubernetesClient,
 			}
 			apiServerReconciler := &APIServerResourcesReconciler{
 				kubernetesClient: r.KubernetesClient,
+			}
+			konnectivityConfigReconciler := &KonnectivityConfigReconciler{
+				kubernetesClient: r.KubernetesClient,
+			}
+			tlsRoutesReconciler := &TLSRoutesReconciler{
+				gatewayClient: r.GatewayClient,
 			}
 
 			phases := []Phase{
@@ -293,7 +298,7 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				},
 				{
 					Name:         "konnectivity config",
-					Reconcile:    r.reconcileKonnectivityConfig,
+					Reconcile:    konnectivityConfigReconciler.ReconcileKonnectivityConfig,
 					Condition:    v1alpha1.KonnectivityConfigReadyCondition,
 					FailedReason: v1alpha1.KonnectivityConfigFailedReason,
 				},
@@ -317,7 +322,7 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				},
 				{
 					Name:         "TLSRoutes",
-					Reconcile:    r.reconcileTLSRoutes,
+					Reconcile:    tlsRoutesReconciler.ReconcileTLSRoutes,
 					Condition:    v1alpha1.TLSRoutesReadyCondition,
 					FailedReason: v1alpha1.TLSRoutesFailedReason,
 				},

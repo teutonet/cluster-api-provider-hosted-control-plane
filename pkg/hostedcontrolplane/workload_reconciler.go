@@ -8,6 +8,7 @@ import (
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -509,9 +510,9 @@ func (wr *WorkloadClusterReconciler) ReconcileKubeletConfig(
 
 func (wr *WorkloadClusterReconciler) ReconcileKonnectivityRBAC(
 	ctx context.Context,
-) (*corev1ac.ServiceAccountApplyConfiguration, error) {
-	return tracing.WithSpan(ctx, workloadClusterReconcilerTracer, "ReconcileKonnectivityRBAC",
-		func(ctx context.Context, span trace.Span) (*corev1ac.ServiceAccountApplyConfiguration, error) {
+) error {
+	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileKonnectivityRBAC",
+		func(ctx context.Context, span trace.Span) error {
 			serviceAccount := corev1ac.ServiceAccount(
 				"konnectivity-agent",
 				metav1.NamespaceSystem,
@@ -521,7 +522,7 @@ func (wr *WorkloadClusterReconciler) ReconcileKonnectivityRBAC(
 				ServiceAccounts(metav1.NamespaceSystem).
 				Apply(ctx, serviceAccount, workloadApplyOptions)
 			if err != nil {
-				return nil, fmt.Errorf("failed to apply konnectivity agent service account: %w", err)
+				return fmt.Errorf("failed to apply konnectivity agent service account: %w", err)
 			}
 
 			clusterRoleBinding := rbacv1ac.ClusterRoleBinding(KonnectivityServerAudience).
@@ -533,9 +534,9 @@ func (wr *WorkloadClusterReconciler) ReconcileKonnectivityRBAC(
 				).
 				WithSubjects(
 					rbacv1ac.Subject().
-						WithKind("ServiceAccount").
+						WithKind(*serviceAccount.Kind).
 						WithName(*serviceAccount.Name).
-						WithNamespace(metav1.NamespaceSystem),
+						WithNamespace(*serviceAccount.Namespace),
 				)
 
 			_, err = wr.kubernetesClient.RbacV1().ClusterRoleBindings().
@@ -544,22 +545,22 @@ func (wr *WorkloadClusterReconciler) ReconcileKonnectivityRBAC(
 				if apierrors.IsInvalid(err) {
 					if err := wr.kubernetesClient.RbacV1().ClusterRoleBindings().
 						Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{}); err != nil {
-						return nil, fmt.Errorf(
+						return fmt.Errorf(
 							"failed to delete invalid konnectivity agent cluster role binding %s: %w",
 							*clusterRoleBinding.Name,
 							err,
 						)
 					}
-					return nil, ErrRequeueRequired
+					return ErrRequeueRequired
 				}
-				return nil, fmt.Errorf(
+				return fmt.Errorf(
 					"failed to apply konnectivity agent cluster role binding %s: %w",
 					*clusterRoleBinding.Name,
 					err,
 				)
 			}
 
-			return serviceAccount, nil
+			return nil
 		},
 	)
 }
@@ -567,12 +568,11 @@ func (wr *WorkloadClusterReconciler) ReconcileKonnectivityRBAC(
 func (wr *WorkloadClusterReconciler) ReconcileKonnectivityDaemonSet(
 	ctx context.Context,
 	cluster *capiv1.Cluster,
-	serviceAccount *corev1ac.ServiceAccountApplyConfiguration,
 ) error {
 	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileKonnectivityDaemonSet",
 		func(ctx context.Context, span trace.Span) error {
 			serviceAccountTokenVolume := corev1ac.Volume().
-				WithName(*serviceAccount.Name).
+				WithName(konnectivityServiceAccountName).
 				WithProjected(corev1ac.ProjectedVolumeSource().
 					WithSources(
 						corev1ac.VolumeProjection().
@@ -593,37 +593,43 @@ func (wr *WorkloadClusterReconciler) ReconcileKonnectivityDaemonSet(
 				WithContainerPort(8133).
 				WithProtocol(corev1.ProtocolTCP)
 
+			template := corev1ac.PodTemplateSpec().
+				WithLabels(names.GetControlPlaneLabels(cluster, "konnectivity")).
+				WithSpec(corev1ac.PodSpec().
+					WithServiceAccountName(konnectivityServiceAccountName).
+					WithTolerations(
+						corev1ac.Toleration().
+							WithKey("CriticalAddonsOnly").
+							WithOperator(corev1.TolerationOpExists),
+					).
+					WithContainers(
+						corev1ac.Container().
+							WithName("konnectivity-agent").
+							WithImage("registry.k8s.io/kas-network-proxy/proxy-agent:v0.33.0").
+							WithImagePullPolicy(corev1.PullAlways).
+							WithArgs(wr.buildKonnectivityClientArgs(cluster, serviceAccountTokenVolumeMount, healthPort)...).
+							WithPorts(healthPort).
+							WithVolumeMounts(serviceAccountTokenVolumeMount),
+					).
+					WithVolumes(serviceAccountTokenVolume),
+				)
+
+			template, err := util.SetChecksumAnnotations(ctx, wr.kubernetesClient, cluster.Namespace, template)
+			if err != nil {
+				return fmt.Errorf("failed to set checksum annotations: %w", err)
+			}
+
 			daemonSet := appsv1ac.DaemonSet("konnectivity-agent", metav1.NamespaceSystem).
 				WithSpec(appsv1ac.DaemonSetSpec().
 					WithSelector(names.GetControlPlaneSelector(cluster, "konnectivity")).
-					WithTemplate(corev1ac.PodTemplateSpec().
-						WithLabels(names.GetControlPlaneLabels(cluster, "konnectivity")).
-						WithSpec(corev1ac.PodSpec().
-							WithServiceAccountName(*serviceAccount.Name).
-							WithTolerations(
-								corev1ac.Toleration().
-									WithKey("CriticalAddonsOnly").
-									WithOperator(corev1.TolerationOpExists),
-							).
-							WithContainers(
-								corev1ac.Container().
-									WithName("konnectivity-agent").
-									WithImage("registry.k8s.io/kas-network-proxy/proxy-agent:v0.33.0").
-									WithImagePullPolicy(corev1.PullAlways).
-									WithArgs(wr.buildKonnectivityClientArgs(cluster, serviceAccountTokenVolumeMount, healthPort)...).
-									WithPorts(healthPort).
-									WithVolumeMounts(serviceAccountTokenVolumeMount),
-							).
-							WithVolumes(serviceAccountTokenVolume),
-						),
-					),
+					WithTemplate(template),
 				)
 
 			if err := operatorutil.ValidateMounts(daemonSet.Spec.Template.Spec); err != nil {
 				return fmt.Errorf("konnectivity daemonset has mounts without corresponding volume: %w", err)
 			}
 
-			_, err := wr.kubernetesClient.AppsV1().DaemonSets(metav1.NamespaceSystem).
+			_, err = wr.kubernetesClient.AppsV1().DaemonSets(metav1.NamespaceSystem).
 				Apply(ctx, daemonSet, workloadApplyOptions)
 			return errorsUtil.IfErrErrorf("failed to apply konnectivity agent daemonset: %w", err)
 		},

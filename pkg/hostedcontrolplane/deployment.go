@@ -318,26 +318,9 @@ func (dr *APIServerResourcesReconciler) reconcileDeployment(
 				)),
 		)
 
-	if secretChecksum, err := util.CalculateSecretChecksum(ctx, dr.kubernetesClient,
-		hostedControlPlane.Namespace,
-		extractSecretNames(template.Spec.Volumes),
-	); err != nil {
-		return nil, fmt.Errorf("failed to calculate secret checksum: %w", err)
-	} else if secretChecksum != "" {
-		template = template.WithAnnotations(map[string]string{
-			"checksum/secrets": secretChecksum,
-		})
-	}
-
-	if configMapChecksum, err := util.CalculateConfigMapChecksum(ctx, dr.kubernetesClient,
-		hostedControlPlane.Namespace,
-		extractConfigMapNames(template.Spec.Volumes),
-	); err != nil {
-		return nil, fmt.Errorf("failed to calculate configmap checksum: %w", err)
-	} else if configMapChecksum != "" {
-		template = template.WithAnnotations(map[string]string{
-			"checksum/configmaps": configMapChecksum,
-		})
+	template, err := util.SetChecksumAnnotations(ctx, dr.kubernetesClient, cluster.Namespace, template)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set checksum annotations: %w", err)
 	}
 
 	deploymentName := fmt.Sprintf("%s-%s", cluster.Name, component)
@@ -433,57 +416,6 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerService(
 			return errorsUtil.IfErrErrorf("failed to patch service: %w", err)
 		},
 	)
-}
-
-func extractNames(
-	volumes []corev1ac.VolumeApplyConfiguration,
-	directAccess func(corev1ac.VolumeApplyConfiguration) string,
-	projectedAccess func(configuration *corev1ac.VolumeProjectionApplyConfiguration) string,
-) []string {
-	return slices.Flatten(slices.Map(volumes, func(volume corev1ac.VolumeApplyConfiguration, _ int) []string {
-		if value := directAccess(volume); value != "" {
-			return []string{value}
-		}
-		if volume.Projected != nil && volume.Projected.Sources != nil {
-			return slices.FilterMap(volume.Projected.Sources,
-				func(source corev1ac.VolumeProjectionApplyConfiguration, _ int) (string, bool) {
-					if value := projectedAccess(&source); value != "" {
-						return value, true
-					}
-					return "", false
-				},
-			)
-		}
-		return nil
-	}))
-}
-
-func extractSecretNames(volumes []corev1ac.VolumeApplyConfiguration) []string {
-	return extractNames(volumes, func(volume corev1ac.VolumeApplyConfiguration) string {
-		if volume.Secret != nil {
-			return *volume.Secret.SecretName
-		}
-		return ""
-	}, func(configuration *corev1ac.VolumeProjectionApplyConfiguration) string {
-		if configuration.Secret != nil {
-			return *configuration.Secret.Name
-		}
-		return ""
-	})
-}
-
-func extractConfigMapNames(volumes []corev1ac.VolumeApplyConfiguration) []string {
-	return extractNames(volumes, func(volume corev1ac.VolumeApplyConfiguration) string {
-		if volume.ConfigMap != nil {
-			return *volume.ConfigMap.Name
-		}
-		return ""
-	}, func(configuration *corev1ac.VolumeProjectionApplyConfiguration) string {
-		if configuration.ConfigMap != nil {
-			return *configuration.ConfigMap.Name
-		}
-		return ""
-	})
 }
 
 func (dr *APIServerResourcesReconciler) createSchedulerKubeconfigVolume(
@@ -735,6 +667,7 @@ func (dr *APIServerResourcesReconciler) buildAPIServerArgs(
 		"service-account-key-file":           path.Join(certificatesDir, konstants.ServiceAccountPublicKeyName),
 		"service-account-signing-key-file":   path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
 		"service-cluster-ip-range":           "10.96.0.0/12",
+		"endpoint-reconciler-type":           "none",
 		"tls-cert-file":                      path.Join(certificatesDir, konstants.APIServerCertName),
 		"tls-private-key-file":               path.Join(certificatesDir, konstants.APIServerKeyName),
 		"etcd-servers": fmt.Sprintf("https://%s",
