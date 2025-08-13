@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
+	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
@@ -33,6 +33,11 @@ type KubeconfigConfig struct {
 type KubeconfigReconciler struct {
 	kubernetesClient kubernetes.Interface
 }
+
+var (
+	ControllerKubeconfigName         = "controller"
+	KonnectivityClientKubeconfigName = "konnectivity-client"
+)
 
 func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 	ctx context.Context,
@@ -72,13 +77,13 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 					ApiServerEndpoint:     internalServiceEndpoint,
 				},
 				{
-					Name:                  "konnectivity-client",
+					Name:                  KonnectivityClientKubeconfigName,
 					CertificateSecretName: names.GetKonnectivityClientKubeconfigCertificateSecretName(cluster),
 					ClusterName:           controlPlaneName,
 					ApiServerEndpoint:     localEndpoint,
 				},
 				{
-					Name:                  "controller",
+					Name:                  ControllerKubeconfigName,
 					CertificateSecretName: names.GetControllerKubeconfigCertificateSecretName(cluster),
 					ClusterName:           controlPlaneName,
 					ApiServerEndpoint:     internalServiceEndpoint,
@@ -123,7 +128,7 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 			if err != nil {
 				return fmt.Errorf("failed to generate kubeconfig: %w", err)
 			}
-			yaml, err := util.ToYaml(kubeconfig)
+			yaml, err := operatorutil.ToYaml(kubeconfig)
 			if err != nil {
 				return fmt.Errorf("failed to marshal kubeconfig: %w", err)
 			}

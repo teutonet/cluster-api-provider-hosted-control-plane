@@ -34,6 +34,8 @@ var (
 	ErrCertificateNotReady = fmt.Errorf("certificate not ready: %w", ErrRequeueRequired)
 )
 
+var KonnectivityServerAudience = "system:konnectivity-server"
+
 //+kubebuilder:rbac:groups=cert-manager.io,resources=issuers,verbs=create;update;patch
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=create;update;patch
 
@@ -296,7 +298,7 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 			name: names.GetKonnectivityClientKubeconfigCertificateName(cluster),
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
-				"system:konnectivity-server",
+				KonnectivityServerAudience,
 				names.GetKonnectivityClientKubeconfigCertificateSecretName(cluster),
 				certmanagerv1.UsageClientAuth, certmanagerv1.UsageServerAuth, certmanagerv1.UsageCodeSigning,
 			).WithSubject(certmanagerv1ac.X509Subject().

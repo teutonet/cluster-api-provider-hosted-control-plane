@@ -73,7 +73,7 @@ tasks:
       - "{{ .golinesCmd }} --ignore-generated --ignored-dirs=.go -m 120 -w ."
   lint:
     vars:
-      fix: '{{ .fix | default "true" }}'
+      fix: '{{ .fix | default "false" }}'
     deps:
       - artifacts-dir
       - format
@@ -81,6 +81,19 @@ tasks:
       - ./**/*.go
       - ./.golangci.yaml
     cmd: "{{ .golangciLintCmd }} run --fix={{ .fix }}"
+    generates:
+      - "{{ .artifactsDir }}/golangci-lint.json"
+  lint-fix:
+    deps:
+      - artifacts-dir
+      - format
+    sources:
+      - ./**/*.go
+      - ./.golangci.yaml
+    cmd:
+      task: lint
+      vars:
+        fix: "true"
     generates:
       - "{{ .artifactsDir }}/golangci-lint.json"
   test:
@@ -172,8 +185,9 @@ tasks:
   tidy:
     internal: true
     sources:
-      - go.mod
+      - '**/*.go'
     generates:
+      - go.mod
       - go.sum
     cmd: go mod tidy
   clean-files:

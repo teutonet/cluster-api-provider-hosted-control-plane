@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/finalizers"
 	"sigs.k8s.io/cluster-api/util/patch"
+	"sigs.k8s.io/cluster-api/util/paused"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -186,14 +187,14 @@ func (r *HostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				attribute.String("ClusterName", cluster.Name),
 			)
 
-			// if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, hostedControlPlane); err != nil ||
-			//	isPaused ||
-			//	requeue {
-			//	if err == nil || isPaused || requeue {
-			//		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
-			//	}
-			//	return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to verify paused condition: %w", err)
-			//}
+			if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.Client, cluster, hostedControlPlane); err != nil ||
+				isPaused ||
+				requeue {
+				if err == nil || isPaused || requeue {
+					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+				}
+				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to verify paused condition: %w", err)
+			}
 
 			if !hostedControlPlane.DeletionTimestamp.IsZero() {
 				return r.reconcileDelete(ctx, patchHelper, hostedControlPlane)
@@ -270,6 +271,7 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 			apiServerReconciler := &APIServerResourcesReconciler{
 				kubernetesClient: r.KubernetesClient,
 			}
+
 			phases := []Phase{
 				{
 					Name:         "CA certificates",
@@ -314,10 +316,10 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					FailedReason: v1alpha1.WorkloadClusterResourcesFailedReason,
 				},
 				{
-					Name:         "TLSRoute",
-					Reconcile:    r.reconcileTLSRoute,
-					Condition:    v1alpha1.TLSRouteReadyCondition,
-					FailedReason: v1alpha1.TLSRouteFailedReason,
+					Name:         "TLSRoutes",
+					Reconcile:    r.reconcileTLSRoutes,
+					Condition:    v1alpha1.TLSRoutesReadyCondition,
+					FailedReason: v1alpha1.TLSRoutesFailedReason,
 				},
 			}
 
