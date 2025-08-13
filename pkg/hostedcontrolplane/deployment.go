@@ -22,17 +22,20 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	appsacv1 "k8s.io/client-go/applyconfigurations/apps/v1"
+	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
-	names2 "k8s.io/kubernetes/cmd/kube-controller-manager/names"
-	kubeadm "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta3"
+	kubenames "k8s.io/kubernetes/cmd/kube-controller-manager/names"
+	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 )
 
-var ErrDeploymentNotReady = fmt.Errorf("deployment is not ready: %w", ErrRequeueRequired)
+var (
+	ErrDeploymentNotReady = fmt.Errorf("deployment is not ready: %w", ErrRequeueRequired)
+	ErrInvalidMount       = errors.New("additional volume mount using non-existing volume")
+)
 
 type APIServerResourcesReconciler struct {
 	kubernetesClient kubernetes.Interface
@@ -99,7 +102,7 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerDeployment(
 
 			apiServerCertificatesVolumeMount := corev1ac.VolumeMount().
 				WithName(*apiServerCertificatesVolume.Name).
-				WithMountPath(kubeadm.DefaultCertificatesDir).
+				WithMountPath(kubeadmv1beta4.DefaultCertificatesDir).
 				WithReadOnly(true)
 			egressSelectorConfigVolumeMount := corev1ac.VolumeMount().
 				WithName(*egressSelectorConfigVolume.Name).
@@ -165,7 +168,7 @@ func validateMounts(
 			return *mount.Name == *volume.Name
 		})
 	}) {
-		return errors.New("additional volume mount using non-existing volume")
+		return ErrInvalidMount
 	}
 	return nil
 }
@@ -221,7 +224,7 @@ func (dr *APIServerResourcesReconciler) reconcileControllerManagerDeployment(
 
 			controllerManagerCertificatesVolumeMount := corev1ac.VolumeMount().
 				WithName(*controllerManagerCertificatesVolume.Name).
-				WithMountPath(kubeadm.DefaultCertificatesDir).
+				WithMountPath(kubeadmv1beta4.DefaultCertificatesDir).
 				WithReadOnly(true)
 
 			container := dr.createControllerManagerContainer(
@@ -342,12 +345,12 @@ func (dr *APIServerResourcesReconciler) reconcileDeployment(
 	}
 
 	deploymentName := fmt.Sprintf("%s-%s", cluster.Name, component)
-	deployment := appsacv1.Deployment(
+	deployment := appsv1ac.Deployment(
 		deploymentName,
 		cluster.Namespace,
 	).
 		WithLabels(names.GetControlPlaneLabels(cluster, component)).
-		WithSpec(appsacv1.DeploymentSpec().
+		WithSpec(appsv1ac.DeploymentSpec().
 			WithReplicas(*hostedControlPlane.Spec.Replicas).
 			WithSelector(names.GetControlPlaneSelector(cluster, component)).
 			WithTemplate(template),
@@ -880,7 +883,7 @@ func (dr *APIServerResourcesReconciler) buildControllerManagerArgs(
 
 	// TODO: use map[string]any as soon as https://github.com/kubernetes-sigs/controller-tools/issues/636 is resolved
 	certificatesDir := *controllerManagerCertificatesVolumeMount.MountPath
-	enabledControllers := []string{"*", names2.BootstrapSignerController, names2.TokenCleanerController}
+	enabledControllers := []string{"*", kubenames.BootstrapSignerController, kubenames.TokenCleanerController}
 	args := map[string]string{
 		"allocate-node-cidrs":              "true",
 		"authentication-kubeconfig":        kubeconfigPath,
@@ -894,7 +897,7 @@ func (dr *APIServerResourcesReconciler) buildControllerManagerArgs(
 		"cluster-signing-key-file":         path.Join(certificatesDir, konstants.CAKeyName),
 		"controllers":                      strings.Join(enabledControllers, ","),
 		"service-cluster-ip-range":         "10.96.0.0/16",
-		"cluster-cidr":                     "10.244.0.0/16",
+		"cluster-cidr":                     "192.168.0.0/16",
 		"requestheader-client-ca-file":     path.Join(certificatesDir, konstants.FrontProxyCACertName),
 		"root-ca-file":                     path.Join(certificatesDir, konstants.CACertName),
 		"service-account-private-key-file": path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),

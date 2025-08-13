@@ -1,18 +1,16 @@
 package hostedcontrolplane
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -47,9 +45,9 @@ func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 				},
 			}
 
-			buf, err := ToYaml(egressSelectorConfig)
+			buf, err := util.ToYaml(egressSelectorConfig)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to marshal egress selector configuration: %w", err)
 			}
 
 			configMap := corev1ac.ConfigMap(
@@ -67,19 +65,4 @@ func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 			return errorsUtil.IfErrErrorf("failed to patch konnectivity configmap: %w", err)
 		},
 	)
-}
-
-func ToYaml(obj runtime.Object) (*bytes.Buffer, error) {
-	scheme := runtime.NewScheme()
-	encoder := json.NewSerializerWithOptions(json.SimpleMetaFactory{}, scheme, scheme, json.SerializerOptions{
-		Yaml:   true,
-		Pretty: true,
-		Strict: false,
-	})
-
-	buf := bytes.NewBuffer([]byte{})
-	if err := encoder.Encode(obj, buf); err != nil {
-		return nil, fmt.Errorf("failed to encode egress selector config: %w", err)
-	}
-	return buf, nil
 }
