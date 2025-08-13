@@ -32,7 +32,7 @@ func (m *Management) GetWorkloadClusterClient(
 	cluster *capiv1.Cluster,
 ) (*kubernetes.Clientset, error) {
 	kubeConfigSecret, err := m.KubernetesClient.CoreV1().Secrets(cluster.Namespace).
-		Get(ctx, names.GetKubeconfigSecretName(cluster, "controller"), metav1.GetOptions{})
+		Get(ctx, names.GetKubeconfigSecretName(cluster, ControllerKubeconfigName), metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get kubeconfig for workload cluster: %w", err)
 	}

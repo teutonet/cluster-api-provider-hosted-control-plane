@@ -47,6 +47,11 @@ type HostedControlPlaneSpec struct {
 	//+kubebuilder:validation:Minimum=1
 	//+kubebuilder:validation:Optional
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	HostedControlPlaneTemplateTemplateSpec `json:",inline"`
+}
+
+type HostedControlPlaneTemplateTemplateSpec struct {
 	//+kubebuilder:validation:Optional
 	Deployment HostedControlPlaneDeployment `json:"deployment,omitempty"`
 }

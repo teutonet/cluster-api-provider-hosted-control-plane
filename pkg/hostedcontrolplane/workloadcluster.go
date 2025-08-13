@@ -7,6 +7,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 )
@@ -33,6 +34,8 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 			workloadClusterReconciler := &WorkloadClusterReconciler{
 				kubernetesClient: workloadClusterClient,
 			}
+
+			var konnectivityServiceAccount *corev1ac.ServiceAccountApplyConfiguration
 
 			workloadPhases := []WorkloadPhase{
 				{
@@ -67,16 +70,28 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 					Condition:    v1alpha1.WorkloadKubeletConfigReadyCondition,
 					FailedReason: v1alpha1.WorkloadKubeletConfigFailedReason,
 				},
-				// TODO: Add more workload phases here
-				// {
-				//     Name: "kube-proxy",
-				//     Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane,
-				//         workloadClusterClient WorkloadCluster) error {
-				//         return workloadClusterClient.ReconcileKubeProxy(ctx, hostedControlPlane)
-				//     },
-				//     Condition:    v1alpha1.KubeProxyReadyCondition,
-				//     FailedReason: v1alpha1.KubeProxyFailedReason,
-				// },
+				{
+					Name: "konnectivity-rbac",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						var err error
+						konnectivityServiceAccount, err = workloadClusterReconciler.ReconcileKonnectivityRBAC(ctx)
+						return err
+					},
+					Condition:    v1alpha1.WorkloadKonnectivityRBACReadyCondition,
+					FailedReason: v1alpha1.WorkloadKonnectivityRBACFailedReason,
+				},
+				{
+					Name: "konnectivity-daemonset",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return workloadClusterReconciler.ReconcileKonnectivityDaemonSet(
+							ctx,
+							cluster,
+							konnectivityServiceAccount,
+						)
+					},
+					Condition:    v1alpha1.WorkloadKonnectivityDaemonSetReadyCondition,
+					FailedReason: v1alpha1.WorkloadKonnectivityDaemonSetFailedReason,
+				},
 			}
 
 			for _, phase := range workloadPhases {

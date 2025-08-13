@@ -3,9 +3,10 @@ package hostedcontrolplane
 import (
 	"context"
 	"fmt"
+	"path"
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
+	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
@@ -15,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/authentication/user"
+	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
 	"k8s.io/client-go/kubernetes"
@@ -29,6 +31,7 @@ import (
 	"k8s.io/kubernetes/cmd/kubeadm/app/phases/uploadconfig"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/config"
 	kubeletv1beta1 "k8s.io/kubernetes/pkg/kubelet/apis/config/v1beta1"
+	"k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
@@ -51,6 +54,11 @@ var workloadApplyOptions = metav1.ApplyOptions{
 	FieldManager: "workload-cluster-reconciler",
 	Force:        true,
 }
+
+var (
+	konnectivityServiceAccountName      = "konnectivity-agent"
+	konnectivityServiceAccountTokenName = "konnectivity-agent-token"
+)
 
 //noling:lll // urls are long 🤷
 
@@ -479,7 +487,7 @@ func (wr *WorkloadClusterReconciler) ReconcileKubeletConfig(
 			kubeletConfiguration.Logging.FlushFrequency.SerializeAsString = false
 			kubeletConfiguration.ResolverConfig = nil
 
-			content, err := util.ToYaml(&kubeletConfiguration)
+			content, err := operatorutil.ToYaml(&kubeletConfiguration)
 			if err != nil {
 				return fmt.Errorf("failed to marshal kubelet configuration: %w", err)
 			}
@@ -497,4 +505,147 @@ func (wr *WorkloadClusterReconciler) ReconcileKubeletConfig(
 			return errorsUtil.IfErrErrorf("failed to apply kubeadm config configmap: %w", err)
 		},
 	)
+}
+
+func (wr *WorkloadClusterReconciler) ReconcileKonnectivityRBAC(
+	ctx context.Context,
+) (*corev1ac.ServiceAccountApplyConfiguration, error) {
+	return tracing.WithSpan(ctx, workloadClusterReconcilerTracer, "ReconcileKonnectivityRBAC",
+		func(ctx context.Context, span trace.Span) (*corev1ac.ServiceAccountApplyConfiguration, error) {
+			serviceAccount := corev1ac.ServiceAccount(
+				"konnectivity-agent",
+				metav1.NamespaceSystem,
+			)
+
+			_, err := wr.kubernetesClient.CoreV1().
+				ServiceAccounts(metav1.NamespaceSystem).
+				Apply(ctx, serviceAccount, workloadApplyOptions)
+			if err != nil {
+				return nil, fmt.Errorf("failed to apply konnectivity agent service account: %w", err)
+			}
+
+			clusterRoleBinding := rbacv1ac.ClusterRoleBinding(KonnectivityServerAudience).
+				WithRoleRef(
+					rbacv1ac.RoleRef().
+						WithAPIGroup(rbacv1.GroupName).
+						WithKind("ClusterRole").
+						WithName("system:auth-delegator"),
+				).
+				WithSubjects(
+					rbacv1ac.Subject().
+						WithKind("ServiceAccount").
+						WithName(*serviceAccount.Name).
+						WithNamespace(metav1.NamespaceSystem),
+				)
+
+			_, err = wr.kubernetesClient.RbacV1().ClusterRoleBindings().
+				Apply(ctx, clusterRoleBinding, workloadApplyOptions)
+			if err != nil {
+				if apierrors.IsInvalid(err) {
+					if err := wr.kubernetesClient.RbacV1().ClusterRoleBindings().
+						Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{}); err != nil {
+						return nil, fmt.Errorf(
+							"failed to delete invalid konnectivity agent cluster role binding %s: %w",
+							*clusterRoleBinding.Name,
+							err,
+						)
+					}
+					return nil, ErrRequeueRequired
+				}
+				return nil, fmt.Errorf(
+					"failed to apply konnectivity agent cluster role binding %s: %w",
+					*clusterRoleBinding.Name,
+					err,
+				)
+			}
+
+			return serviceAccount, nil
+		},
+	)
+}
+
+func (wr *WorkloadClusterReconciler) ReconcileKonnectivityDaemonSet(
+	ctx context.Context,
+	cluster *capiv1.Cluster,
+	serviceAccount *corev1ac.ServiceAccountApplyConfiguration,
+) error {
+	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileKonnectivityDaemonSet",
+		func(ctx context.Context, span trace.Span) error {
+			serviceAccountTokenVolume := corev1ac.Volume().
+				WithName(*serviceAccount.Name).
+				WithProjected(corev1ac.ProjectedVolumeSource().
+					WithSources(
+						corev1ac.VolumeProjection().
+							WithServiceAccountToken(corev1ac.ServiceAccountTokenProjection().
+								WithAudience(KonnectivityServerAudience).
+								WithExpirationSeconds(3600).
+								WithPath(konnectivityServiceAccountTokenName),
+							),
+					).
+					WithDefaultMode(420),
+				)
+			serviceAccountTokenVolumeMount := corev1ac.VolumeMount().
+				WithName(*serviceAccountTokenVolume.Name).
+				WithMountPath(serviceaccount.DefaultAPITokenMountPath).
+				WithReadOnly(true)
+			healthPort := corev1ac.ContainerPort().
+				WithName("health").
+				WithContainerPort(8133).
+				WithProtocol(corev1.ProtocolTCP)
+
+			daemonSet := appsv1ac.DaemonSet("konnectivity-agent", metav1.NamespaceSystem).
+				WithSpec(appsv1ac.DaemonSetSpec().
+					WithSelector(names.GetControlPlaneSelector(cluster, "konnectivity")).
+					WithTemplate(corev1ac.PodTemplateSpec().
+						WithLabels(names.GetControlPlaneLabels(cluster, "konnectivity")).
+						WithSpec(corev1ac.PodSpec().
+							WithServiceAccountName(*serviceAccount.Name).
+							WithTolerations(
+								corev1ac.Toleration().
+									WithKey("CriticalAddonsOnly").
+									WithOperator(corev1.TolerationOpExists),
+							).
+							WithContainers(
+								corev1ac.Container().
+									WithName("konnectivity-agent").
+									WithImage("registry.k8s.io/kas-network-proxy/proxy-agent:v0.33.0").
+									WithImagePullPolicy(corev1.PullAlways).
+									WithArgs(wr.buildKonnectivityClientArgs(cluster, serviceAccountTokenVolumeMount, healthPort)...).
+									WithPorts(healthPort).
+									WithVolumeMounts(serviceAccountTokenVolumeMount),
+							).
+							WithVolumes(serviceAccountTokenVolume),
+						),
+					),
+				)
+
+			if err := operatorutil.ValidateMounts(daemonSet.Spec.Template.Spec); err != nil {
+				return fmt.Errorf("konnectivity daemonset has mounts without corresponding volume: %w", err)
+			}
+
+			_, err := wr.kubernetesClient.AppsV1().DaemonSets(metav1.NamespaceSystem).
+				Apply(ctx, daemonSet, workloadApplyOptions)
+			return errorsUtil.IfErrErrorf("failed to apply konnectivity agent daemonset: %w", err)
+		},
+	)
+}
+
+func (wr *WorkloadClusterReconciler) buildKonnectivityClientArgs(
+	cluster *capiv1.Cluster,
+	serviceAccountTokenVolumeMount *corev1ac.VolumeMountApplyConfiguration,
+	healthPort *corev1ac.ContainerPortApplyConfiguration,
+) []string {
+	args := map[string]string{
+		"admin-server-port":  "8132",
+		"ca-cert":            path.Join(*serviceAccountTokenVolumeMount.MountPath, konstants.CACertName),
+		"health-server-port": fmt.Sprintf("%d", healthPort.ContainerPort),
+		"logtostderr":        "true",
+		"proxy-server-host":  names.GetKonnectivityServerHost(cluster),
+		"proxy-server-port":  "443",
+		"service-account-token-path": path.Join(
+			*serviceAccountTokenVolumeMount.MountPath,
+			konnectivityServiceAccountTokenName,
+		),
+	}
+	return operatorutil.ArgsToSlice(args)
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
+	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
@@ -45,7 +45,7 @@ func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 				},
 			}
 
-			buf, err := util.ToYaml(egressSelectorConfig)
+			buf, err := operatorutil.ToYaml(egressSelectorConfig)
 			if err != nil {
 				return fmt.Errorf("failed to marshal egress selector configuration: %w", err)
 			}
