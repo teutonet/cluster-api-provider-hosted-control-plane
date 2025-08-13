@@ -26,11 +26,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type EtcdClusterReconciler struct {
-	client           client.Client
 	kubernetesClient kubernetes.Interface
 }
 
@@ -160,21 +158,15 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 			WithVolumes(etcdDataVolume, etcdCertificatesVolume),
 		)
 
-	secretChecksum, err := util.CalculateSecretChecksum(ctx, er.kubernetesClient,
-		hostedControlPlane.Namespace,
-		extractSecretNames(template.Spec.Volumes),
-	)
+	template, err := util.SetChecksumAnnotations(ctx, er.kubernetesClient, cluster.Namespace, template)
 	if err != nil {
-		return fmt.Errorf("failed to calculate etcd secret checksum: %w", err)
+		return fmt.Errorf("failed to set checksum annotations: %w", err)
 	}
 
 	statefulSetName := names.GetEtcdStatefulSetName(cluster)
 	statefulSet := appsv1ac.StatefulSet(statefulSetName, hostedControlPlane.Namespace).
 		WithLabels(names.GetControlPlaneLabels(cluster, ComponentETCD)).
 		WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
-		WithAnnotations(map[string]string{
-			"checksum/secrets": secretChecksum,
-		}).
 		WithSpec(appsv1ac.StatefulSetSpec().
 			WithServiceName(names.GetEtcdServiceName(cluster)).
 			WithReplicas(3).
@@ -183,9 +175,7 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 				appsv1ac.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
 			)).
 			WithSelector(names.GetControlPlaneSelector(cluster, ComponentETCD)).
-			WithTemplate(template.WithAnnotations(map[string]string{
-				"checksum/secrets": secretChecksum,
-			})).
+			WithTemplate(template).
 			WithVolumeClaimTemplates(etcdDataVolumeClaimTemplate).
 			WithPersistentVolumeClaimRetentionPolicy(appsv1ac.StatefulSetPersistentVolumeClaimRetentionPolicy().
 				WithWhenDeleted(appsv1.DeletePersistentVolumeClaimRetentionPolicyType),

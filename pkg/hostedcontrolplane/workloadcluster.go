@@ -7,7 +7,6 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
-	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 )
@@ -35,7 +34,9 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 				kubernetesClient: workloadClusterClient,
 			}
 
-			var konnectivityServiceAccount *corev1ac.ServiceAccountApplyConfiguration
+			coreDNSReconciler := &CoreDNSReconciler{
+				kubernetesClient: workloadClusterClient,
+			}
 
 			workloadPhases := []WorkloadPhase{
 				{
@@ -71,24 +72,22 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 					FailedReason: v1alpha1.WorkloadKubeletConfigFailedReason,
 				},
 				{
+					Name:         "coredns",
+					Reconcile:    coreDNSReconciler.ReconcileCoreDNS,
+					Condition:    v1alpha1.WorkloadCoreDNSReadyCondition,
+					FailedReason: v1alpha1.WorkloadCoreDNSFailedReason,
+				},
+				{
 					Name: "konnectivity-rbac",
 					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						var err error
-						konnectivityServiceAccount, err = workloadClusterReconciler.ReconcileKonnectivityRBAC(ctx)
-						return err
+						return workloadClusterReconciler.ReconcileKonnectivityRBAC(ctx)
 					},
 					Condition:    v1alpha1.WorkloadKonnectivityRBACReadyCondition,
 					FailedReason: v1alpha1.WorkloadKonnectivityRBACFailedReason,
 				},
 				{
-					Name: "konnectivity-daemonset",
-					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						return workloadClusterReconciler.ReconcileKonnectivityDaemonSet(
-							ctx,
-							cluster,
-							konnectivityServiceAccount,
-						)
-					},
+					Name:         "konnectivity-daemonset",
+					Reconcile:    workloadClusterReconciler.ReconcileKonnectivityDaemonSet,
 					Condition:    v1alpha1.WorkloadKonnectivityDaemonSetReadyCondition,
 					FailedReason: v1alpha1.WorkloadKonnectivityDaemonSetFailedReason,
 				},

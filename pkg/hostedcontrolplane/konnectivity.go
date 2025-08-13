@@ -13,12 +13,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	"k8s.io/client-go/kubernetes"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
+type KonnectivityConfigReconciler struct {
+	kubernetesClient kubernetes.Interface
+}
+
 //+kubebuilder:rbac:groups=core,resources=configmaps,verbs=create;update;patch
 
-func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
+func (kcr *KonnectivityConfigReconciler) ReconcileKonnectivityConfig(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
@@ -60,7 +65,7 @@ func (r *HostedControlPlaneReconciler) reconcileKonnectivityConfig(
 					EgressSelectorConfigurationFileName: buf.String(),
 				})
 
-			_, err = r.KubernetesClient.CoreV1().ConfigMaps(hostedControlPlane.Namespace).
+			_, err = r.kubernetesClient.CoreV1().ConfigMaps(hostedControlPlane.Namespace).
 				Apply(ctx, configMap, applyOptions)
 			return errorsUtil.IfErrErrorf("failed to patch konnectivity configmap: %w", err)
 		},

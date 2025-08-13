@@ -39,4 +39,6 @@ const (
 	WorkloadKonnectivityRBACFailedReason                             = "WorkloadKonnectivityRBACFailed"
 	WorkloadKonnectivityDaemonSetReadyCondition capiv1.ConditionType = "WorkloadKonnectivityDaemonSetReady"
 	WorkloadKonnectivityDaemonSetFailedReason                        = "WorkloadKonnectivityDaemonSetFailed"
+	WorkloadCoreDNSReadyCondition               capiv1.ConditionType = "WorkloadCoreDNSReady"
+	WorkloadCoreDNSFailedReason                                      = "WorkloadCoreDNSFailed"
 )
