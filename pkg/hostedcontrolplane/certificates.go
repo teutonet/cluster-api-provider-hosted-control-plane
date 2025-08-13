@@ -307,7 +307,7 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 			name: names.GetControllerKubeconfigCertificateName(cluster),
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
-				"system:controller",
+				"system:control-plane-controller",
 				names.GetControllerKubeconfigCertificateSecretName(cluster),
 				certmanagerv1.UsageClientAuth,
 			).WithSubject(certmanagerv1ac.X509Subject().

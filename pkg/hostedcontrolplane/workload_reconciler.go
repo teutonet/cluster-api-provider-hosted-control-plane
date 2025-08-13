@@ -5,12 +5,13 @@ import (
 	"fmt"
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/rbac/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -22,9 +23,10 @@ import (
 	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
 	kubelettypes "k8s.io/kubelet/config/v1beta1"
 	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
-	kubeadmconstants "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
+	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/phases/bootstraptoken/clusterinfo"
+	"k8s.io/kubernetes/cmd/kubeadm/app/phases/uploadconfig"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/config"
 	kubeletv1beta1 "k8s.io/kubernetes/pkg/kubelet/apis/config/v1beta1"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -62,32 +64,36 @@ func (wr *WorkloadClusterReconciler) ReconcileWorkloadRBAC(ctx context.Context) 
 				Generate func() (*RBACResources, error)
 			}{
 				{
-					Name:     "NodeBootstrapGetNodes",
-					Generate: wr.generateNodeBootstrapGetNodes,
+					Name:     "NodeBootstrapGetNodesRBAC",
+					Generate: wr.generateNodeBootstrapGetNodesRBAC,
 				},
 				{
-					Name:     "NodeBootstrapTokenPostCSRs",
-					Generate: wr.generateNodeBootstrapTokenPostCSRs,
+					Name:     "NodeBootstrapTokenPostCSRsRBAC",
+					Generate: wr.generateNodeBootstrapTokenPostCSRsRBAC,
 				},
 				{
-					Name:     "AutoApproveNodeBootstrapToken",
-					Generate: wr.generateAutoApproveNodeBootstrapToken,
+					Name:     "AutoApproveNodeBootstrapTokenRBAC",
+					Generate: wr.generateAutoApproveNodeBootstrapTokenRBAC,
 				},
 				{
 					Name:     "AutoApproveNodeCertificateRotationBAC",
-					Generate: wr.generateAutoApproveNodeCertificateRotation,
+					Generate: wr.generateAutoApproveNodeCertificateRotationRBAC,
 				},
 				{
-					Name:     "ClusterInfo",
-					Generate: wr.generateClusterInfo,
+					Name:     "ClusterInfoRBAC",
+					Generate: wr.generateClusterInfoRBAC,
 				},
 				{
-					Name:     "KubeletConfig",
-					Generate: wr.generateKubeletConfig,
+					Name:     "KubeletConfigRBAC",
+					Generate: wr.generateKubeletConfigRBAC,
 				},
 				{
-					Name:     "ClusterAdminBinding",
-					Generate: wr.generateClusterAdminBinding,
+					Name:     "KubeletKubeadmConfigRBAC",
+					Generate: wr.generateKubeletKubeadmConfigRBAC,
+				},
+				{
+					Name:     "ClusterAdminBindingRBAC",
+					Generate: wr.generateClusterAdminBindingRBAC,
 				},
 			}
 
@@ -180,17 +186,17 @@ func (wr *WorkloadClusterReconciler) ReconcileWorkloadRBAC(ctx context.Context) 
 	)
 }
 
-func (wr *WorkloadClusterReconciler) generateAutoApproveNodeCertificateRotation() (*RBACResources, error) {
+func (wr *WorkloadClusterReconciler) generateAutoApproveNodeCertificateRotationRBAC() (*RBACResources, error) {
 	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.NodeAutoApproveCertificateRotationClusterRoleBinding).
 		WithRoleRef(
 			rbacv1ac.RoleRef().
-				WithAPIGroup(v1.GroupName).
+				WithAPIGroup(rbacv1.GroupName).
 				WithKind("ClusterRole").
 				WithName(konstants.CSRAutoApprovalClusterRoleName),
 		).
 		WithSubjects(
 			rbacv1ac.Subject().
-				WithKind(v1.GroupKind).
+				WithKind(rbacv1.GroupKind).
 				WithName(konstants.NodesGroup),
 		)
 
@@ -199,17 +205,17 @@ func (wr *WorkloadClusterReconciler) generateAutoApproveNodeCertificateRotation(
 	}, nil
 }
 
-func (wr *WorkloadClusterReconciler) generateAutoApproveNodeBootstrapToken() (*RBACResources, error) {
+func (wr *WorkloadClusterReconciler) generateAutoApproveNodeBootstrapTokenRBAC() (*RBACResources, error) {
 	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.NodeAutoApproveBootstrapClusterRoleBinding).
 		WithRoleRef(
 			rbacv1ac.RoleRef().
-				WithAPIGroup(v1.GroupName).
+				WithAPIGroup(rbacv1.GroupName).
 				WithKind("ClusterRole").
 				WithName(konstants.CSRAutoApprovalClusterRoleName),
 		).
 		WithSubjects(
 			rbacv1ac.Subject().
-				WithKind(v1.GroupKind).
+				WithKind(rbacv1.GroupKind).
 				WithName(konstants.NodeBootstrapTokenAuthGroup),
 		)
 
@@ -218,17 +224,17 @@ func (wr *WorkloadClusterReconciler) generateAutoApproveNodeBootstrapToken() (*R
 	}, nil
 }
 
-func (wr *WorkloadClusterReconciler) generateClusterAdminBinding() (*RBACResources, error) {
+func (wr *WorkloadClusterReconciler) generateClusterAdminBindingRBAC() (*RBACResources, error) {
 	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.ClusterAdminsGroupAndClusterRoleBinding).
 		WithRoleRef(
 			rbacv1ac.RoleRef().
-				WithAPIGroup(v1.GroupName).
+				WithAPIGroup(rbacv1.GroupName).
 				WithKind("ClusterRole").
 				WithName("cluster-admin"),
 		).
 		WithSubjects(
 			rbacv1ac.Subject().
-				WithKind(v1.GroupKind).
+				WithKind(rbacv1.GroupKind).
 				WithName(konstants.ClusterAdminsGroupAndClusterRoleBinding),
 		)
 
@@ -237,7 +243,7 @@ func (wr *WorkloadClusterReconciler) generateClusterAdminBinding() (*RBACResourc
 	}, nil
 }
 
-func (wr *WorkloadClusterReconciler) generateClusterInfo() (*RBACResources, error) {
+func (wr *WorkloadClusterReconciler) generateClusterInfoRBAC() (*RBACResources, error) {
 	role := rbacv1ac.Role(clusterinfo.BootstrapSignerClusterRoleName, metav1.NamespacePublic).
 		WithRules(
 			rbacv1ac.PolicyRule().
@@ -250,13 +256,13 @@ func (wr *WorkloadClusterReconciler) generateClusterInfo() (*RBACResources, erro
 	roleBinding := rbacv1ac.RoleBinding(clusterinfo.BootstrapSignerClusterRoleName, metav1.NamespacePublic).
 		WithRoleRef(
 			rbacv1ac.RoleRef().
-				WithAPIGroup(v1.GroupName).
-				WithKind("Role").
-				WithName(clusterinfo.BootstrapSignerClusterRoleName),
+				WithAPIGroup(rbacv1.GroupName).
+				WithKind(*role.Kind).
+				WithName(*role.Name),
 		).
 		WithSubjects(
 			rbacv1ac.Subject().
-				WithKind(v1.UserKind).
+				WithKind(rbacv1.UserKind).
 				WithName(user.Anonymous),
 		)
 
@@ -266,7 +272,7 @@ func (wr *WorkloadClusterReconciler) generateClusterInfo() (*RBACResources, erro
 	}, nil
 }
 
-func (wr *WorkloadClusterReconciler) generateKubeletConfig() (*RBACResources, error) {
+func (wr *WorkloadClusterReconciler) generateKubeletConfigRBAC() (*RBACResources, error) {
 	role := rbacv1ac.Role(konstants.KubeletBaseConfigMapRole, metav1.NamespaceSystem).
 		WithRules(
 			rbacv1ac.PolicyRule().
@@ -279,16 +285,16 @@ func (wr *WorkloadClusterReconciler) generateKubeletConfig() (*RBACResources, er
 	roleBinding := rbacv1ac.RoleBinding(konstants.KubeletBaseConfigMapRole, metav1.NamespaceSystem).
 		WithRoleRef(
 			rbacv1ac.RoleRef().
-				WithAPIGroup(v1.GroupName).
-				WithKind("Role").
-				WithName(konstants.KubeletBaseConfigMapRole),
+				WithAPIGroup(rbacv1.GroupName).
+				WithKind(*role.Kind).
+				WithName(*role.Name),
 		).
 		WithSubjects(
 			rbacv1ac.Subject().
-				WithKind(v1.GroupKind).
+				WithKind(rbacv1.GroupKind).
 				WithName(konstants.NodesGroup),
 			rbacv1ac.Subject().
-				WithKind(v1.GroupKind).
+				WithKind(rbacv1.GroupKind).
 				WithName(konstants.NodeBootstrapTokenAuthGroup),
 		)
 
@@ -298,7 +304,39 @@ func (wr *WorkloadClusterReconciler) generateKubeletConfig() (*RBACResources, er
 	}, nil
 }
 
-func (wr *WorkloadClusterReconciler) generateNodeBootstrapGetNodes() (*RBACResources, error) {
+func (wr *WorkloadClusterReconciler) generateKubeletKubeadmConfigRBAC() (*RBACResources, error) {
+	role := rbacv1ac.Role(uploadconfig.NodesKubeadmConfigClusterRoleName, metav1.NamespaceSystem).
+		WithRules(
+			rbacv1ac.PolicyRule().
+				WithAPIGroups("").
+				WithVerbs("get").
+				WithResources("configmaps").
+				WithResourceNames(konstants.KubeadmConfigConfigMap),
+		)
+
+	roleBinding := rbacv1ac.RoleBinding(uploadconfig.NodesKubeadmConfigClusterRoleName, metav1.NamespaceSystem).
+		WithRoleRef(
+			rbacv1ac.RoleRef().
+				WithAPIGroup(rbacv1.GroupName).
+				WithKind(*role.Kind).
+				WithName(*role.Name),
+		).
+		WithSubjects(
+			rbacv1ac.Subject().
+				WithKind(rbacv1.GroupKind).
+				WithName(konstants.NodesGroup),
+			rbacv1ac.Subject().
+				WithKind(rbacv1.GroupKind).
+				WithName(konstants.NodeBootstrapTokenAuthGroup),
+		)
+
+	return &RBACResources{
+		Roles:        []*rbacv1ac.RoleApplyConfiguration{role},
+		RoleBindings: []*rbacv1ac.RoleBindingApplyConfiguration{roleBinding},
+	}, nil
+}
+
+func (wr *WorkloadClusterReconciler) generateNodeBootstrapGetNodesRBAC() (*RBACResources, error) {
 	clusterRole := rbacv1ac.ClusterRole(konstants.GetNodesClusterRoleName).
 		WithRules(
 			rbacv1ac.PolicyRule().
@@ -310,13 +348,13 @@ func (wr *WorkloadClusterReconciler) generateNodeBootstrapGetNodes() (*RBACResou
 	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.GetNodesClusterRoleName).
 		WithRoleRef(
 			rbacv1ac.RoleRef().
-				WithAPIGroup(v1.GroupName).
-				WithKind("ClusterRole").
-				WithName(konstants.GetNodesClusterRoleName),
+				WithAPIGroup(rbacv1.GroupName).
+				WithKind(*clusterRole.Kind).
+				WithName(*clusterRole.Name),
 		).
 		WithSubjects(
 			rbacv1ac.Subject().
-				WithKind(v1.GroupKind).
+				WithKind(rbacv1.GroupKind).
 				WithName(konstants.NodeBootstrapTokenAuthGroup),
 		)
 
@@ -326,17 +364,17 @@ func (wr *WorkloadClusterReconciler) generateNodeBootstrapGetNodes() (*RBACResou
 	}, nil
 }
 
-func (wr *WorkloadClusterReconciler) generateNodeBootstrapTokenPostCSRs() (*RBACResources, error) {
+func (wr *WorkloadClusterReconciler) generateNodeBootstrapTokenPostCSRsRBAC() (*RBACResources, error) {
 	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.NodeKubeletBootstrap).
 		WithRoleRef(
 			rbacv1ac.RoleRef().
-				WithAPIGroup(v1.GroupName).
+				WithAPIGroup(rbacv1.GroupName).
 				WithKind("ClusterRole").
 				WithName(konstants.NodeBootstrapperClusterRoleName),
 		).
 		WithSubjects(
 			rbacv1ac.Subject().
-				WithKind(v1.GroupKind).
+				WithKind(rbacv1.GroupKind).
 				WithName(konstants.NodeBootstrapTokenAuthGroup),
 		)
 
@@ -358,7 +396,7 @@ func (wr *WorkloadClusterReconciler) ReconcileClusterInfoConfigMap(
 	kubeconfig := &api.Config{
 		Clusters: map[string]*api.Cluster{
 			"": {
-				Server:                   cluster.Spec.ControlPlaneEndpoint.String(),
+				Server:                   fmt.Sprintf("https://%s", cluster.Spec.ControlPlaneEndpoint.String()),
 				CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
 			},
 		},
@@ -386,29 +424,28 @@ func (wr *WorkloadClusterReconciler) ReconcileKubeadmConfig(
 ) error {
 	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileKubeadmConfig",
 		func(ctx context.Context, span trace.Span) error {
-			conf, err := config.DefaultedStaticInitConfiguration()
+			initConfiguration, err := config.DefaultedStaticInitConfiguration()
 			if err != nil {
 				return fmt.Errorf("failed to get defaulted static init configuration: %w", err)
 			}
-			conf.ClusterConfiguration.ComponentConfigs = nil
-
+			conf := initConfiguration.ClusterConfiguration
 			conf.Networking = kubeadm.Networking{
 				DNSDomain:     "cluster.local",
-				PodSubnet:     "10.244.0.0/16",
+				PodSubnet:     "192.168.0.0/16",
 				ServiceSubnet: "10.96.0.0/12",
 			}
 			conf.KubernetesVersion = hostedControlPlane.Spec.Version
 			conf.ControlPlaneEndpoint = cluster.Spec.ControlPlaneEndpoint.String()
 			conf.ClusterName = cluster.Name
 
-			clusterConfiguration, err := ToYaml(conf)
+			clusterConfiguration, err := config.MarshalKubeadmConfigObject(&conf, kubeadmv1beta4.SchemeGroupVersion)
 			if err != nil {
-				return fmt.Errorf("failed to convert cluster configuration to YAML: %w", err)
+				return fmt.Errorf("failed to marshal cluster configuration: %w", err)
 			}
 			configMap := corev1ac.ConfigMap(konstants.KubeadmConfigConfigMap, metav1.NamespaceSystem).
 				WithData(
 					map[string]string{
-						konstants.ClusterConfigurationKind: clusterConfiguration.String(),
+						konstants.ClusterConfigurationKind: string(clusterConfiguration),
 					},
 				)
 
@@ -422,8 +459,8 @@ func (wr *WorkloadClusterReconciler) ReconcileKubeadmConfig(
 
 func (wr *WorkloadClusterReconciler) ReconcileKubeletConfig(
 	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	_ *v1alpha1.HostedControlPlane,
+	_ *capiv1.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileKubeadmConfig",
 		func(ctx context.Context, span trace.Span) error {
@@ -438,13 +475,13 @@ func (wr *WorkloadClusterReconciler) ReconcileKubeletConfig(
 			kubeletConfiguration.ClusterDNS = []string{"10.96.0.10"}
 			kubeletConfiguration.ClusterDomain = "cluster.local"
 			kubeletConfiguration.RotateCertificates = true
-			kubeletConfiguration.StaticPodPath = kubeadmconstants.DefaultManifestsDir
+			kubeletConfiguration.StaticPodPath = kubeadmv1beta4.DefaultManifestsDir
 			kubeletConfiguration.Logging.FlushFrequency.SerializeAsString = false
 			kubeletConfiguration.ResolverConfig = nil
 
-			content, err := ToYaml(&kubeletConfiguration)
+			content, err := util.ToYaml(&kubeletConfiguration)
 			if err != nil {
-				return fmt.Errorf("failed to convert kubelet configuration to YAML: %w", err)
+				return fmt.Errorf("failed to marshal kubelet configuration: %w", err)
 			}
 
 			configMap := corev1ac.ConfigMap(konstants.KubeletBaseConfigurationConfigMap, metav1.NamespaceSystem).

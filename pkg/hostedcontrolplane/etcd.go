@@ -21,7 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	appsacv1 "k8s.io/client-go/applyconfigurations/apps/v1"
+	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
@@ -169,25 +169,25 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 	}
 
 	statefulSetName := names.GetEtcdStatefulSetName(cluster)
-	statefulSet := appsacv1.StatefulSet(statefulSetName, hostedControlPlane.Namespace).
+	statefulSet := appsv1ac.StatefulSet(statefulSetName, hostedControlPlane.Namespace).
 		WithLabels(names.GetControlPlaneLabels(cluster, ComponentETCD)).
 		WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 		WithAnnotations(map[string]string{
 			"checksum/secrets": secretChecksum,
 		}).
-		WithSpec(appsacv1.StatefulSetSpec().
+		WithSpec(appsv1ac.StatefulSetSpec().
 			WithServiceName(names.GetEtcdServiceName(cluster)).
 			WithReplicas(3).
 			WithPodManagementPolicy(appsv1.ParallelPodManagement).
-			WithUpdateStrategy(appsacv1.StatefulSetUpdateStrategy().WithRollingUpdate(
-				appsacv1.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
+			WithUpdateStrategy(appsv1ac.StatefulSetUpdateStrategy().WithRollingUpdate(
+				appsv1ac.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
 			)).
 			WithSelector(names.GetControlPlaneSelector(cluster, ComponentETCD)).
 			WithTemplate(template.WithAnnotations(map[string]string{
 				"checksum/secrets": secretChecksum,
 			})).
 			WithVolumeClaimTemplates(etcdDataVolumeClaimTemplate).
-			WithPersistentVolumeClaimRetentionPolicy(appsacv1.StatefulSetPersistentVolumeClaimRetentionPolicy().
+			WithPersistentVolumeClaimRetentionPolicy(appsv1ac.StatefulSetPersistentVolumeClaimRetentionPolicy().
 				WithWhenDeleted(appsv1.DeletePersistentVolumeClaimRetentionPolicyType),
 			),
 		)
