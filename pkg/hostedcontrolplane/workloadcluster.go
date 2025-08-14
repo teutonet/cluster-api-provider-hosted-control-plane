@@ -38,6 +38,10 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 				kubernetesClient: workloadClusterClient,
 			}
 
+			kubeProxyReconciler := &KubeProxyReconciler{
+				kubernetesClient: workloadClusterClient,
+			}
+
 			workloadPhases := []WorkloadPhase{
 				{
 					Name: "RBAC",
@@ -70,6 +74,14 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 					},
 					Condition:    v1alpha1.WorkloadKubeletConfigReadyCondition,
 					FailedReason: v1alpha1.WorkloadKubeletConfigFailedReason,
+				},
+				{
+					Name: "kube-proxy",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return kubeProxyReconciler.ReconcileKubeProxy(ctx, cluster, hostedControlPlane)
+					},
+					Condition:    v1alpha1.WorkloadKubeProxyReadyCondition,
+					FailedReason: v1alpha1.WorkloadKubeProxyFailedReason,
 				},
 				{
 					Name:         "coredns",

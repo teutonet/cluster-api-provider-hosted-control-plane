@@ -62,10 +62,8 @@ func (cr *CoreDNSReconciler) ReconcileCoreDNS(ctx context.Context, cluster *capi
 					},
 				},
 				{
-					Name: "Deployment",
-					Reconcile: func(ctx context.Context) error {
-						return cr.reconcileCoreDNSDeployment(ctx, cluster)
-					},
+					Name:      "Deployment",
+					Reconcile: cr.reconcileCoreDNSDeployment,
 				},
 				{
 					Name:      "Service",
@@ -143,10 +141,10 @@ func (cr *CoreDNSReconciler) reconcileCoreDNSRBAC(ctx context.Context) error {
 	)
 }
 
-func (cr *CoreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, cluster *capiv1.Cluster) error {
+func (cr *CoreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, _ *capiv1.Cluster) error {
 	return tracing.WithSpan1(ctx, corednsReconcilerTracer, "ReconcileCoreDNSConfigMap",
 		func(ctx context.Context, span trace.Span) error {
-			c := &corefile.Corefile{
+			defaultCorefile := &corefile.Corefile{
 				Servers: []*corefile.Server{
 					{
 						DomPorts: []string{".:53"},
@@ -221,7 +219,7 @@ func (cr *CoreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, clus
 
 			configMap := corev1ac.ConfigMap(coreDNSConfigMapName, metav1.NamespaceSystem).
 				WithData(map[string]string{
-					coreDNSCorefileFileName: c.ToString(),
+					coreDNSCorefileFileName: defaultCorefile.ToString(),
 				})
 
 			_, err := cr.kubernetesClient.CoreV1().
@@ -236,14 +234,14 @@ func (cr *CoreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, clus
 	)
 }
 
-func (cr *CoreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context, cluster *capiv1.Cluster) error {
+func (cr *CoreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) error {
 	return tracing.WithSpan1(ctx, corednsReconcilerTracer, "ReconcileCoreDNSDeployment",
 		func(ctx context.Context, span trace.Span) error {
 			labelSelector := metav1ac.LabelSelector().WithMatchLabels(coreDNSLabels)
 			coreDNSConfigVolume := corev1ac.Volume().
 				WithName("config-volume").
 				WithConfigMap(corev1ac.ConfigMapVolumeSource().
-					WithName("coredns").
+					WithName(coreDNSConfigMapName).
 					WithItems(
 						corev1ac.KeyToPath().
 							WithKey(coreDNSCorefileFileName).

@@ -74,7 +74,7 @@ func (trr *TLSRoutesReconciler) createTLSRoute(
 		WithLabels(names.GetControlPlaneLabels(cluster, "")).
 		WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 		WithSpec(v1alpha2.TLSRouteSpec().
-			WithHostnames(gwv1alpha2.Hostname(host)).
+			WithHostnames(gwv1alpha2.Hostname(host), gwv1alpha2.Hostname(cluster.Name)).
 			WithParentRefs(gwv1ac.ParentReference().
 				WithName("capi").
 				WithNamespace(gwv1.Namespace(cluster.Namespace)),

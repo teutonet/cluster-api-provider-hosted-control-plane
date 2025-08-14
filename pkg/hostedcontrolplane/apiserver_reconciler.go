@@ -324,12 +324,15 @@ func (dr *APIServerResourcesReconciler) reconcileDeployment(
 	}
 
 	deploymentName := fmt.Sprintf("%s-%s", cluster.Name, component)
-	deployment := appsv1ac.Deployment(
-		deploymentName,
-		cluster.Namespace,
-	).
+	deployment := appsv1ac.Deployment(deploymentName, cluster.Namespace).
 		WithLabels(names.GetControlPlaneLabels(cluster, component)).
 		WithSpec(appsv1ac.DeploymentSpec().
+			WithStrategy(appsv1ac.DeploymentStrategy().
+				WithType(appsv1.RollingUpdateDeploymentStrategyType).
+				WithRollingUpdate(appsv1ac.RollingUpdateDeployment().
+					WithMaxSurge(intstr.FromInt32(*hostedControlPlane.Spec.Replicas)),
+				),
+			).
 			WithReplicas(*hostedControlPlane.Spec.Replicas).
 			WithSelector(names.GetControlPlaneSelector(cluster, component)).
 			WithTemplate(template),

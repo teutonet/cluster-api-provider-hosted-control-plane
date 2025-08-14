@@ -643,7 +643,7 @@ func (wr *WorkloadClusterReconciler) buildKonnectivityClientArgs(
 ) []string {
 	args := map[string]string{
 		"admin-server-port":  "8132",
-		"ca-cert":            path.Join(*serviceAccountTokenVolumeMount.MountPath, konstants.CACertName),
+		"ca-cert":            path.Join(*serviceAccountTokenVolumeMount.MountPath, corev1.ServiceAccountRootCAKey),
 		"health-server-port": fmt.Sprintf("%d", healthPort.ContainerPort),
 		"logtostderr":        "true",
 		"proxy-server-host":  names.GetKonnectivityServerHost(cluster),

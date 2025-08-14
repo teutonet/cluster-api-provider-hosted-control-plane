@@ -41,4 +41,6 @@ const (
 	WorkloadKonnectivityDaemonSetFailedReason                        = "WorkloadKonnectivityDaemonSetFailed"
 	WorkloadCoreDNSReadyCondition               capiv1.ConditionType = "WorkloadCoreDNSReady"
 	WorkloadCoreDNSFailedReason                                      = "WorkloadCoreDNSFailed"
+	WorkloadKubeProxyReadyCondition             capiv1.ConditionType = "WorkloadKubeProxyReady"
+	WorkloadKubeProxyFailedReason                                    = "WorkloadKubeProxyFailed"
 )
