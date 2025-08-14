@@ -37,7 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	controllerutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
@@ -273,8 +273,10 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 			konnectivityConfigReconciler := &KonnectivityConfigReconciler{
 				kubernetesClient: r.KubernetesClient,
 			}
-			tlsRoutesReconciler := &TLSRoutesReconciler{
-				gatewayClient: r.GatewayClient,
+
+			clusterPatchHelper, err := patch.NewHelper(cluster, r.Client)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to create patch helper for Cluster: %w", err)
 			}
 
 			phases := []Phase{
@@ -283,6 +285,20 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					Reconcile:    certificateReconciler.ReconcileCACertificates,
 					Condition:    v1alpha1.CACertificatesReadyCondition,
 					FailedReason: v1alpha1.CACertificatesFailedReason,
+				},
+				{
+					Name:         "apiserver service",
+					Reconcile:    apiServerReconciler.reconcileAPIServerService,
+					Condition:    v1alpha1.APIServerServiceReadyCondition,
+					FailedReason: v1alpha1.APIServerServiceFailedReason,
+				},
+				{
+					Name: "sync controlplane endpoint",
+					Reconcile: func(ctx context.Context, _ *v1alpha1.HostedControlPlane, cluster *capiv1.Cluster) error {
+						return errorsUtil.IfErrErrorf("failed to patch Cluster: %w", clusterPatchHelper.Patch(ctx, cluster))
+					},
+					Condition:    v1alpha1.SyncControlPlaneEndpointReadyCondition,
+					FailedReason: v1alpha1.SyncControlPlaneEndpointFailedReason,
 				},
 				{
 					Name:         "certificates",
@@ -310,21 +326,15 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				},
 				{
 					Name:         "apiserver resources",
-					Reconcile:    apiServerReconciler.ReconcileAPIServerResources,
-					Condition:    v1alpha1.APIServerResourcesReadyCondition,
-					FailedReason: v1alpha1.DeploymentFailedReason,
+					Reconcile:    apiServerReconciler.ReconcileAPIServerDeployments,
+					Condition:    v1alpha1.APIServerDeploymentsReadyCondition,
+					FailedReason: v1alpha1.APIServerDeploymentsFailedReason,
 				},
 				{
 					Name:         "workload cluster resources",
 					Reconcile:    r.reconcileWorkloadClusterResources,
 					Condition:    v1alpha1.WorkloadClusterResourcesReadyCondition,
 					FailedReason: v1alpha1.WorkloadClusterResourcesFailedReason,
-				},
-				{
-					Name:         "TLSRoutes",
-					Reconcile:    tlsRoutesReconciler.ReconcileTLSRoutes,
-					Condition:    v1alpha1.TLSRoutesReadyCondition,
-					FailedReason: v1alpha1.TLSRoutesFailedReason,
 				},
 			}
 
