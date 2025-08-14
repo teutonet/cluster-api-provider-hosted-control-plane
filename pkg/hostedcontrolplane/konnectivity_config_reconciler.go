@@ -65,7 +65,7 @@ func (kcr *KonnectivityConfigReconciler) ReconcileKonnectivityConfig(
 					EgressSelectorConfigurationFileName: buf.String(),
 				})
 
-			_, err = r.kubernetesClient.CoreV1().ConfigMaps(hostedControlPlane.Namespace).
+			_, err = kcr.kubernetesClient.CoreV1().ConfigMaps(hostedControlPlane.Namespace).
 				Apply(ctx, configMap, applyOptions)
 			return errorsUtil.IfErrErrorf("failed to patch konnectivity configmap: %w", err)
 		},

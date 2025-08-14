@@ -231,6 +231,7 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 				"kubernetes",
 				"kubernetes.default",
 				"kubernetes.default.svc",
+				cluster.Name,
 				names.GetServiceName(cluster),
 				fmt.Sprintf("%s.%s", names.GetServiceName(cluster), hostedControlPlane.Namespace),
 				names.GetInternalServiceHost(cluster),

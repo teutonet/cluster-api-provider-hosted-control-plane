@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
-	kubeconfigv1 "k8s.io/client-go/tools/clientcmd/api/v1"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
@@ -128,15 +128,15 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 			if err != nil {
 				return fmt.Errorf("failed to generate kubeconfig: %w", err)
 			}
-			yaml, err := operatorutil.ToYaml(kubeconfig)
+			kubeconfigBytes, err := clientcmd.Write(*kubeconfig)
 			if err != nil {
-				return fmt.Errorf("failed to marshal kubeconfig: %w", err)
+				return errorsUtil.IfErrErrorf("failed to marshal kubeconfig: %w", err)
 			}
 			kubeconfigSecret := corev1ac.Secret(kubeconfigConfig.SecretName, cluster.Namespace).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string][]byte{
-					capisecretutil.KubeconfigDataName: yaml.Bytes(),
+					capisecretutil.KubeconfigDataName: kubeconfigBytes,
 				})
 
 			_, err = kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
@@ -154,7 +154,7 @@ func (kr *KubeconfigReconciler) generateKubeconfig(
 	apiEndpoint capiv1.APIEndpoint,
 	userName string,
 	kubeconfiCertificateSecretName string,
-) (*kubeconfigv1.Config, error) {
+) (*api.Config, error) {
 	clusterName := cluster.Name
 	contextName := fmt.Sprintf("%s@%s", userName, clusterName)
 
@@ -170,38 +170,25 @@ func (kr *KubeconfigReconciler) generateKubeconfig(
 		return nil, fmt.Errorf("failed to get CA secret: %w", err)
 	}
 
-	kubeconfig := kubeconfigv1.Config{
-		APIVersion: "v1",
-		Kind:       "Config",
-		Clusters: []kubeconfigv1.NamedCluster{
-			{
-				Name: clusterName,
-				Cluster: kubeconfigv1.Cluster{
-					Server:                   fmt.Sprintf("https://%s", apiEndpoint.String()),
-					CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
-				},
+	return &api.Config{
+		Clusters: map[string]*api.Cluster{
+			clusterName: {
+				Server:                   fmt.Sprintf("https://%s", apiEndpoint.String()),
+				CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
 			},
 		},
-		Contexts: []kubeconfigv1.NamedContext{
-			{
-				Name: contextName,
-				Context: kubeconfigv1.Context{
-					Cluster:  clusterName,
-					AuthInfo: userName,
-				},
+		Contexts: map[string]*api.Context{
+			contextName: {
+				Cluster:  clusterName,
+				AuthInfo: userName,
 			},
 		},
 		CurrentContext: contextName,
-		AuthInfos: []kubeconfigv1.NamedAuthInfo{
-			{
-				Name: userName,
-				AuthInfo: kubeconfigv1.AuthInfo{
-					ClientCertificateData: certSecret.Data[corev1.TLSCertKey],
-					ClientKeyData:         certSecret.Data[corev1.TLSPrivateKeyKey],
-				},
+		AuthInfos: map[string]*api.AuthInfo{
+			userName: {
+				ClientCertificateData: certSecret.Data[corev1.TLSCertKey],
+				ClientKeyData:         certSecret.Data[corev1.TLSPrivateKeyKey],
 			},
 		},
-	}
-
-	return &kubeconfig, nil
+	}, nil
 }
