@@ -590,7 +590,7 @@ func (wr *WorkloadClusterReconciler) ReconcileKonnectivityDaemonSet(
 				WithReadOnly(true)
 			healthPort := corev1ac.ContainerPort().
 				WithName("health").
-				WithContainerPort(8133).
+				WithContainerPort(8134).
 				WithProtocol(corev1.ProtocolTCP)
 
 			template := corev1ac.PodTemplateSpec().
@@ -642,12 +642,12 @@ func (wr *WorkloadClusterReconciler) buildKonnectivityClientArgs(
 	healthPort *corev1ac.ContainerPortApplyConfiguration,
 ) []string {
 	args := map[string]string{
-		"admin-server-port":  "8132",
+		"admin-server-port":  "8133",
 		"ca-cert":            path.Join(*serviceAccountTokenVolumeMount.MountPath, corev1.ServiceAccountRootCAKey),
 		"health-server-port": fmt.Sprintf("%d", healthPort.ContainerPort),
 		"logtostderr":        "true",
 		"proxy-server-host":  names.GetKonnectivityServerHost(cluster),
-		"proxy-server-port":  "443",
+		"proxy-server-port":  fmt.Sprintf("%d", KonnectivityServicePort),
 		"service-account-token-path": path.Join(
 			*serviceAccountTokenVolumeMount.MountPath,
 			konnectivityServiceAccountTokenName,

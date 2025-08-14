@@ -233,7 +233,6 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 				"kubernetes.default.svc",
 				cluster.Name,
 				names.GetServiceName(cluster),
-				fmt.Sprintf("%s.%s", names.GetServiceName(cluster), hostedControlPlane.Namespace),
 				names.GetInternalServiceHost(cluster),
 				cluster.Spec.ControlPlaneEndpoint.Host,
 			),
@@ -342,7 +341,7 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 				"apiserver-etcd-client",
 				names.GetEtcdAPIServerClientSecretName(cluster),
 				certmanagerv1.UsageClientAuth,
-			).WithDNSNames(names.GetServiceName(cluster)),
+			),
 		},
 	}
 }

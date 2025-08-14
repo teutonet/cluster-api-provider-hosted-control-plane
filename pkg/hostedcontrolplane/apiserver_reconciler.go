@@ -32,7 +32,10 @@ import (
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 )
 
-var ErrDeploymentNotReady = fmt.Errorf("deployment is not ready: %w", ErrRequeueRequired)
+var (
+	ErrDeploymentNotReady = fmt.Errorf("deployment is not ready: %w", ErrRequeueRequired)
+	ErrServiceNotReady    = fmt.Errorf("service is not ready: %w", ErrRequeueRequired)
+)
 
 type APIServerResourcesReconciler struct {
 	kubernetesClient kubernetes.Interface
@@ -61,17 +64,13 @@ var (
 
 var KonnectivityKubeconfigFileName = "konnectivity-server.conf"
 
-func (dr *APIServerResourcesReconciler) ReconcileAPIServerResources(
+func (dr *APIServerResourcesReconciler) ReconcileAPIServerDeployments(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
 	if err := dr.reconcileAPIServerDeployment(ctx, hostedControlPlane, cluster); err != nil {
 		return fmt.Errorf("failed to reconcile API server deployment: %w", err)
-	}
-
-	if err := dr.reconcileAPIServerService(ctx, hostedControlPlane, cluster); err != nil {
-		return fmt.Errorf("failed to reconcile API server service: %w", err)
 	}
 
 	needsRequeue := false
@@ -392,17 +391,18 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerService(
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileAPIServerService",
 		func(ctx context.Context, span trace.Span) error {
 			labels := names.GetControlPlaneLabels(cluster, componentAPIServer)
+			apiPort := corev1ac.ServicePort().
+				WithName("api").
+				WithPort(APIServerServicePort).
+				WithTargetPort(apiContainerPortName).
+				WithProtocol(corev1.ProtocolTCP)
 			service := corev1ac.Service(names.GetServiceName(cluster), hostedControlPlane.Namespace).
 				WithLabels(labels).
 				WithSpec(corev1ac.ServiceSpec().
-					WithType(corev1.ServiceTypeClusterIP).
+					WithType(corev1.ServiceTypeLoadBalancer).
 					WithSelector(labels).
 					WithPorts(
-						corev1ac.ServicePort().
-							WithName("api").
-							WithPort(APIServerServicePort).
-							WithTargetPort(apiContainerPortName).
-							WithProtocol(corev1.ProtocolTCP),
+						apiPort,
 						corev1ac.ServicePort().
 							WithName("konnectivity").
 							WithPort(KonnectivityServicePort).
@@ -411,12 +411,24 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerService(
 					),
 				).
 				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane))
-			_, err := dr.kubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).Apply(ctx,
+			appliedService, err := dr.kubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).Apply(ctx,
 				service,
 				applyOptions,
 			)
+			if err != nil {
+				return errorsUtil.IfErrErrorf("failed to patch service: %w", err)
+			}
 
-			return errorsUtil.IfErrErrorf("failed to patch service: %w", err)
+			if len(appliedService.Status.LoadBalancer.Ingress) == 0 {
+				return fmt.Errorf("service load balancer is not ready yet: %w", ErrServiceNotReady)
+			}
+
+			cluster.Spec.ControlPlaneEndpoint = capiv1.APIEndpoint{
+				Host: appliedService.Status.LoadBalancer.Ingress[0].IP,
+				Port: *apiPort.Port,
+			}
+
+			return nil
 		},
 	)
 }

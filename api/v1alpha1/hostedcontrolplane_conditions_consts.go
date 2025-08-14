@@ -11,8 +11,12 @@ const (
 // HostedControlPlane.
 
 const (
-	APIServerResourcesReadyCondition            capiv1.ConditionType = "DeploymentReady"
-	DeploymentFailedReason                                           = "DeploymentFailed"
+	APIServerServiceReadyCondition              capiv1.ConditionType = "APIServerServiceReady"
+	APIServerServiceFailedReason                                     = "APIServerServiceFailed"
+	SyncControlPlaneEndpointReadyCondition      capiv1.ConditionType = "SyncControlPlaneEndpointReady"
+	SyncControlPlaneEndpointFailedReason                             = "SyncControlPlaneEndpointFailed"
+	APIServerDeploymentsReadyCondition          capiv1.ConditionType = "APIServerDeploymentsReady"
+	APIServerDeploymentsFailedReason                                 = "APIServerDeploymentsFailed"
 	CACertificatesReadyCondition                capiv1.ConditionType = "CACertificatesReady"
 	CACertificatesFailedReason                                       = "CACertificatesFailed"
 	CertificatesReadyCondition                  capiv1.ConditionType = "CertificatesReady"
@@ -21,8 +25,6 @@ const (
 	KubeconfigFailedReason                                           = "KubeconfigFailed"
 	KonnectivityConfigReadyCondition            capiv1.ConditionType = "KonnectivityConfigReady"
 	KonnectivityConfigFailedReason                                   = "KonnectivityConfigFailed"
-	TLSRoutesReadyCondition                     capiv1.ConditionType = "TLSRoutesReady"
-	TLSRoutesFailedReason                                            = "TLSRoutesFailed"
 	EtcdClusterReadyCondition                   capiv1.ConditionType = "EtcdClusterReady"
 	EtcdClusterFailedReason                                          = "EtcdClusterFailed"
 	WorkloadClusterResourcesReadyCondition      capiv1.ConditionType = "WorkloadSetupReady"

@@ -51,10 +51,9 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 				Port: 6443,
 			}
 			controlPlaneName := hostedControlPlane.Name
-			internalServiceHost := names.GetInternalServiceHost(cluster)
 			internalServiceEndpoint := capiv1.APIEndpoint{
-				Host: internalServiceHost,
-				Port: 443,
+				Host: names.GetInternalServiceHost(cluster),
+				Port: APIServerServicePort,
 			}
 			kubeconfigs := []KubeconfigConfig{
 				{
