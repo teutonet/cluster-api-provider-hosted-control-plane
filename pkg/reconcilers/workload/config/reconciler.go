@@ -65,33 +65,37 @@ func (cr *configReconciler) ReconcileClusterInfoConfigMap(
 	managementClient kubernetes.Interface,
 	cluster *capiv1.Cluster,
 ) error {
-	caSecret, err := managementClient.CoreV1().Secrets(cluster.Namespace).
-		Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get CA secret: %w", err)
-	}
-	kubeconfig := &api.Config{
-		Clusters: map[string]*api.Cluster{
-			"": {
-				Server:                   fmt.Sprintf("https://%s", cluster.Spec.ControlPlaneEndpoint.String()),
-				CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
-			},
+	return tracing.WithSpan1(ctx, cr.tracer, "ReconcileClusterInfoConfigMap",
+		func(ctx context.Context, span trace.Span) error {
+			caSecret, err := managementClient.CoreV1().Secrets(cluster.Namespace).
+				Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to get CA secret: %w", err)
+			}
+			kubeconfig := &api.Config{
+				Clusters: map[string]*api.Cluster{
+					"": {
+						Server:                   fmt.Sprintf("https://%s", cluster.Spec.ControlPlaneEndpoint.String()),
+						CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
+					},
+				},
+			}
+			kubeconfigBytes, err := clientcmd.Write(*kubeconfig)
+			if err != nil {
+				return errorsUtil.IfErrErrorf("failed to marshal kubeconfig: %w", err)
+			}
+
+			configMap := corev1ac.ConfigMap(bootstrapapi.ConfigMapClusterInfo, metav1.NamespacePublic).
+				WithData(map[string]string{
+					bootstrapapi.KubeConfigKey: string(kubeconfigBytes),
+				})
+
+			_, err = cr.kubernetesClient.CoreV1().
+				ConfigMaps(metav1.NamespacePublic).
+				Apply(ctx, configMap, operatorutil.ApplyOptions)
+			return errorsUtil.IfErrErrorf("failed to apply cluster info configmap: %w", err)
 		},
-	}
-	kubeconfigBytes, err := clientcmd.Write(*kubeconfig)
-	if err != nil {
-		return errorsUtil.IfErrErrorf("failed to marshal kubeconfig: %w", err)
-	}
-
-	configMap := corev1ac.ConfigMap(bootstrapapi.ConfigMapClusterInfo, metav1.NamespacePublic).
-		WithData(map[string]string{
-			bootstrapapi.KubeConfigKey: string(kubeconfigBytes),
-		})
-
-	_, err = cr.kubernetesClient.CoreV1().
-		ConfigMaps(metav1.NamespacePublic).
-		Apply(ctx, configMap, operatorutil.ApplyOptions)
-	return errorsUtil.IfErrErrorf("failed to apply cluster info configmap: %w", err)
+	)
 }
 
 func (cr *configReconciler) ReconcileKubeadmConfig(

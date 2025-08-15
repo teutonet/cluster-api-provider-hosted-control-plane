@@ -15,6 +15,7 @@ import (
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -393,69 +394,79 @@ func (arr *apiServerResourcesReconciler) reconcileDeployment(
 	containers []*corev1ac.ContainerApplyConfiguration,
 	volumes []*corev1ac.VolumeApplyConfiguration,
 ) (*appsv1.Deployment, error) {
-	template := corev1ac.PodTemplateSpec().
-		WithLabels(names.GetControlPlaneLabels(cluster, component)).
-		WithSpec(corev1ac.PodSpec().
-			WithTopologySpreadConstraints(
-				operatorutil.CreatePodTopologySpreadConstraints(
-					names.GetControlPlaneSelector(cluster, component),
-				),
-			).
-			WithAutomountServiceAccountToken(false).
-			WithEnableServiceLinks(false).
-			WithContainers(containers...).
-			WithVolumes(volumes...).
-			WithAffinity(corev1ac.Affinity().
-				WithPodAffinity(corev1ac.PodAffinity().
-					WithPreferredDuringSchedulingIgnoredDuringExecution(
-						corev1ac.WeightedPodAffinityTerm().
-							WithWeight(100).
-							WithPodAffinityTerm(corev1ac.PodAffinityTerm().
-								WithLabelSelector(names.GetControlPlaneSelector(cluster, targetComponent)).
-								WithTopologyKey(corev1.LabelHostname),
+	return tracing.WithSpan(ctx, arr.tracer, "ReconcileDeployment",
+		func(ctx context.Context, span trace.Span) (*appsv1.Deployment, error) {
+			span.SetAttributes(
+				attribute.String("Component", component),
+				attribute.String("TargetComponent", targetComponent),
+				attribute.Int64("Replicas", int64(replicas)),
+			)
+
+			template := corev1ac.PodTemplateSpec().
+				WithLabels(names.GetControlPlaneLabels(cluster, component)).
+				WithSpec(corev1ac.PodSpec().
+					WithTopologySpreadConstraints(
+						operatorutil.CreatePodTopologySpreadConstraints(
+							names.GetControlPlaneSelector(cluster, component),
+						),
+					).
+					WithAutomountServiceAccountToken(false).
+					WithEnableServiceLinks(false).
+					WithContainers(containers...).
+					WithVolumes(volumes...).
+					WithAffinity(corev1ac.Affinity().
+						WithPodAffinity(corev1ac.PodAffinity().
+							WithPreferredDuringSchedulingIgnoredDuringExecution(
+								corev1ac.WeightedPodAffinityTerm().
+									WithWeight(100).
+									WithPodAffinityTerm(corev1ac.PodAffinityTerm().
+										WithLabelSelector(names.GetControlPlaneSelector(cluster, targetComponent)).
+										WithTopologyKey(corev1.LabelHostname),
+									),
 							),
-					),
-				)),
-		)
+						)),
+				)
 
-	template, err := operatorutil.SetChecksumAnnotations(ctx, arr.kubernetesClient, cluster.Namespace, template)
-	if err != nil {
-		return nil, fmt.Errorf("failed to set checksum annotations: %w", err)
-	}
+			template, err := operatorutil.SetChecksumAnnotations(ctx, arr.kubernetesClient, cluster.Namespace, template)
+			if err != nil {
+				return nil, fmt.Errorf("failed to set checksum annotations: %w", err)
+			}
 
-	deploymentName := fmt.Sprintf("%s-%s", cluster.Name, component)
-	deployment := appsv1ac.Deployment(deploymentName, cluster.Namespace).
-		WithLabels(names.GetControlPlaneLabels(cluster, component)).
-		WithSpec(appsv1ac.DeploymentSpec().
-			WithStrategy(appsv1ac.DeploymentStrategy().
-				WithType(appsv1.RollingUpdateDeploymentStrategyType).
-				WithRollingUpdate(appsv1ac.RollingUpdateDeployment().
-					WithMaxSurge(intstr.FromInt32(*hostedControlPlane.Spec.Replicas)),
-				),
-			).
-			WithReplicas(replicas).
-			WithSelector(names.GetControlPlaneSelector(cluster, component)).
-			WithTemplate(template),
-		).
-		WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane))
+			deploymentName := fmt.Sprintf("%s-%s", cluster.Name, component)
+			deployment := appsv1ac.Deployment(deploymentName, cluster.Namespace).
+				WithLabels(names.GetControlPlaneLabels(cluster, component)).
+				WithSpec(appsv1ac.DeploymentSpec().
+					WithStrategy(appsv1ac.DeploymentStrategy().
+						WithType(appsv1.RollingUpdateDeploymentStrategyType).
+						WithRollingUpdate(appsv1ac.RollingUpdateDeployment().
+							WithMaxSurge(intstr.FromInt32(*hostedControlPlane.Spec.Replicas)),
+						),
+					).
+					WithReplicas(replicas).
+					WithSelector(names.GetControlPlaneSelector(cluster, component)).
+					WithTemplate(template),
+				).
+				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane))
 
-	if err := operatorutil.ValidateMounts(deployment.Spec.Template.Spec); err != nil {
-		return nil, fmt.Errorf("deployment %s has mounts without corresponding volume: %w", deploymentName, err)
-	}
+			if err := operatorutil.ValidateMounts(deployment.Spec.Template.Spec); err != nil {
+				return nil, fmt.Errorf("deployment %s has mounts without corresponding volume: %w", deploymentName, err)
+			}
 
-	appliedDeployment, err := arr.kubernetesClient.AppsV1().Deployments(hostedControlPlane.Namespace).Apply(ctx,
-		deployment,
-		operatorutil.ApplyOptions,
+			appliedDeployment, err := arr.kubernetesClient.AppsV1().Deployments(hostedControlPlane.Namespace).Apply(ctx,
+				deployment,
+				operatorutil.ApplyOptions,
+			)
+			if err != nil {
+				return nil, errorsUtil.IfErrErrorf("failed to patch deployment: %w", err)
+			}
+
+			if !isDeploymentReady(appliedDeployment) {
+				return nil, errDeploymentNotReady
+			}
+
+			return appliedDeployment, nil
+		},
 	)
-	if err != nil {
-		return nil, errorsUtil.IfErrErrorf("failed to patch deployment: %w", err)
-	}
-
-	if !isDeploymentReady(appliedDeployment) {
-		return nil, errDeploymentNotReady
-	}
-
-	return appliedDeployment, nil
 }
 
 func isDeploymentReady(deployment *appsv1.Deployment) bool {

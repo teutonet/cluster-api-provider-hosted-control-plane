@@ -179,40 +179,44 @@ func (kr *kubeconfigReconciler) generateKubeconfig(
 	userName string,
 	kubeconfiCertificateSecretName string,
 ) (*api.Config, error) {
-	clusterName := cluster.Name
-	contextName := fmt.Sprintf("%s@%s", userName, clusterName)
+	return tracing.WithSpan(ctx, kr.tracer, "GenerateKubeconfig",
+		func(ctx context.Context, span trace.Span) (*api.Config, error) {
+			clusterName := cluster.Name
+			contextName := fmt.Sprintf("%s@%s", userName, clusterName)
 
-	certSecret, err := kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
-		Get(ctx, kubeconfiCertificateSecretName, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get certificate secret: %w", err)
-	}
+			certSecret, err := kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
+				Get(ctx, kubeconfiCertificateSecretName, metav1.GetOptions{})
+			if err != nil {
+				return nil, fmt.Errorf("failed to get certificate secret: %w", err)
+			}
 
-	caSecret, err := kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
-		Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get CA secret: %w", err)
-	}
+			caSecret, err := kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
+				Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
+			if err != nil {
+				return nil, fmt.Errorf("failed to get CA secret: %w", err)
+			}
 
-	return &api.Config{
-		Clusters: map[string]*api.Cluster{
-			clusterName: {
-				Server:                   fmt.Sprintf("https://%s", apiEndpoint.String()),
-				CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
-			},
+			return &api.Config{
+				Clusters: map[string]*api.Cluster{
+					clusterName: {
+						Server:                   fmt.Sprintf("https://%s", apiEndpoint.String()),
+						CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
+					},
+				},
+				Contexts: map[string]*api.Context{
+					contextName: {
+						Cluster:  clusterName,
+						AuthInfo: userName,
+					},
+				},
+				CurrentContext: contextName,
+				AuthInfos: map[string]*api.AuthInfo{
+					userName: {
+						ClientCertificateData: certSecret.Data[corev1.TLSCertKey],
+						ClientKeyData:         certSecret.Data[corev1.TLSPrivateKeyKey],
+					},
+				},
+			}, nil
 		},
-		Contexts: map[string]*api.Context{
-			contextName: {
-				Cluster:  clusterName,
-				AuthInfo: userName,
-			},
-		},
-		CurrentContext: contextName,
-		AuthInfos: map[string]*api.AuthInfo{
-			userName: {
-				ClientCertificateData: certSecret.Data[corev1.TLSCertKey],
-				ClientKeyData:         certSecret.Data[corev1.TLSPrivateKeyKey],
-			},
-		},
-	}, nil
+	)
 }

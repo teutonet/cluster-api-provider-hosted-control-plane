@@ -125,40 +125,44 @@ func (er *etcdClusterReconciler) reconcileService(
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
 ) error {
-	spec := corev1ac.ServiceSpec().
-		WithType(corev1.ServiceTypeClusterIP).
-		WithSelector(names.GetControlPlaneLabels(cluster, er.componentLabel)).
-		WithPorts(
-			corev1ac.ServicePort().
-				WithName("etcd-client").
-				WithPort(er.etcdClientPort).
-				WithTargetPort(intstr.FromString(*clientPort.Name)).
-				WithProtocol(corev1.ProtocolTCP),
-			corev1ac.ServicePort().
-				WithName("client-peer").
-				WithPort(2380).
-				WithTargetPort(intstr.FromString(*peerPort.Name)).
-				WithProtocol(corev1.ProtocolTCP),
-			corev1ac.ServicePort().
-				WithName("client-metrics").
-				WithPort(2381).
-				WithTargetPort(intstr.FromString(*metricsPort.Name)).
-				WithProtocol(corev1.ProtocolTCP),
-		)
+	return tracing.WithSpan1(ctx, er.tracer, "ReconcileEtcdService",
+		func(ctx context.Context, span trace.Span) error {
+			spec := corev1ac.ServiceSpec().
+				WithType(corev1.ServiceTypeClusterIP).
+				WithSelector(names.GetControlPlaneLabels(cluster, er.componentLabel)).
+				WithPorts(
+					corev1ac.ServicePort().
+						WithName("etcd-client").
+						WithPort(er.etcdClientPort).
+						WithTargetPort(intstr.FromString(*clientPort.Name)).
+						WithProtocol(corev1.ProtocolTCP),
+					corev1ac.ServicePort().
+						WithName("client-peer").
+						WithPort(2380).
+						WithTargetPort(intstr.FromString(*peerPort.Name)).
+						WithProtocol(corev1.ProtocolTCP),
+					corev1ac.ServicePort().
+						WithName("client-metrics").
+						WithPort(2381).
+						WithTargetPort(intstr.FromString(*metricsPort.Name)).
+						WithProtocol(corev1.ProtocolTCP),
+				)
 
-	if headless {
-		spec = spec.WithClusterIP(corev1.ClusterIPNone).WithPublishNotReadyAddresses(true)
-	}
+			if headless {
+				spec = spec.WithClusterIP(corev1.ClusterIPNone).WithPublishNotReadyAddresses(true)
+			}
 
-	service := corev1ac.Service(name, hostedControlPlane.Namespace).
-		WithLabels(names.GetControlPlaneLabels(cluster, er.componentLabel)).
-		WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
-		WithSpec(spec)
+			service := corev1ac.Service(name, hostedControlPlane.Namespace).
+				WithLabels(names.GetControlPlaneLabels(cluster, er.componentLabel)).
+				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
+				WithSpec(spec)
 
-	_, err := er.kubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).
-		Apply(ctx, service, operatorutil.ApplyOptions)
+			_, err := er.kubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).
+				Apply(ctx, service, operatorutil.ApplyOptions)
 
-	return errorsUtil.IfErrErrorf("failed to apply etcd service: %w", err)
+			return errorsUtil.IfErrErrorf("failed to apply etcd service: %w", err)
+		},
+	)
 }
 
 func (er *etcdClusterReconciler) reconcileStatefulSet(
@@ -169,86 +173,90 @@ func (er *etcdClusterReconciler) reconcileStatefulSet(
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
 ) error {
-	etcdCertificatesVolume := er.createEtcdCertificatesVolume(cluster)
+	return tracing.WithSpan1(ctx, er.tracer, "ReconcileEtcdStatefulSet",
+		func(ctx context.Context, span trace.Span) error {
+			etcdCertificatesVolume := er.createEtcdCertificatesVolume(cluster)
 
-	etcdDataVolumeClaimTemplate := er.createEtcdDataVolumeClaimTemplate(hostedControlPlane)
-	etcdDataVolume := er.createVolumeFromTemplate(etcdDataVolumeClaimTemplate)
+			etcdDataVolumeClaimTemplate := er.createEtcdDataVolumeClaimTemplate(hostedControlPlane)
+			etcdDataVolume := er.createVolumeFromTemplate(etcdDataVolumeClaimTemplate)
 
-	etcdDataVolumeMount := corev1ac.VolumeMount().
-		WithName(*etcdDataVolume.Name).
-		WithMountPath("/var/lib/etcd")
+			etcdDataVolumeMount := corev1ac.VolumeMount().
+				WithName(*etcdDataVolume.Name).
+				WithMountPath("/var/lib/etcd")
 
-	etcdCertificatesVolumeMount := corev1ac.VolumeMount().
-		WithName(*etcdCertificatesVolume.Name).
-		WithMountPath("/etc/etcd").
-		WithReadOnly(true)
+			etcdCertificatesVolumeMount := corev1ac.VolumeMount().
+				WithName(*etcdCertificatesVolume.Name).
+				WithMountPath("/etc/etcd").
+				WithReadOnly(true)
 
-	container := er.createEtcdContainer(
-		hostedControlPlane, cluster,
-		etcdDataVolumeMount, etcdCertificatesVolumeMount,
-		clientPort, peerPort, metricsPort,
+			container := er.createEtcdContainer(
+				hostedControlPlane, cluster,
+				etcdDataVolumeMount, etcdCertificatesVolumeMount,
+				clientPort, peerPort, metricsPort,
+			)
+			template := corev1ac.PodTemplateSpec().
+				WithLabels(names.GetControlPlaneLabels(cluster, er.componentLabel)).
+				WithAnnotations(map[string]string{
+					"storage-size": hostedControlPlane.Spec.ETCD.VolumeSize.String(),
+				}).
+				WithSpec(corev1ac.PodSpec().
+					WithTopologySpreadConstraints(
+						operatorutil.CreatePodTopologySpreadConstraints(
+							names.GetControlPlaneSelector(cluster, er.componentLabel),
+						),
+					).
+					WithContainers(container).
+					WithVolumes(etcdDataVolume, etcdCertificatesVolume),
+				)
+
+			template, err := operatorutil.SetChecksumAnnotations(ctx, er.kubernetesClient, cluster.Namespace, template)
+			if err != nil {
+				return fmt.Errorf("failed to set checksum annotations: %w", err)
+			}
+
+			statefulSetName := names.GetEtcdStatefulSetName(cluster)
+			statefulSet := appsv1ac.StatefulSet(statefulSetName, hostedControlPlane.Namespace).
+				WithLabels(names.GetControlPlaneLabels(cluster, er.componentLabel)).
+				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
+				WithSpec(appsv1ac.StatefulSetSpec().
+					WithServiceName(names.GetEtcdServiceName(cluster)).
+					WithReplicas(3).
+					WithPodManagementPolicy(appsv1.ParallelPodManagement).
+					WithUpdateStrategy(appsv1ac.StatefulSetUpdateStrategy().WithRollingUpdate(
+						appsv1ac.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
+					)).
+					WithSelector(names.GetControlPlaneSelector(cluster, er.componentLabel)).
+					WithTemplate(template).
+					WithVolumeClaimTemplates(etcdDataVolumeClaimTemplate).
+					WithPersistentVolumeClaimRetentionPolicy(appsv1ac.StatefulSetPersistentVolumeClaimRetentionPolicy().
+						WithWhenDeleted(appsv1.DeletePersistentVolumeClaimRetentionPolicyType),
+					),
+				)
+
+			statefulSetObj, err := er.kubernetesClient.AppsV1().StatefulSets(hostedControlPlane.Namespace).
+				Apply(ctx, statefulSet, operatorutil.ApplyOptions)
+
+			if apierrors.IsInvalid(err) {
+				if err := er.kubernetesClient.AppsV1().StatefulSets(hostedControlPlane.Namespace).Delete(ctx,
+					statefulSetName,
+					metav1.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationOrphan)},
+				); err != nil {
+					return fmt.Errorf("failed to delete existing etcd StatefulSet: %w", err)
+				}
+				return errStatefulSetRecreateRequired
+			}
+
+			if err != nil {
+				return errorsUtil.IfErrErrorf("failed to apply etcd StatefulSet: %w", err)
+			}
+
+			if statefulSetObj.Status.ReadyReplicas != *statefulSetObj.Spec.Replicas {
+				return errStatefulsetNotReady
+			}
+
+			return nil
+		},
 	)
-	template := corev1ac.PodTemplateSpec().
-		WithLabels(names.GetControlPlaneLabels(cluster, er.componentLabel)).
-		WithAnnotations(map[string]string{
-			"storage-size": hostedControlPlane.Spec.ETCD.VolumeSize.String(),
-		}).
-		WithSpec(corev1ac.PodSpec().
-			WithTopologySpreadConstraints(
-				operatorutil.CreatePodTopologySpreadConstraints(
-					names.GetControlPlaneSelector(cluster, er.componentLabel),
-				),
-			).
-			WithContainers(container).
-			WithVolumes(etcdDataVolume, etcdCertificatesVolume),
-		)
-
-	template, err := operatorutil.SetChecksumAnnotations(ctx, er.kubernetesClient, cluster.Namespace, template)
-	if err != nil {
-		return fmt.Errorf("failed to set checksum annotations: %w", err)
-	}
-
-	statefulSetName := names.GetEtcdStatefulSetName(cluster)
-	statefulSet := appsv1ac.StatefulSet(statefulSetName, hostedControlPlane.Namespace).
-		WithLabels(names.GetControlPlaneLabels(cluster, er.componentLabel)).
-		WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
-		WithSpec(appsv1ac.StatefulSetSpec().
-			WithServiceName(names.GetEtcdServiceName(cluster)).
-			WithReplicas(3).
-			WithPodManagementPolicy(appsv1.ParallelPodManagement).
-			WithUpdateStrategy(appsv1ac.StatefulSetUpdateStrategy().WithRollingUpdate(
-				appsv1ac.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
-			)).
-			WithSelector(names.GetControlPlaneSelector(cluster, er.componentLabel)).
-			WithTemplate(template).
-			WithVolumeClaimTemplates(etcdDataVolumeClaimTemplate).
-			WithPersistentVolumeClaimRetentionPolicy(appsv1ac.StatefulSetPersistentVolumeClaimRetentionPolicy().
-				WithWhenDeleted(appsv1.DeletePersistentVolumeClaimRetentionPolicyType),
-			),
-		)
-
-	statefulSetObj, err := er.kubernetesClient.AppsV1().StatefulSets(hostedControlPlane.Namespace).
-		Apply(ctx, statefulSet, operatorutil.ApplyOptions)
-
-	if apierrors.IsInvalid(err) {
-		if err := er.kubernetesClient.AppsV1().StatefulSets(hostedControlPlane.Namespace).Delete(ctx,
-			statefulSetName,
-			metav1.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationOrphan)},
-		); err != nil {
-			return fmt.Errorf("failed to delete existing etcd StatefulSet: %w", err)
-		}
-		return errStatefulSetRecreateRequired
-	}
-
-	if err != nil {
-		return errorsUtil.IfErrErrorf("failed to apply etcd StatefulSet: %w", err)
-	}
-
-	if statefulSetObj.Status.ReadyReplicas != *statefulSetObj.Spec.Replicas {
-		return errStatefulsetNotReady
-	}
-
-	return nil
 }
 
 func (er *etcdClusterReconciler) createVolumeFromTemplate(
