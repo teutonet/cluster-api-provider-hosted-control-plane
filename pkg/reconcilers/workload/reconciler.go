@@ -9,6 +9,8 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/coredns"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/kubeproxy"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -34,6 +36,7 @@ import (
 	kubeletv1beta1 "k8s.io/kubernetes/pkg/kubelet/apis/config/v1beta1"
 	"k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util/conditions"
 )
 
 type WorkloadClusterReconciler interface {
@@ -80,12 +83,140 @@ type RBACResources struct {
 	RoleBindings        []*rbacv1ac.RoleBindingApplyConfiguration
 }
 
-//noling:lll // urls are long 🤷
+func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+) error {
+	return tracing.WithSpan1(ctx, wr.tracer, "ReconcileWorkloadSetup",
+		func(ctx context.Context, span trace.Span) error {
+			type WorkloadPhase struct {
+				Reconcile    func(context.Context, *capiv1.Cluster) error
+				Disabled     bool
+				Condition    capiv1.ConditionType
+				FailedReason string
+				Name         string
+			}
 
-// ReconcileWorkloadRBAC mimics kuebadm phases, e.g.
+			workloadClusterClient, err := wr.managementCluster.GetWorkloadClusterClient(ctx, cluster)
+			if err != nil {
+				return fmt.Errorf("failed to get workload cluster client: %w", err)
+			}
+
+			workloadClusterReconciler := &workloadClusterReconciler{
+				kubernetesClient: workloadClusterClient,
+			}
+
+			kubeProxyReconciler := kubeproxy.NewKubeProxyReconciler(
+				workloadClusterClient,
+			)
+
+			coreDNSReconciler := coredns.NewCoreDNSReconciler(
+				workloadClusterClient,
+			)
+
+			workloadPhases := []WorkloadPhase{
+				{
+					Name: "RBAC",
+					Reconcile: func(ctx context.Context, _ *capiv1.Cluster) error {
+						return workloadClusterReconciler.reconcileWorkloadRBAC(ctx)
+					},
+					Condition:    v1alpha1.WorkloadRBACReadyCondition,
+					FailedReason: v1alpha1.WorkloadRBACFailedReason,
+				},
+				{
+					Name: "cluster-info",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return workloadClusterReconciler.reconcileClusterInfoConfigMap(
+							ctx,
+							wr.kubernetesClient,
+							cluster,
+						)
+					},
+					Condition:    v1alpha1.WorkloadClusterInfoReadyCondition,
+					FailedReason: v1alpha1.WorkloadClusterInfoFailedReason,
+				},
+				{
+					Name: "kubeadm-config",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return workloadClusterReconciler.reconcileKubeadmConfig(ctx, hostedControlPlane, cluster)
+					},
+					Condition:    v1alpha1.WorkloadKubeadmConfigReadyCondition,
+					FailedReason: v1alpha1.WorkloadKubeadmConfigFailedReason,
+				},
+				{
+					Name: "kubelet-config",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return workloadClusterReconciler.reconcileKubeletConfig(ctx, hostedControlPlane, cluster)
+					},
+					Condition:    v1alpha1.WorkloadKubeletConfigReadyCondition,
+					FailedReason: v1alpha1.WorkloadKubeletConfigFailedReason,
+				},
+				{
+					Name:     "kube-proxy",
+					Disabled: hostedControlPlane.Spec.KubeProxy.Disabled,
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return kubeProxyReconciler.ReconcileKubeProxy(ctx, cluster, hostedControlPlane)
+					},
+					Condition:    v1alpha1.WorkloadKubeProxyReadyCondition,
+					FailedReason: v1alpha1.WorkloadKubeProxyFailedReason,
+				},
+				{
+					Name:         "coredns",
+					Reconcile:    coreDNSReconciler.ReconcileCoreDNS,
+					Condition:    v1alpha1.WorkloadCoreDNSReadyCondition,
+					FailedReason: v1alpha1.WorkloadCoreDNSFailedReason,
+				},
+				{
+					Name: "konnectivity-rbac",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return workloadClusterReconciler.reconcileKonnectivityRBAC(ctx)
+					},
+					Condition:    v1alpha1.WorkloadKonnectivityRBACReadyCondition,
+					FailedReason: v1alpha1.WorkloadKonnectivityRBACFailedReason,
+				},
+				{
+					Name: "konnectivity-daemonset",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return workloadClusterReconciler.reconcileKonnectivityDaemonSet(
+							ctx,
+							hostedControlPlane,
+							cluster,
+						)
+					},
+					Condition:    v1alpha1.WorkloadKonnectivityDaemonSetReadyCondition,
+					FailedReason: v1alpha1.WorkloadKonnectivityDaemonSetFailedReason,
+				},
+			}
+
+			for _, phase := range workloadPhases {
+				if !phase.Disabled {
+					if err := phase.Reconcile(ctx, cluster); err != nil {
+						conditions.MarkFalse(
+							hostedControlPlane,
+							phase.Condition,
+							phase.FailedReason,
+							capiv1.ConditionSeverityError,
+							"Reconciling phase %s failed: %v", phase.Name, err,
+						)
+						return err
+					} else {
+						conditions.MarkTrue(hostedControlPlane, phase.Condition)
+					}
+				}
+			}
+
+			hostedControlPlane.Status.Initialized = true
+
+			return nil
+		},
+	)
+}
+
+// reconcileWorkloadRBAC mimics kuebadm phases, e.g.
 // - https://github.com/kubernetes/kubernetes/blob/6f06cd6e05704a9a7b18e74a048a297e5bdb5498/cmd/kubeadm/app/cmd/phases/init/bootstraptoken.go#L65
-func (wr *workloadClusterReconciler) ReconcileWorkloadRBAC(ctx context.Context) error {
-	return tracing.WithSpan1(ctx, wr.tracer, "ReconcileWorkloadRBAC",
+func (wr *workloadClusterReconciler) reconcileWorkloadRBAC(ctx context.Context) error {
+	return tracing.WithSpan1(ctx, wr.tracer, "reconcileWorkloadRBAC",
 		func(ctx context.Context, span trace.Span) error {
 			phases := []struct {
 				Name     string
@@ -396,7 +527,7 @@ func (wr *workloadClusterReconciler) generateNodeBootstrapTokenPostCSRsRBAC() (*
 	}, nil
 }
 
-func (wr *workloadClusterReconciler) ReconcileClusterInfoConfigMap(
+func (wr *workloadClusterReconciler) reconcileClusterInfoConfigMap(
 	ctx context.Context,
 	managementClient kubernetes.Interface,
 	cluster *capiv1.Cluster,
@@ -430,12 +561,12 @@ func (wr *workloadClusterReconciler) ReconcileClusterInfoConfigMap(
 	return errorsUtil.IfErrErrorf("failed to apply cluster info configmap: %w", err)
 }
 
-func (wr *workloadClusterReconciler) ReconcileKubeadmConfig(
+func (wr *workloadClusterReconciler) reconcileKubeadmConfig(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, wr.tracer, "ReconcileKubeadmConfig",
+	return tracing.WithSpan1(ctx, wr.tracer, "reconcileKubeadmConfig",
 		func(ctx context.Context, span trace.Span) error {
 			initConfiguration, err := config.DefaultedStaticInitConfiguration()
 			if err != nil {
@@ -470,12 +601,12 @@ func (wr *workloadClusterReconciler) ReconcileKubeadmConfig(
 	)
 }
 
-func (wr *workloadClusterReconciler) ReconcileKubeletConfig(
+func (wr *workloadClusterReconciler) reconcileKubeletConfig(
 	ctx context.Context,
 	_ *v1alpha1.HostedControlPlane,
 	_ *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, wr.tracer, "ReconcileKubeadmConfig",
+	return tracing.WithSpan1(ctx, wr.tracer, "reconcileKubeadmConfig",
 		func(ctx context.Context, span trace.Span) error {
 			var kubeletConfiguration kubelettypes.KubeletConfiguration
 
@@ -512,10 +643,10 @@ func (wr *workloadClusterReconciler) ReconcileKubeletConfig(
 	)
 }
 
-func (wr *workloadClusterReconciler) ReconcileKonnectivityRBAC(
+func (wr *workloadClusterReconciler) reconcileKonnectivityRBAC(
 	ctx context.Context,
 ) error {
-	return tracing.WithSpan1(ctx, wr.tracer, "ReconcileKonnectivityRBAC",
+	return tracing.WithSpan1(ctx, wr.tracer, "reconcileKonnectivityRBAC",
 		func(ctx context.Context, span trace.Span) error {
 			serviceAccount := corev1ac.ServiceAccount(
 				"konnectivity-agent",
@@ -569,12 +700,12 @@ func (wr *workloadClusterReconciler) ReconcileKonnectivityRBAC(
 	)
 }
 
-func (wr *workloadClusterReconciler) ReconcileKonnectivityDaemonSet(
+func (wr *workloadClusterReconciler) reconcileKonnectivityDaemonSet(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, wr.tracer, "ReconcileKonnectivityDaemonSet",
+	return tracing.WithSpan1(ctx, wr.tracer, "reconcileKonnectivityDaemonSet",
 		func(ctx context.Context, span trace.Span) error {
 			serviceAccountTokenVolume := corev1ac.Volume().
 				WithName(wr.konnectivityServiceAccountName).
