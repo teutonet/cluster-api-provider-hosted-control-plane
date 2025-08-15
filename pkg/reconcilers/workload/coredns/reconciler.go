@@ -30,7 +30,6 @@ func NewCoreDNSReconciler(
 ) CoreDNSReconciler {
 	return &coreDNSReconciler{
 		kubernetesClient: kubernetesClient,
-		tracer:           tracing.GetTracer("coredns"),
 		coreDNSLabels: map[string]string{
 			"k8s-app":                       "kube-dns",
 			"kubernetes.io/cluster-service": "true",
@@ -42,6 +41,7 @@ func NewCoreDNSReconciler(
 		coreDNSMetricsPortName:    "metrics",
 		coreDNSConfigMapName:      "coredns",
 		coreDNSCorefileFileName:   "Corefile",
+		tracer:                    tracing.GetTracer("coredns"),
 	}
 }
 
