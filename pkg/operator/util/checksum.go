@@ -8,9 +8,12 @@ import (
 	"sort"
 
 	slices "github.com/samber/lo"
+	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 )
 
 func calculateChecksum(dataMaps ...map[string]any) string {
@@ -144,21 +147,25 @@ func CalculateSecretChecksum(
 	namespace string,
 	secretNames []string,
 ) (string, error) {
-	secretMaps := make([]map[string]any, 0, len(secretNames))
-	for _, secretName := range secretNames {
-		secret, err := kubernetesClient.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
-		if err != nil {
-			return "", fmt.Errorf("secret fetch failed: %w", err)
-		}
+	return tracing.WithSpan(ctx, "checksum", "CalculateSecretChecksum",
+		func(ctx context.Context, span trace.Span) (string, error) {
+			secretMaps := make([]map[string]any, 0, len(secretNames))
+			for _, secretName := range secretNames {
+				secret, err := kubernetesClient.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+				if err != nil {
+					return "", fmt.Errorf("secret fetch failed: %w", err)
+				}
 
-		secretMap := make(map[string]any)
-		for key, value := range secret.Data {
-			secretMap[key] = string(value)
-		}
-		secretMaps = append(secretMaps, secretMap)
-	}
+				secretMap := make(map[string]any)
+				for key, value := range secret.Data {
+					secretMap[key] = string(value)
+				}
+				secretMaps = append(secretMaps, secretMap)
+			}
 
-	return calculateChecksum(secretMaps...), nil
+			return calculateChecksum(secretMaps...), nil
+		},
+	)
 }
 
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get
@@ -169,22 +176,28 @@ func CalculateConfigMapChecksum(
 	namespace string,
 	configMapNames []string,
 ) (string, error) {
-	configMapMaps := make([]map[string]any, 0, len(configMapNames))
-	for _, configMapName := range configMapNames {
-		configMap, err := kubernetesClient.CoreV1().ConfigMaps(namespace).Get(ctx, configMapName, metav1.GetOptions{})
-		if err != nil {
-			return "", fmt.Errorf("configmap fetch failed: %w", err)
-		}
+	return tracing.WithSpan(ctx, "checksum", "CalculateConfigMapChecksum",
+		func(ctx context.Context, span trace.Span) (string, error) {
+			configMapMaps := make([]map[string]any, 0, len(configMapNames))
+			for _, configMapName := range configMapNames {
+				configMap, err := kubernetesClient.CoreV1().
+					ConfigMaps(namespace).
+					Get(ctx, configMapName, metav1.GetOptions{})
+				if err != nil {
+					return "", fmt.Errorf("configmap fetch failed: %w", err)
+				}
 
-		configMapMap := make(map[string]any)
-		for key, value := range configMap.Data {
-			configMapMap[key] = value
-		}
-		for key, value := range configMap.BinaryData {
-			configMapMap[key] = string(value)
-		}
-		configMapMaps = append(configMapMaps, configMapMap)
-	}
+				configMapMap := make(map[string]any)
+				for key, value := range configMap.Data {
+					configMapMap[key] = value
+				}
+				for key, value := range configMap.BinaryData {
+					configMapMap[key] = string(value)
+				}
+				configMapMaps = append(configMapMaps, configMapMap)
+			}
 
-	return calculateChecksum(configMapMaps...), nil
+			return calculateChecksum(configMapMaps...), nil
+		},
+	)
 }

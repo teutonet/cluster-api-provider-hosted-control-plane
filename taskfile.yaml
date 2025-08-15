@@ -82,6 +82,7 @@ tasks:
       - ./.golangci.yaml
     cmd: "{{ .golangciLintCmd }} run --fix={{ .fix }}"
     generates:
+      - ./**/*.go
       - "{{ .artifactsDir }}/golangci-lint.json"
   test:
     deps:
