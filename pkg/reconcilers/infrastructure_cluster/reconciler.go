@@ -1,4 +1,4 @@
-package hostedcontrolplane
+package infrastructure_cluster
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -15,14 +16,33 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type InfrastructureClusterReconciler struct {
-	client client.Client
+type InfrastructureClusterReconciler interface {
+	SyncControlPlaneEndpoint(ctx context.Context, cluster *capiv1.Cluster) error
 }
+
+func NewInfrastructureClusterReconciler(
+	client client.Client,
+	apiServerServiceLegacyPortName string,
+) InfrastructureClusterReconciler {
+	return &infrastructureClusterReconciler{
+		client:                         client,
+		apiServerServiceLegacyPortName: apiServerServiceLegacyPortName,
+		tracer:                         tracing.GetTracer("infrastructureCluster"),
+	}
+}
+
+type infrastructureClusterReconciler struct {
+	client                         client.Client
+	apiServerServiceLegacyPortName string
+	tracer                         string
+}
+
+var _ InfrastructureClusterReconciler = &infrastructureClusterReconciler{}
 
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=*,verbs=get;patch
 //+kubebuilder:rbac:groups=core,resources=service,verbs=get
 
-func (r *InfrastructureClusterReconciler) SyncControlPlaneEndpoint(
+func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 	ctx context.Context,
 	cluster *capiv1.Cluster,
 ) error {
@@ -32,13 +52,13 @@ func (r *InfrastructureClusterReconciler) SyncControlPlaneEndpoint(
 			Namespace: cluster.Namespace,
 		},
 	}
-	if err := r.client.Get(ctx, client.ObjectKeyFromObject(service), service); err != nil {
+	if err := i.client.Get(ctx, client.ObjectKeyFromObject(service), service); err != nil {
 		return fmt.Errorf("failed to get service: %w", err)
 	}
 
 	port := slices.SliceToMap(service.Spec.Ports, func(port corev1.ServicePort) (string, int32) {
 		return port.Name, port.Port
-	})[APIServerServiceLegacyPort]
+	})[i.apiServerServiceLegacyPortName]
 
 	infraCluster := &unstructured.Unstructured{}
 
@@ -46,11 +66,11 @@ func (r *InfrastructureClusterReconciler) SyncControlPlaneEndpoint(
 	infraCluster.SetName(cluster.Spec.InfrastructureRef.Name)
 	infraCluster.SetNamespace(cluster.Spec.InfrastructureRef.Namespace)
 
-	if err := r.client.Get(ctx, client.ObjectKeyFromObject(infraCluster), infraCluster); err != nil {
+	if err := i.client.Get(ctx, client.ObjectKeyFromObject(infraCluster), infraCluster); err != nil {
 		return fmt.Errorf("failed to get infrastructure cluster: %w", err)
 	}
 
-	patchHelper, err := patch.NewHelper(infraCluster, r.client)
+	patchHelper, err := patch.NewHelper(infraCluster, i.client)
 	if err != nil {
 		return fmt.Errorf("failed to create patch helper: %w", err)
 	}

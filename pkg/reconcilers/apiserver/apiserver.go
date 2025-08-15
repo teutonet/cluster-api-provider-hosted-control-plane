@@ -1,4 +1,4 @@
-package hostedcontrolplane
+package apiserver
 
 import (
 	"context"
@@ -32,13 +32,59 @@ import (
 )
 
 var (
-	ErrDeploymentNotReady = fmt.Errorf("deployment is not ready: %w", ErrRequeueRequired)
-	ErrServiceNotReady    = fmt.Errorf("service is not ready: %w", ErrRequeueRequired)
+	errDeploymentNotReady = fmt.Errorf("deployment is not ready: %w", operatorutil.ErrRequeueRequired)
+	errServiceNotReady    = fmt.Errorf("service is not ready: %w", operatorutil.ErrRequeueRequired)
 )
 
-type APIServerResourcesReconciler struct {
-	kubernetesClient kubernetes.Interface
+type ApiServerResourcesReconciler interface {
+	ReconcileApiServerService(
+		ctx context.Context,
+		hostedControlPlane *v1alpha1.HostedControlPlane,
+		cluster *capiv1.Cluster,
+	) error
+	ReconcileApiServerDeployments(
+		ctx context.Context,
+		hostedControlPlane *v1alpha1.HostedControlPlane,
+		cluster *capiv1.Cluster,
+	) error
 }
+
+func NewApiServerResourcesReconciler(
+	kubernetesClient kubernetes.Interface,
+	apiServerServicePort int32,
+	apiServerServiceLegacyPortName string,
+	etcdComponentLabel string,
+	etcdClientPort int32,
+	konnectivityServicePort int32,
+	konnectivityClientKubeconfigName string,
+	konnectivityServerAudience string,
+) ApiServerResourcesReconciler {
+	return &apiServerResourcesReconciler{
+		kubernetesClient:                 kubernetesClient,
+		apiServerServicePort:             apiServerServicePort,
+		apiServerServiceLegacyPortName:   apiServerServiceLegacyPortName,
+		etcdComponentLabel:               etcdComponentLabel,
+		etcdClientPort:                   etcdClientPort,
+		konnectivityServicePort:          konnectivityServicePort,
+		konnectivityClientKubeconfigName: konnectivityClientKubeconfigName,
+		konnectivityServerAudience:       konnectivityServerAudience,
+		tracer:                           tracing.GetTracer("apiServerResources"),
+	}
+}
+
+type apiServerResourcesReconciler struct {
+	kubernetesClient                 kubernetes.Interface
+	apiServerServicePort             int32
+	apiServerServiceLegacyPortName   string
+	etcdComponentLabel               string
+	etcdClientPort                   int32
+	konnectivityServicePort          int32
+	konnectivityClientKubeconfigName string
+	konnectivityServerAudience       string
+	tracer                           string
+}
+
+var _ ApiServerResourcesReconciler = &apiServerResourcesReconciler{}
 
 var (
 	egressSelectorConfigMountPath       = "/etc/kubernetes/egress/configurations"
@@ -52,19 +98,13 @@ var (
 )
 
 var (
-	APIServerServicePort       = int32(443)
-	APIServerServiceLegacyPort = "legacy-api"
-	KonnectivityServicePort    = int32(8132)
-)
-
-var (
 	apiContainerPortName          = intstr.FromString("api")
 	konnectivityContainerPortName = intstr.FromString("konnectivity")
 )
 
 var KonnectivityKubeconfigFileName = "konnectivity-server.conf"
 
-func (arr *APIServerResourcesReconciler) ReconcileAPIServerDeployments(
+func (arr *apiServerResourcesReconciler) ReconcileApiServerDeployments(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
@@ -78,21 +118,21 @@ func (arr *APIServerResourcesReconciler) ReconcileAPIServerDeployments(
 
 	needsRequeue := false
 	if err := arr.reconcileControllerManagerDeployment(ctx, hostedControlPlane, cluster); err != nil {
-		if !errors.Is(err, ErrDeploymentNotReady) {
+		if !errors.Is(err, errDeploymentNotReady) {
 			return fmt.Errorf("failed to reconcile controller manager deployment: %w", err)
 		}
 		needsRequeue = true
 	}
 
 	if err := arr.reconcileSchedulerDeployment(ctx, hostedControlPlane, cluster); err != nil {
-		if !errors.Is(err, ErrDeploymentNotReady) {
+		if !errors.Is(err, errDeploymentNotReady) {
 			return fmt.Errorf("failed to reconcile scheduler deployment: %w", err)
 		}
 		needsRequeue = true
 	}
 
 	if needsRequeue {
-		return ErrRequeueRequired
+		return operatorutil.ErrRequeueRequired
 	}
 
 	hostedControlPlane.Status.Version = hostedControlPlane.Spec.Version
@@ -102,12 +142,12 @@ func (arr *APIServerResourcesReconciler) ReconcileAPIServerDeployments(
 
 //+kubebuilder:rbac:groups=core,resources=configmaps,verbs=create;update;patch
 
-func (arr *APIServerResourcesReconciler) reconcileKonnectivityConfig(
+func (arr *apiServerResourcesReconciler) reconcileKonnectivityConfig(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKonnectivityConfig",
+	return tracing.WithSpan1(ctx, arr.tracer, "ReconcileKonnectivityConfig",
 		func(ctx context.Context, span trace.Span) error {
 			egressSelectorConfig := &v1beta1.EgressSelectorConfiguration{
 				TypeMeta: metav1.TypeMeta{
@@ -139,24 +179,24 @@ func (arr *APIServerResourcesReconciler) reconcileKonnectivityConfig(
 				hostedControlPlane.Namespace,
 			).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
-				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
+				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string]string{
 					EgressSelectorConfigurationFileName: buf.String(),
 				})
 
 			_, err = arr.kubernetesClient.CoreV1().ConfigMaps(hostedControlPlane.Namespace).
-				Apply(ctx, configMap, applyOptions)
+				Apply(ctx, configMap, operatorutil.ApplyOptions)
 			return errorsUtil.IfErrErrorf("failed to patch konnectivity configmap: %w", err)
 		},
 	)
 }
 
-func (arr *APIServerResourcesReconciler) reconcileAPIServerDeployment(
+func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileAPIServerDeployment",
+	return tracing.WithSpan1(ctx, arr.tracer, "ReconcileAPIServerDeployment",
 		func(ctx context.Context, span trace.Span) error {
 			apiServerCertificatesVolume := arr.createAPIServerCertificatesVolume(cluster)
 			egressSelectorConfigVolume := arr.createEgressSelectorConfigVolume(cluster)
@@ -206,7 +246,7 @@ func (arr *APIServerResourcesReconciler) reconcileAPIServerDeployment(
 				cluster,
 				*hostedControlPlane.Spec.Replicas,
 				componentAPIServer,
-				ComponentETCD,
+				arr.etcdComponentLabel,
 				[]*corev1ac.ContainerApplyConfiguration{apiServerContainer, konnectivityContainer},
 				volumes,
 			); err != nil {
@@ -228,7 +268,7 @@ func (arr *APIServerResourcesReconciler) reconcileAPIServerDeployment(
 	)
 }
 
-func (arr *APIServerResourcesReconciler) extractAdditionalVolumesAndMounts(
+func (arr *apiServerResourcesReconciler) extractAdditionalVolumesAndMounts(
 	mounts map[string]v1alpha1.HostedControlPlaneMount,
 ) ([]*corev1ac.VolumeApplyConfiguration, []*corev1ac.VolumeMountApplyConfiguration) {
 	entries := slices.MapEntries(mounts, func(
@@ -267,12 +307,12 @@ func (arr *APIServerResourcesReconciler) extractAdditionalVolumesAndMounts(
 	return slices.Keys(entries), slices.Values(entries)
 }
 
-func (arr *APIServerResourcesReconciler) reconcileControllerManagerDeployment(
+func (arr *apiServerResourcesReconciler) reconcileControllerManagerDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileControllerManagerDeployment",
+	return tracing.WithSpan1(ctx, arr.tracer, "ReconcileControllerManagerDeployment",
 		func(ctx context.Context, span trace.Span) error {
 			controllerManagerCertificatesVolume := arr.createControllerManagerCertificatesVolume(cluster)
 			controllerManagerKubeconfigVolume := arr.createControllerManagerKubeconfigVolume(cluster)
@@ -308,12 +348,12 @@ func (arr *APIServerResourcesReconciler) reconcileControllerManagerDeployment(
 	)
 }
 
-func (arr *APIServerResourcesReconciler) reconcileSchedulerDeployment(
+func (arr *apiServerResourcesReconciler) reconcileSchedulerDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileSchedulerDeployment",
+	return tracing.WithSpan1(ctx, arr.tracer, "ReconcileSchedulerDeployment",
 		func(ctx context.Context, span trace.Span) error {
 			schedulerKubeconfigVolume := arr.createSchedulerKubeconfigVolume(cluster)
 
@@ -343,7 +383,7 @@ func (arr *APIServerResourcesReconciler) reconcileSchedulerDeployment(
 
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=create;patch
 
-func (arr *APIServerResourcesReconciler) reconcileDeployment(
+func (arr *apiServerResourcesReconciler) reconcileDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
@@ -397,7 +437,7 @@ func (arr *APIServerResourcesReconciler) reconcileDeployment(
 			WithSelector(names.GetControlPlaneSelector(cluster, component)).
 			WithTemplate(template),
 		).
-		WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane))
+		WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane))
 
 	if err := operatorutil.ValidateMounts(deployment.Spec.Template.Spec); err != nil {
 		return nil, fmt.Errorf("deployment %s has mounts without corresponding volume: %w", deploymentName, err)
@@ -405,14 +445,14 @@ func (arr *APIServerResourcesReconciler) reconcileDeployment(
 
 	appliedDeployment, err := arr.kubernetesClient.AppsV1().Deployments(hostedControlPlane.Namespace).Apply(ctx,
 		deployment,
-		applyOptions,
+		operatorutil.ApplyOptions,
 	)
 	if err != nil {
 		return nil, errorsUtil.IfErrErrorf("failed to patch deployment: %w", err)
 	}
 
 	if !isDeploymentReady(appliedDeployment) {
-		return nil, ErrDeploymentNotReady
+		return nil, errDeploymentNotReady
 	}
 
 	return appliedDeployment, nil
@@ -444,21 +484,21 @@ func isDeploymentReady(deployment *appsv1.Deployment) bool {
 
 //+kubebuilder:rbac:groups=core,resources=services,verbs=create;update;patch
 
-func (arr *APIServerResourcesReconciler) reconcileAPIServerService(
+func (arr *apiServerResourcesReconciler) ReconcileApiServerService(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileAPIServerService",
+	return tracing.WithSpan1(ctx, arr.tracer, "ReconcileApiServerService",
 		func(ctx context.Context, span trace.Span) error {
 			labels := names.GetControlPlaneLabels(cluster, componentAPIServer)
 			apiPort := corev1ac.ServicePort().
 				WithName("api").
-				WithPort(APIServerServicePort).
+				WithPort(arr.apiServerServicePort).
 				WithTargetPort(apiContainerPortName).
 				WithProtocol(corev1.ProtocolTCP)
 			legacyAPIPort := corev1ac.ServicePort().
-				WithName(APIServerServiceLegacyPort).
+				WithName(arr.apiServerServiceLegacyPortName).
 				WithPort(6443).
 				WithTargetPort(*apiPort.TargetPort).
 				WithProtocol(*apiPort.Protocol)
@@ -472,22 +512,22 @@ func (arr *APIServerResourcesReconciler) reconcileAPIServerService(
 						legacyAPIPort,
 						corev1ac.ServicePort().
 							WithName("konnectivity").
-							WithPort(KonnectivityServicePort).
+							WithPort(arr.konnectivityServicePort).
 							WithTargetPort(konnectivityContainerPortName).
 							WithProtocol(corev1.ProtocolTCP),
 					),
 				).
-				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane))
+				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane))
 			appliedService, err := arr.kubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).Apply(ctx,
 				service,
-				applyOptions,
+				operatorutil.ApplyOptions,
 			)
 			if err != nil {
 				return errorsUtil.IfErrErrorf("failed to patch service: %w", err)
 			}
 
 			if len(appliedService.Status.LoadBalancer.Ingress) == 0 {
-				return fmt.Errorf("service load balancer is not ready yet: %w", ErrServiceNotReady)
+				return fmt.Errorf("service load balancer is not ready yet: %w", errServiceNotReady)
 			}
 
 			return nil
@@ -495,7 +535,7 @@ func (arr *APIServerResourcesReconciler) reconcileAPIServerService(
 	)
 }
 
-func (arr *APIServerResourcesReconciler) createSchedulerKubeconfigVolume(
+func (arr *apiServerResourcesReconciler) createSchedulerKubeconfigVolume(
 	cluster *capiv1.Cluster,
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
@@ -510,7 +550,7 @@ func (arr *APIServerResourcesReconciler) createSchedulerKubeconfigVolume(
 		)
 }
 
-func (arr *APIServerResourcesReconciler) createControllerManagerKubeconfigVolume(
+func (arr *apiServerResourcesReconciler) createControllerManagerKubeconfigVolume(
 	cluster *capiv1.Cluster,
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
@@ -525,13 +565,13 @@ func (arr *APIServerResourcesReconciler) createControllerManagerKubeconfigVolume
 		)
 }
 
-func (arr *APIServerResourcesReconciler) createKonnectivityKubeconfigVolume(
+func (arr *apiServerResourcesReconciler) createKonnectivityKubeconfigVolume(
 	cluster *capiv1.Cluster,
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
 		WithName("konnectivity-kubeconfig").
 		WithSecret(corev1ac.SecretVolumeSource().
-			WithSecretName(names.GetKubeconfigSecretName(cluster, KonnectivityClientKubeconfigName)).
+			WithSecretName(names.GetKubeconfigSecretName(cluster, arr.konnectivityClientKubeconfigName)).
 			WithItems(
 				corev1ac.KeyToPath().
 					WithKey(capisecretutil.KubeconfigDataName).
@@ -540,13 +580,13 @@ func (arr *APIServerResourcesReconciler) createKonnectivityKubeconfigVolume(
 		)
 }
 
-func (arr *APIServerResourcesReconciler) createKonnectivityUDSVolume() *corev1ac.VolumeApplyConfiguration {
+func (arr *apiServerResourcesReconciler) createKonnectivityUDSVolume() *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
 		WithName("konnectivity-uds").
 		WithEmptyDir(corev1ac.EmptyDirVolumeSource().WithMedium(corev1.StorageMediumMemory))
 }
 
-func (arr *APIServerResourcesReconciler) createEgressSelectorConfigVolume(
+func (arr *apiServerResourcesReconciler) createEgressSelectorConfigVolume(
 	cluster *capiv1.Cluster,
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
@@ -556,7 +596,7 @@ func (arr *APIServerResourcesReconciler) createEgressSelectorConfigVolume(
 		)
 }
 
-func (arr *APIServerResourcesReconciler) createAPIServerCertificatesVolume(
+func (arr *apiServerResourcesReconciler) createAPIServerCertificatesVolume(
 	cluster *capiv1.Cluster,
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
@@ -646,7 +686,7 @@ func (arr *APIServerResourcesReconciler) createAPIServerCertificatesVolume(
 		)
 }
 
-func (arr *APIServerResourcesReconciler) createKonnectivityCertificatesVolume(
+func (arr *apiServerResourcesReconciler) createKonnectivityCertificatesVolume(
 	cluster *capiv1.Cluster,
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
@@ -656,7 +696,7 @@ func (arr *APIServerResourcesReconciler) createKonnectivityCertificatesVolume(
 		)
 }
 
-func (arr *APIServerResourcesReconciler) createControllerManagerCertificatesVolume(
+func (arr *apiServerResourcesReconciler) createControllerManagerCertificatesVolume(
 	cluster *capiv1.Cluster,
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
@@ -694,7 +734,7 @@ func (arr *APIServerResourcesReconciler) createControllerManagerCertificatesVolu
 		)
 }
 
-func (arr *APIServerResourcesReconciler) buildAPIServerArgs(
+func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 	apiServerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
@@ -738,7 +778,7 @@ func (arr *APIServerResourcesReconciler) buildAPIServerArgs(
 		"tls-cert-file":                      path.Join(certificatesDir, konstants.APIServerCertName),
 		"tls-private-key-file":               path.Join(certificatesDir, konstants.APIServerKeyName),
 		"etcd-servers": fmt.Sprintf("https://%s",
-			net.JoinHostPort(names.GetEtcdClientServiceName(cluster), strconv.Itoa(int(ETCDClientPort))),
+			net.JoinHostPort(names.GetEtcdClientServiceName(cluster), strconv.Itoa(int(arr.etcdClientPort))),
 		),
 		"etcd-cafile":   path.Join(certificatesDir, konstants.EtcdCACertName),
 		"etcd-certfile": path.Join(certificatesDir, konstants.APIServerEtcdClientCertName),
@@ -748,7 +788,7 @@ func (arr *APIServerResourcesReconciler) buildAPIServerArgs(
 	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.APIServer.Args, args)
 }
 
-func (arr *APIServerResourcesReconciler) createKonnectivityContainer(
+func (arr *apiServerResourcesReconciler) createKonnectivityContainer(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	konnectivityCertificatesVolume *corev1ac.VolumeApplyConfiguration,
 	konnectivityKubeconfigVolume *corev1ac.VolumeApplyConfiguration,
@@ -778,7 +818,7 @@ func (arr *APIServerResourcesReconciler) createKonnectivityContainer(
 
 	minorVersion, err := operatorutil.GetMinorVersion(hostedControlPlane)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get minor version of hosted control plane: %w", err)
 	}
 
 	return corev1ac.Container().
@@ -806,7 +846,7 @@ func (arr *APIServerResourcesReconciler) createKonnectivityContainer(
 		), nil
 }
 
-func (arr *APIServerResourcesReconciler) buildKonnectivityServerArgs(
+func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	konnectivityCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	konnectivityKubeconfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
@@ -818,7 +858,7 @@ func (arr *APIServerResourcesReconciler) buildKonnectivityServerArgs(
 	args := map[string]string{
 		"agent-namespace":         "kube-system",
 		"agent-service-account":   "konnectivity-agent",
-		"authentication-audience": KonnectivityServerAudience,
+		"authentication-audience": arr.konnectivityServerAudience,
 		"cluster-cert":            path.Join(*konnectivityCertificatesVolumeMount.MountPath, corev1.TLSCertKey),
 		"cluster-key":             path.Join(*konnectivityCertificatesVolumeMount.MountPath, corev1.TLSPrivateKeyKey),
 		"kubeconfig": path.Join(
@@ -832,13 +872,12 @@ func (arr *APIServerResourcesReconciler) buildKonnectivityServerArgs(
 		"server-port":  "0",
 		"uds-name":     path.Join(*konnectivityUDSVolumeMount.MountPath, "konnectivity-server.sock"),
 		"mode":         "grpc",
-		"v":            "9",
 	}
 
 	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.Konnectivity.Args, args)
 }
 
-func (arr *APIServerResourcesReconciler) createAPIServerContainer(
+func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 	apiServerCertificatesVolume *corev1ac.VolumeApplyConfiguration,
@@ -888,7 +927,7 @@ func (arr *APIServerResourcesReconciler) createAPIServerContainer(
 		WithVolumeMounts(volumeMounts...)
 }
 
-func (arr *APIServerResourcesReconciler) createProbePort(
+func (arr *apiServerResourcesReconciler) createProbePort(
 	prefix string,
 	port int,
 ) *corev1ac.ContainerPortApplyConfiguration {
@@ -899,7 +938,7 @@ func (arr *APIServerResourcesReconciler) createProbePort(
 	return containerPort
 }
 
-func (arr *APIServerResourcesReconciler) createSchedulerContainer(
+func (arr *apiServerResourcesReconciler) createSchedulerContainer(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	schedulerKubeconfigVolume *corev1ac.VolumeApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
@@ -923,7 +962,7 @@ func (arr *APIServerResourcesReconciler) createSchedulerContainer(
 		WithVolumeMounts(schedulerKubeconfigVolumeMount)
 }
 
-func (arr *APIServerResourcesReconciler) createControllerManagerContainer(
+func (arr *apiServerResourcesReconciler) createControllerManagerContainer(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	controllerManagerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	controllerManagerKubeconfigVolume *corev1ac.VolumeApplyConfiguration,
@@ -952,7 +991,7 @@ func (arr *APIServerResourcesReconciler) createControllerManagerContainer(
 		WithVolumeMounts(controllerManagerCertificatesVolumeMount, controllerManagerKubeconfigVolumeMount)
 }
 
-func (arr *APIServerResourcesReconciler) buildSchedulerArgs(
+func (arr *apiServerResourcesReconciler) buildSchedulerArgs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	schedulerKubeconfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 ) []string {
@@ -969,7 +1008,7 @@ func (arr *APIServerResourcesReconciler) buildSchedulerArgs(
 	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.Scheduler.Args, args)
 }
 
-func (arr *APIServerResourcesReconciler) buildControllerManagerArgs(
+func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	controllerManagerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	controllerManagerKubeconfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,

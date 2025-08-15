@@ -1,9 +1,10 @@
-package hostedcontrolplane
+package kubeconfig
 
 import (
 	"context"
 	"fmt"
 
+	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
@@ -22,7 +23,40 @@ import (
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 )
 
-type KubeconfigConfig struct {
+type KubeconfigReconciler interface {
+	ReconcileKubeconfigs(
+		ctx context.Context,
+		hostedControlPlane *v1alpha1.HostedControlPlane,
+		cluster *capiv1.Cluster,
+	) error
+}
+
+func NewKubeconfigReconciler(
+	kubernetesClient kubernetes.Interface,
+	apiServerServicePort int32,
+	konnectivityClientKubeconfigName string,
+	controllerKubeconfigName string,
+) KubeconfigReconciler {
+	return &kubeconfigReconciler{
+		kubernetesClient:                 kubernetesClient,
+		apiServerServicePort:             apiServerServicePort,
+		konnectivityClientKubeconfigName: konnectivityClientKubeconfigName,
+		controllerKubeconfigName:         controllerKubeconfigName,
+		tracer:                           tracing.GetTracer("kubeconfig"),
+	}
+}
+
+type kubeconfigReconciler struct {
+	kubernetesClient                 kubernetes.Interface
+	apiServerServicePort             int32
+	konnectivityClientKubeconfigName string
+	controllerKubeconfigName         string
+	tracer                           string
+}
+
+var _ KubeconfigReconciler = &kubeconfigReconciler{}
+
+type kubeconfigConfig struct {
 	Name                  string
 	SecretName            string
 	CertificateSecretName string
@@ -30,21 +64,12 @@ type KubeconfigConfig struct {
 	ApiServerEndpoint     capiv1.APIEndpoint
 }
 
-type KubeconfigReconciler struct {
-	kubernetesClient kubernetes.Interface
-}
-
-var (
-	ControllerKubeconfigName         = "controller"
-	KonnectivityClientKubeconfigName = "konnectivity-client"
-)
-
-func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
+func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKubeconfig",
+	return tracing.WithSpan1(ctx, kr.tracer, "ReconcileKubeconfig",
 		func(ctx context.Context, span trace.Span) error {
 			localEndpoint := capiv1.APIEndpoint{
 				Host: "localhost",
@@ -53,9 +78,9 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 			controlPlaneName := hostedControlPlane.Name
 			internalServiceEndpoint := capiv1.APIEndpoint{
 				Host: names.GetInternalServiceHost(cluster),
-				Port: APIServerServicePort,
+				Port: kr.apiServerServicePort,
 			}
-			kubeconfigs := []KubeconfigConfig{
+			kubeconfigs := []kubeconfigConfig{
 				{
 					Name:                  "admin",
 					SecretName:            fmt.Sprintf("%s-kubeconfig", cluster.Name),
@@ -76,13 +101,13 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 					ApiServerEndpoint:     internalServiceEndpoint,
 				},
 				{
-					Name:                  KonnectivityClientKubeconfigName,
+					Name:                  kr.konnectivityClientKubeconfigName,
 					CertificateSecretName: names.GetKonnectivityClientKubeconfigCertificateSecretName(cluster),
 					ClusterName:           controlPlaneName,
 					ApiServerEndpoint:     localEndpoint,
 				},
 				{
-					Name:                  ControllerKubeconfigName,
+					Name:                  kr.controllerKubeconfigName,
 					CertificateSecretName: names.GetControllerKubeconfigCertificateSecretName(cluster),
 					ClusterName:           controlPlaneName,
 					ApiServerEndpoint:     internalServiceEndpoint,
@@ -105,13 +130,13 @@ func (kr *KubeconfigReconciler) ReconcileKubeconfigs(
 
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;patch
 
-func (kr *KubeconfigReconciler) reconcileKubeconfig(
+func (kr *kubeconfigReconciler) reconcileKubeconfig(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-	kubeconfigConfig KubeconfigConfig,
+	kubeconfigConfig kubeconfigConfig,
 ) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileKubeconfig",
+	return tracing.WithSpan1(ctx, kr.tracer, "ReconcileKubeconfig",
 		func(ctx context.Context, span trace.Span) error {
 			span.SetAttributes(
 				attribute.String("KubeconfigName", kubeconfigConfig.Name),
@@ -133,13 +158,13 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 			}
 			kubeconfigSecret := corev1ac.Secret(kubeconfigConfig.SecretName, cluster.Namespace).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
-				WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
+				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string][]byte{
 					capisecretutil.KubeconfigDataName: kubeconfigBytes,
 				})
 
 			_, err = kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
-				Apply(ctx, kubeconfigSecret, applyOptions)
+				Apply(ctx, kubeconfigSecret, operatorutil.ApplyOptions)
 			return errorsUtil.IfErrErrorf("failed to patch kubeconfig secret: %w", err)
 		},
 	)
@@ -147,7 +172,7 @@ func (kr *KubeconfigReconciler) reconcileKubeconfig(
 
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
-func (kr *KubeconfigReconciler) generateKubeconfig(
+func (kr *kubeconfigReconciler) generateKubeconfig(
 	ctx context.Context,
 	cluster *capiv1.Cluster,
 	apiEndpoint capiv1.APIEndpoint,

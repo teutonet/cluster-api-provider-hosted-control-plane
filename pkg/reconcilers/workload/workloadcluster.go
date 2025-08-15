@@ -1,22 +1,24 @@
-package hostedcontrolplane
+package workload
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers/workload/coredns"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers/workload/kubeproxy"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 )
 
-func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
+func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileWorkloadSetup",
+	return tracing.WithSpan1(ctx, wr.tracer, "ReconcileWorkloadSetup",
 		func(ctx context.Context, span trace.Span) error {
 			type WorkloadPhase struct {
 				Reconcile    func(context.Context, *capiv1.Cluster) error
@@ -26,22 +28,22 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 				Name         string
 			}
 
-			workloadClusterClient, err := r.ManagementCluster.GetWorkloadClusterClient(ctx, cluster)
+			workloadClusterClient, err := wr.managementCluster.GetWorkloadClusterClient(ctx, cluster)
 			if err != nil {
 				return fmt.Errorf("failed to get workload cluster client: %w", err)
 			}
 
-			workloadClusterReconciler := &WorkloadClusterReconciler{
+			workloadClusterReconciler := &workloadClusterReconciler{
 				kubernetesClient: workloadClusterClient,
 			}
 
-			coreDNSReconciler := &CoreDNSReconciler{
-				kubernetesClient: workloadClusterClient,
-			}
+			kubeProxyReconciler := kubeproxy.NewKubeProxyReconciler(
+				workloadClusterClient,
+			)
 
-			kubeProxyReconciler := &KubeProxyReconciler{
-				kubernetesClient: workloadClusterClient,
-			}
+			coreDNSReconciler := coredns.NewCoreDNSReconciler(
+				workloadClusterClient,
+			)
 
 			workloadPhases := []WorkloadPhase{
 				{
@@ -55,7 +57,11 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 				{
 					Name: "cluster-info",
 					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						return workloadClusterReconciler.ReconcileClusterInfoConfigMap(ctx, r.KubernetesClient, cluster)
+						return workloadClusterReconciler.ReconcileClusterInfoConfigMap(
+							ctx,
+							wr.kubernetesClient,
+							cluster,
+						)
 					},
 					Condition:    v1alpha1.WorkloadClusterInfoReadyCondition,
 					FailedReason: v1alpha1.WorkloadClusterInfoFailedReason,

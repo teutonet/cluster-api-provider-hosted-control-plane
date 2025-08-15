@@ -1,4 +1,4 @@
-package hostedcontrolplane
+package workload
 
 import (
 	"context"
@@ -18,21 +18,34 @@ type ManagementCluster interface {
 	GetWorkloadClusterClient(ctx context.Context, cluster *capiv1.Cluster) (*kubernetes.Clientset, error)
 }
 
-type Management struct {
-	KubernetesClient kubernetes.Interface
-	TracingWrapper   func(rt http.RoundTripper) http.RoundTripper
+func NewManagementCluster(
+	kubernetesClient kubernetes.Interface,
+	tracingWrapper func(rt http.RoundTripper) http.RoundTripper,
+	controllerKubeconfigName string,
+) ManagementCluster {
+	return &management{
+		kubernetesClient:         kubernetesClient,
+		tracingWrapper:           tracingWrapper,
+		controllerKubeconfigName: controllerKubeconfigName,
+	}
 }
 
-var _ ManagementCluster = &Management{}
+type management struct {
+	kubernetesClient         kubernetes.Interface
+	tracingWrapper           func(rt http.RoundTripper) http.RoundTripper
+	controllerKubeconfigName string
+}
+
+var _ ManagementCluster = &management{}
 
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get
 
-func (m *Management) GetWorkloadClusterClient(
+func (m *management) GetWorkloadClusterClient(
 	ctx context.Context,
 	cluster *capiv1.Cluster,
 ) (*kubernetes.Clientset, error) {
-	kubeConfigSecret, err := m.KubernetesClient.CoreV1().Secrets(cluster.Namespace).
-		Get(ctx, names.GetKubeconfigSecretName(cluster, ControllerKubeconfigName), metav1.GetOptions{})
+	kubeConfigSecret, err := m.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
+		Get(ctx, names.GetKubeconfigSecretName(cluster, m.controllerKubeconfigName), metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get kubeconfig for workload cluster: %w", err)
 	}
@@ -42,7 +55,7 @@ func (m *Management) GetWorkloadClusterClient(
 		return nil, fmt.Errorf("failed to get REST config for workload cluster: %w", err)
 	}
 	restConfig.Timeout = 10 * time.Second
-	restConfig.Wrap(m.TracingWrapper)
+	restConfig.Wrap(m.tracingWrapper)
 
 	workloadClusterClient, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
