@@ -23,8 +23,6 @@ const (
 	CertificatesFailedReason                                         = "CertificatesFailed"
 	KubeconfigReadyCondition                    capiv1.ConditionType = "KubeconfigReady"
 	KubeconfigFailedReason                                           = "KubeconfigFailed"
-	KonnectivityConfigReadyCondition            capiv1.ConditionType = "KonnectivityConfigReady"
-	KonnectivityConfigFailedReason                                   = "KonnectivityConfigFailed"
 	EtcdClusterReadyCondition                   capiv1.ConditionType = "EtcdClusterReady"
 	EtcdClusterFailedReason                                          = "EtcdClusterFailed"
 	WorkloadClusterResourcesReadyCondition      capiv1.ConditionType = "WorkloadSetupReady"

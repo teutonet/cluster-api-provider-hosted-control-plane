@@ -9,7 +9,6 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -654,7 +653,7 @@ func (wr *WorkloadClusterReconciler) ReconcileKonnectivityDaemonSet(
 					WithVolumes(serviceAccountTokenVolume),
 				)
 
-			template, err = util.SetChecksumAnnotations(ctx, wr.kubernetesClient, cluster.Namespace, template)
+			template, err = operatorutil.SetChecksumAnnotations(ctx, wr.kubernetesClient, cluster.Namespace, template)
 			if err != nil {
 				return fmt.Errorf("failed to set checksum annotations: %w", err)
 			}

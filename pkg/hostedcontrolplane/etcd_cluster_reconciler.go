@@ -11,14 +11,12 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
@@ -149,7 +147,7 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 ) error {
 	etcdCertificatesVolume := er.createEtcdCertificatesVolume(cluster)
 
-	etcdDataVolumeClaimTemplate := er.createEtcdDataVolumeClaimTemplate()
+	etcdDataVolumeClaimTemplate := er.createEtcdDataVolumeClaimTemplate(hostedControlPlane)
 	etcdDataVolume := er.createVolumeFromTemplate(etcdDataVolumeClaimTemplate)
 
 	etcdDataVolumeMount := corev1ac.VolumeMount().
@@ -168,6 +166,9 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 	)
 	template := corev1ac.PodTemplateSpec().
 		WithLabels(names.GetControlPlaneLabels(cluster, ComponentETCD)).
+		WithAnnotations(map[string]string{
+			"storage-size": hostedControlPlane.Spec.ETCD.VolumeSize.String(),
+		}).
 		WithSpec(corev1ac.PodSpec().
 			WithTopologySpreadConstraints(
 				operatorutil.CreatePodTopologySpreadConstraints(
@@ -178,7 +179,7 @@ func (er *EtcdClusterReconciler) reconcileStatefulSet(
 			WithVolumes(etcdDataVolume, etcdCertificatesVolume),
 		)
 
-	template, err := util.SetChecksumAnnotations(ctx, er.kubernetesClient, cluster.Namespace, template)
+	template, err := operatorutil.SetChecksumAnnotations(ctx, er.kubernetesClient, cluster.Namespace, template)
 	if err != nil {
 		return fmt.Errorf("failed to set checksum annotations: %w", err)
 	}
@@ -232,13 +233,15 @@ func (er *EtcdClusterReconciler) createVolumeFromTemplate(
 	return corev1ac.Volume().WithName(*volumeClaimTemplate.Name)
 }
 
-func (er *EtcdClusterReconciler) createEtcdDataVolumeClaimTemplate() *corev1ac.PersistentVolumeClaimApplyConfiguration {
+func (er *EtcdClusterReconciler) createEtcdDataVolumeClaimTemplate(
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) *corev1ac.PersistentVolumeClaimApplyConfiguration {
 	return corev1ac.PersistentVolumeClaim("etcd-data", "").
 		WithSpec(corev1ac.PersistentVolumeClaimSpec().
 			WithAccessModes(corev1.ReadWriteOnce).
 			WithResources(corev1ac.VolumeResourceRequirements().
 				WithRequests(corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse("8Gi"),
+					corev1.ResourceStorage: hostedControlPlane.Spec.ETCD.VolumeSize,
 				}),
 			),
 		)
@@ -294,10 +297,6 @@ func (er *EtcdClusterReconciler) createEtcdContainer(
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
-	readinessProbe := corev1ac.Probe().
-		WithExec(corev1ac.ExecAction().
-			WithCommand("etcdctl", "endpoint", "health"),
-		)
 	return corev1ac.Container().
 		WithName("etcd").
 		WithImage("registry.k8s.io/etcd:3.5.21-0").
@@ -330,9 +329,9 @@ func (er *EtcdClusterReconciler) createEtcdContainer(
 				WithValue(path.Join(*etcdCertificatesVolumeMount.MountPath, "server.key")),
 		).
 		WithPorts(clientPort, peerPort, metricsPort).
-		WithStartupProbe(readinessProbe).
-		WithReadinessProbe(readinessProbe).
-		WithLivenessProbe(readinessProbe).
+		WithStartupProbe(operatorutil.CreateStartupProbe(metricsPort, "/readyz", corev1.URISchemeHTTP)).
+		WithReadinessProbe(operatorutil.CreateReadinessProbe(metricsPort, "/readyz", corev1.URISchemeHTTP)).
+		WithLivenessProbe(operatorutil.CreateLivenessProbe(metricsPort, "/livez", corev1.URISchemeHTTP)).
 		WithVolumeMounts(etcdDataVolumeMount, etcdCertificatesVolumeMount)
 }
 

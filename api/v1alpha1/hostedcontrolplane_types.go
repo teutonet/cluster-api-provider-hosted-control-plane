@@ -6,6 +6,7 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -57,7 +58,9 @@ type HostedControlPlaneTemplateTemplateSpec struct {
 	//+kubebuilder:validation:Optional
 	KonnectivityClient HostedControlPlaneComponent `json:"konnectivityClient,omitempty"`
 	//+kubebuilder:validation:Optional
-	KubeProxy HostedControlPlaneComponent `json:"kubeProxy,omitempty"`
+	KubeProxy HostedControlPlaneKubeProxyComponent `json:"kubeProxy,omitempty"`
+	//+kubebuilder:validation:Optional
+	ETCD HostedControlPlaneETCDComponent `json:"etcd,omitempty"`
 }
 
 type HostedControlPlaneDeployment struct {
@@ -81,6 +84,11 @@ type HostedControlPlaneComponent struct {
 type HostedControlPlaneKubeProxyComponent struct {
 	HostedControlPlaneComponent `json:",inline"`
 	Disabled                    bool `json:"enabled,omitempty"`
+}
+
+type HostedControlPlaneETCDComponent struct {
+	//+kubebuilder:validation:Optional
+	VolumeSize resource.Quantity `json:"volumeSize,omitempty"`
 }
 
 type HostedControlPlaneAPIServerComponent struct {
