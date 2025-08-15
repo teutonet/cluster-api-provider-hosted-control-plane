@@ -163,8 +163,6 @@ linters:
         # Controller Runtime
         - pkg: sigs.k8s.io/controller-runtime
           alias: ctrl
-        - pkg: sigs.k8s.io/controller-runtime/pkg/controller/controllerutil
-          alias: controllerutil
 
         # CAPI
         - pkg: sigs.k8s.io/cluster-api/api/v1beta1
@@ -265,6 +263,9 @@ linters:
       - linters:
           - importas
         text: 'has alias "" which is not' # Why the fuck aren't empty aliases allowed?!
+      - linters:
+          - importas
+        text: 'import ".*/v[0-9]+" imported without alias but must be with alias ".*" according to config' # stupid go...
       - linters:
           - govet
         text: 'shadow: declaration of "(err|ctx)" shadows declaration at'

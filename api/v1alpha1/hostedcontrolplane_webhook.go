@@ -137,7 +137,11 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 		return warnings, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{field.Invalid(
 			w.specPath.Child("etcd").Child("volumeSize"),
 			newHostedControlPlane.Spec.ETCD.VolumeSize,
-			fmt.Sprintf("volume size cannot be decreased from %q to %q", oldHostedControlPlane.Spec.ETCD.VolumeSize, newHostedControlPlane.Spec.ETCD.VolumeSize),
+			fmt.Sprintf(
+				"volume size cannot be decreased from %v to %v",
+				oldHostedControlPlane.Spec.ETCD.VolumeSize,
+				newHostedControlPlane.Spec.ETCD.VolumeSize,
+			),
 		)})
 	}
 

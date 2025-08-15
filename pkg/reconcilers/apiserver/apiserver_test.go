@@ -1,4 +1,4 @@
-package hostedcontrolplane
+package apiserver
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
+	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -117,7 +117,7 @@ func TestDeploymentReconciler_calculateSecretChecksum(t *testing.T) {
 		}
 	}
 
-	checksum, err := util.CalculateSecretChecksum(t.Context(), fakeClient,
+	checksum, err := operatorutil.CalculateSecretChecksum(t.Context(), fakeClient,
 		hostedControlPlane.Namespace,
 		slices.Map(testSecrets, func(s testSecret, _ int) string {
 			return s.name
@@ -142,7 +142,7 @@ func TestDeploymentReconciler_calculateSecretChecksum(t *testing.T) {
 		}
 	}
 
-	checksum2, err := util.CalculateSecretChecksum(t.Context(), fakeClient,
+	checksum2, err := operatorutil.CalculateSecretChecksum(t.Context(), fakeClient,
 		hostedControlPlane.Namespace,
 		slices.Map(testSecrets, func(s testSecret, _ int) string {
 			return s.name
@@ -187,7 +187,7 @@ func TestDeploymentReconciler_calculateSecretChecksum_DifferentValues(t *testing
 		}
 	}
 
-	checksum, err := util.CalculateSecretChecksum(t.Context(), fakeClient,
+	checksum, err := operatorutil.CalculateSecretChecksum(t.Context(), fakeClient,
 		hostedControlPlane.Namespace,
 		slices.Map(testSecrets, func(s testSecret, _ int) string {
 			return s.name
@@ -260,7 +260,7 @@ func TestDeploymentReconciler_calculateSecretChecksum_MissingSecret(t *testing.T
 		}
 	}
 
-	_, err := util.CalculateSecretChecksum(t.Context(), fakeClient,
+	_, err := operatorutil.CalculateSecretChecksum(t.Context(), fakeClient,
 		hostedControlPlane.Namespace,
 		append(slices.Map(testSecrets, func(s testSecret, _ int) string {
 			return s.name

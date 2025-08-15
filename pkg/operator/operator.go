@@ -160,17 +160,14 @@ func setupControllers(
 		return fmt.Errorf("failed to create gateway client: %w", err)
 	}
 
-	if err := (&hostedcontrolplane.HostedControlPlaneReconciler{
-		Client:            client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
-		KubernetesClient:  kubernetesClient,
-		CertManagerClient: certManagerClient,
-		GatewayClient:     gatewayClient,
-		ManagementCluster: &hostedcontrolplane.Management{
-			KubernetesClient: kubernetesClient,
-			TracingWrapper:   tracingWrapper,
-		},
-		Recorder: mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
-	}).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
+	if err := hostedcontrolplane.NewHostedControlPlaneReconciler(
+		client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
+		kubernetesClient,
+		certManagerClient,
+		gatewayClient,
+		mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
+		tracingWrapper,
+	).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}
 	if err := (&v1alpha1.HostedControlPlane{}).SetupWebhookWithManager(mgr); err != nil {
