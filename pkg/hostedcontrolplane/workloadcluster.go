@@ -20,6 +20,7 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 		func(ctx context.Context, span trace.Span) error {
 			type WorkloadPhase struct {
 				Reconcile    func(context.Context, *capiv1.Cluster) error
+				Disabled     bool
 				Condition    capiv1.ConditionType
 				FailedReason string
 				Name         string
@@ -76,7 +77,8 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 					FailedReason: v1alpha1.WorkloadKubeletConfigFailedReason,
 				},
 				{
-					Name: "kube-proxy",
+					Name:     "kube-proxy",
+					Disabled: hostedControlPlane.Spec.KubeProxy.Disabled,
 					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
 						return kubeProxyReconciler.ReconcileKubeProxy(ctx, cluster, hostedControlPlane)
 					},
@@ -112,17 +114,19 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 			}
 
 			for _, phase := range workloadPhases {
-				if err := phase.Reconcile(ctx, cluster); err != nil {
-					conditions.MarkFalse(
-						hostedControlPlane,
-						phase.Condition,
-						phase.FailedReason,
-						capiv1.ConditionSeverityError,
-						"Reconciling phase %s failed: %v", phase.Name, err,
-					)
-					return err
-				} else {
-					conditions.MarkTrue(hostedControlPlane, phase.Condition)
+				if !phase.Disabled {
+					if err := phase.Reconcile(ctx, cluster); err != nil {
+						conditions.MarkFalse(
+							hostedControlPlane,
+							phase.Condition,
+							phase.FailedReason,
+							capiv1.ConditionSeverityError,
+							"Reconciling phase %s failed: %v", phase.Name, err,
+						)
+						return err
+					} else {
+						conditions.MarkTrue(hostedControlPlane, phase.Condition)
+					}
 				}
 			}
 

@@ -6,8 +6,8 @@ import (
 
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
-	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

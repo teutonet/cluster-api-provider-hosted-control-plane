@@ -37,7 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	controllerutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
@@ -270,9 +270,6 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 			apiServerReconciler := &APIServerResourcesReconciler{
 				kubernetesClient: r.KubernetesClient,
 			}
-			konnectivityConfigReconciler := &KonnectivityConfigReconciler{
-				kubernetesClient: r.KubernetesClient,
-			}
 			infrastructureClusterReconciler := &InfrastructureClusterReconciler{
 				client: r.Client,
 			}
@@ -315,12 +312,6 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					Reconcile:    kubeconfigReconciler.ReconcileKubeconfigs,
 					Condition:    v1alpha1.KubeconfigReadyCondition,
 					FailedReason: v1alpha1.KubeconfigFailedReason,
-				},
-				{
-					Name:         "konnectivity config",
-					Reconcile:    konnectivityConfigReconciler.ReconcileKonnectivityConfig,
-					Condition:    v1alpha1.KonnectivityConfigReadyCondition,
-					FailedReason: v1alpha1.KonnectivityConfigFailedReason,
 				},
 				{
 					Name:         "etcd cluster",

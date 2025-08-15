@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"time"
 
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
-	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -101,17 +99,15 @@ func (kr *KubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error
 			}
 
 			clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.KubeProxyClusterRoleBindingName).
-				WithRoleRef(
-					rbacv1ac.RoleRef().
-						WithAPIGroup(rbacv1.GroupName).
-						WithKind("ClusterRole").
-						WithName(konstants.KubeProxyClusterRoleName),
+				WithRoleRef(rbacv1ac.RoleRef().
+					WithAPIGroup(rbacv1.GroupName).
+					WithKind("ClusterRole").
+					WithName(konstants.KubeProxyClusterRoleName),
 				).
-				WithSubjects(
-					rbacv1ac.Subject().
-						WithKind(*serviceAccount.Kind).
-						WithName(*serviceAccount.Name).
-						WithNamespace(*serviceAccount.Namespace),
+				WithSubjects(rbacv1ac.Subject().
+					WithKind(*serviceAccount.Kind).
+					WithName(*serviceAccount.Name).
+					WithNamespace(*serviceAccount.Namespace),
 				)
 
 			_, err = kr.kubernetesClient.RbacV1().ClusterRoleBindings().
@@ -136,16 +132,14 @@ func (kr *KubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error
 			}
 
 			roleBinding := rbacv1ac.RoleBinding(proxy.KubeProxyConfigMapRoleName, metav1.NamespaceSystem).
-				WithRoleRef(
-					rbacv1ac.RoleRef().
-						WithAPIGroup(rbacv1.GroupName).
-						WithKind(*role.Kind).
-						WithName(*role.Name),
+				WithRoleRef(rbacv1ac.RoleRef().
+					WithAPIGroup(rbacv1.GroupName).
+					WithKind(*role.Kind).
+					WithName(*role.Name),
 				).
-				WithSubjects(
-					rbacv1ac.Subject().
-						WithKind(rbacv1.GroupKind).
-						WithName(konstants.NodeBootstrapTokenAuthGroup),
+				WithSubjects(rbacv1ac.Subject().
+					WithKind(rbacv1.GroupKind).
+					WithName(konstants.NodeBootstrapTokenAuthGroup),
 				)
 
 			_, err = kr.kubernetesClient.RbacV1().RoleBindings(metav1.NamespaceSystem).
@@ -187,52 +181,12 @@ func (kr *KubeProxyReconciler) reconcileKubeProxyConfigMap(ctx context.Context, 
 				},
 			}
 
-			zeroSDuration := metav1.Duration{
-				Duration: 0 * time.Second,
-			}
 			kubeProxyConfig := kubeproxyv1alpha1.KubeProxyConfiguration{
 				ClientConnection: componentbaseconfigalpha1.ClientConnectionConfiguration{
-					AcceptContentTypes: "",
-					Burst:              0,
-					ContentType:        "",
-					Kubeconfig:         path.Join(kubeProxyConfigMountPath, kubeconfigFileName),
-					QPS:                0,
+					Kubeconfig: path.Join(kubeProxyConfigMountPath, kubeconfigFileName),
 				},
-				ConfigSyncPeriod: zeroSDuration,
-				Conntrack: kubeproxyv1alpha1.KubeProxyConntrackConfiguration{
-					MaxPerCore:            nil,
-					Min:                   nil,
-					TCPCloseWaitTimeout:   nil,
-					TCPEstablishedTimeout: nil,
-				},
-				IPTables: kubeproxyv1alpha1.KubeProxyIPTablesConfiguration{
-					MasqueradeAll: false,
-					MasqueradeBit: nil,
-					MinSyncPeriod: zeroSDuration,
-					SyncPeriod:    zeroSDuration,
-				},
-				IPVS: kubeproxyv1alpha1.KubeProxyIPVSConfiguration{
-					ExcludeCIDRs:  nil,
-					Scheduler:     "",
-					StrictARP:     false,
-					MinSyncPeriod: zeroSDuration,
-					SyncPeriod:    zeroSDuration,
-					TCPFinTimeout: zeroSDuration,
-					TCPTimeout:    zeroSDuration,
-					UDPTimeout:    zeroSDuration,
-				},
-				BindAddress:                 "0.0.0.0",
-				BindAddressHardFail:         false,
-				ClusterCIDR:                 "192.168.0.0/16",
-				DetectLocalMode:             "",
-				EnableProfiling:             false,
-				HealthzBindAddress:          "",
-				HostnameOverride:            "",
-				MetricsBindAddress:          "0.0.0.0:10249",
-				Mode:                        "",
-				OOMScoreAdj:                 nil,
-				PortRange:                   "",
-				ShowHiddenMetricsForVersion: "",
+				ClusterCIDR:        "192.168.0.0/16",
+				MetricsBindAddress: "0.0.0.0:10249",
 			}
 
 			kubeconfigBytes, err := clientcmd.Write(*kubeconfig)
@@ -280,16 +234,14 @@ func (kr *KubeProxyReconciler) reconcileKubeProxyDaemonSet(
 				)
 			xtablesLockVolume := corev1ac.Volume().
 				WithName("xtables-lock").
-				WithHostPath(
-					corev1ac.HostPathVolumeSource().
-						WithPath("/run/xtables.lock").
-						WithType(corev1.HostPathFileOrCreate),
+				WithHostPath(corev1ac.HostPathVolumeSource().
+					WithPath("/run/xtables.lock").
+					WithType(corev1.HostPathFileOrCreate),
 				)
 			modulesVolume := corev1ac.Volume().
 				WithName("lib-modules").
-				WithHostPath(
-					corev1ac.HostPathVolumeSource().
-						WithPath("/lib/modules"),
+				WithHostPath(corev1ac.HostPathVolumeSource().
+					WithPath("/lib/modules"),
 				)
 
 			kubeProxyConfigVolumeMount := corev1ac.VolumeMount().
@@ -306,39 +258,34 @@ func (kr *KubeProxyReconciler) reconcileKubeProxyDaemonSet(
 
 			template := corev1ac.PodTemplateSpec().
 				WithLabels(kubeProxyLabels).
-				WithSpec(
-					corev1ac.PodSpec().
-						WithServiceAccountName(proxy.KubeProxyServiceAccountName).
-						WithContainers(
-							corev1ac.Container().
-								WithName(konstants.KubeProxy).
-								WithImage(
-									fmt.Sprintf("k8s.gcr.io/kube-proxy:%s", hostedControlPlane.Spec.Version),
-								).
-								WithCommand("/usr/local/bin/kube-proxy").
-								WithArgs(kr.buildArgs(kubeProxyConfigVolumeMount)...).
-								WithEnv(
-									corev1ac.EnvVar().
-										WithName("NODE_NAME").
-										WithValueFrom(
-											corev1ac.EnvVarSource().
-												WithFieldRef(
-													corev1ac.ObjectFieldSelector().
-														WithFieldPath("spec.nodeName"),
-												),
-										),
-								).
-								WithVolumeMounts(kubeProxyConfigVolumeMount, xtablesLockVolumeMount, modulesVolumeMount).
-								WithSecurityContext(corev1ac.SecurityContext().
-									WithPrivileged(true),
-								),
+				WithSpec(corev1ac.PodSpec().
+					WithServiceAccountName(proxy.KubeProxyServiceAccountName).
+					WithContainers(corev1ac.Container().
+						WithName(konstants.KubeProxy).
+						WithImage(
+							fmt.Sprintf("k8s.gcr.io/kube-proxy:%s", hostedControlPlane.Spec.Version),
 						).
-						WithPriorityClassName("system-node-critical").
-						WithHostNetwork(true).
-						WithVolumes(kubeProxyConfigVolume, xtablesLockVolume, modulesVolume).
-						WithTolerations(corev1ac.Toleration().
-							WithOperator(corev1.TolerationOpExists),
+						WithCommand("/usr/local/bin/kube-proxy").
+						WithArgs(kr.buildArgs(kubeProxyConfigVolumeMount)...).
+						WithEnv(corev1ac.EnvVar().
+							WithName("NODE_NAME").
+							WithValueFrom(corev1ac.EnvVarSource().
+								WithFieldRef(corev1ac.ObjectFieldSelector().
+									WithFieldPath("spec.nodeName"),
+								),
+							),
+						).
+						WithVolumeMounts(kubeProxyConfigVolumeMount, xtablesLockVolumeMount, modulesVolumeMount).
+						WithSecurityContext(corev1ac.SecurityContext().
+							WithPrivileged(true),
 						),
+					).
+					WithPriorityClassName("system-node-critical").
+					WithHostNetwork(true).
+					WithVolumes(kubeProxyConfigVolume, xtablesLockVolume, modulesVolume).
+					WithTolerations(corev1ac.Toleration().
+						WithOperator(corev1.TolerationOpExists),
+					),
 				)
 
 			if err := operatorutil.ValidateMounts(template.Spec); err != nil {
@@ -346,7 +293,12 @@ func (kr *KubeProxyReconciler) reconcileKubeProxyDaemonSet(
 			}
 
 			var err error
-			template, err = util.SetChecksumAnnotations(ctx, kr.kubernetesClient, metav1.NamespaceSystem, template)
+			template, err = operatorutil.SetChecksumAnnotations(
+				ctx,
+				kr.kubernetesClient,
+				metav1.NamespaceSystem,
+				template,
+			)
 			if err != nil {
 				return fmt.Errorf("failed to set checksum annotations for kube-proxy template: %w", err)
 			}

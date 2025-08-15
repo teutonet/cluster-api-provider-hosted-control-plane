@@ -11,6 +11,7 @@ import (
 	semver "github.com/blang/semver/v4"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -40,6 +41,24 @@ var _ webhook.CustomValidator = &hostedControlPlaneWebhook{
 	specPath:  field.NewPath("spec"),
 }
 
+var _ webhook.CustomDefaulter = &hostedControlPlaneWebhook{
+	groupKind: SchemeGroupVersion.WithKind("HostedControlPlane").GroupKind(),
+	specPath:  field.NewPath("spec"),
+}
+
+func (w *hostedControlPlaneWebhook) Default(_ context.Context, obj runtime.Object) error {
+	hostedControlPlane, err := w.castObjectToHostedControlPlane(obj)
+	if err != nil {
+		return err
+	}
+
+	if hostedControlPlane.Spec.ETCD.VolumeSize.IsZero() {
+		hostedControlPlane.Spec.ETCD.VolumeSize = resource.MustParse("8Gi")
+	}
+
+	return nil
+}
+
 func (w *hostedControlPlaneWebhook) ValidateCreate(
 	_ context.Context,
 	newObj runtime.Object,
@@ -57,13 +76,13 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 }
 
 func (w *hostedControlPlaneWebhook) castObjectToHostedControlPlane(
-	newObj runtime.Object,
+	obj runtime.Object,
 ) (*HostedControlPlane, *apierrors.StatusError) {
-	newHostedControlPlane, ok := newObj.(*HostedControlPlane)
+	hostedControlPlane, ok := obj.(*HostedControlPlane)
 	if !ok {
 		return nil, apierrors.NewBadRequest("expected a HostedControlPlane but got wrong type")
 	}
-	return newHostedControlPlane, nil
+	return hostedControlPlane, nil
 }
 
 func (w *hostedControlPlaneWebhook) parseVersion(
@@ -111,6 +130,14 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 			w.specPath.Child("version"),
 			newHostedControlPlane.Spec.Version,
 			fmt.Sprintf("version cannot be decreased from %q to %q", oldVersion, newVersion),
+		)})
+	}
+
+	if newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(oldHostedControlPlane.Spec.ETCD.VolumeSize) == -1 {
+		return warnings, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{field.Invalid(
+			w.specPath.Child("etcd").Child("volumeSize"),
+			newHostedControlPlane.Spec.ETCD.VolumeSize,
+			fmt.Sprintf("volume size cannot be decreased from %q to %q", oldHostedControlPlane.Spec.ETCD.VolumeSize, newHostedControlPlane.Spec.ETCD.VolumeSize),
 		)})
 	}
 

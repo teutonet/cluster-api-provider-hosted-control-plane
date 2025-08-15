@@ -7,7 +7,6 @@ import (
 
 	"github.com/coredns/corefile-migration/migration/corefile"
 	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
-	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
@@ -310,7 +309,12 @@ func (cr *CoreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) err
 					WithDNSPolicy(corev1.DNSDefault),
 				)
 
-			template, err := util.SetChecksumAnnotations(ctx, cr.kubernetesClient, metav1.NamespaceSystem, template)
+			template, err := operatorutil.SetChecksumAnnotations(
+				ctx,
+				cr.kubernetesClient,
+				metav1.NamespaceSystem,
+				template,
+			)
 			if err != nil {
 				return fmt.Errorf("failed to set checksum annotations: %w", err)
 			}
