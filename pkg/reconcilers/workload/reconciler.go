@@ -3,25 +3,20 @@ package workload
 import (
 	"context"
 	"fmt"
-	"path"
-	"strconv"
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/coredns"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/konnectivity"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/kubeproxy"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/rbac"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apiserver/pkg/authentication/user"
-	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
@@ -30,11 +25,8 @@ import (
 	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
 	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
-	"k8s.io/kubernetes/cmd/kubeadm/app/phases/bootstraptoken/clusterinfo"
-	"k8s.io/kubernetes/cmd/kubeadm/app/phases/uploadconfig"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/config"
 	kubeletv1beta1 "k8s.io/kubernetes/pkg/kubelet/apis/config/v1beta1"
-	"k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 )
@@ -76,13 +68,6 @@ type workloadClusterReconciler struct {
 
 var _ WorkloadClusterReconciler = &workloadClusterReconciler{}
 
-type RBACResources struct {
-	ClusterRoles        []*rbacv1ac.ClusterRoleApplyConfiguration
-	ClusterRoleBindings []*rbacv1ac.ClusterRoleBindingApplyConfiguration
-	Roles               []*rbacv1ac.RoleApplyConfiguration
-	RoleBindings        []*rbacv1ac.RoleBindingApplyConfiguration
-}
-
 func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
@@ -103,10 +88,6 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				return fmt.Errorf("failed to get workload cluster client: %w", err)
 			}
 
-			workloadClusterReconciler := &workloadClusterReconciler{
-				kubernetesClient: workloadClusterClient,
-			}
-
 			kubeProxyReconciler := kubeproxy.NewKubeProxyReconciler(
 				workloadClusterClient,
 			)
@@ -115,11 +96,21 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				workloadClusterClient,
 			)
 
+			rbacReconciler := rbac.NewRBACReconciler(
+				workloadClusterClient,
+			)
+
+			konnectivityReconciler := konnectivity.NewKonnectivityReconciler(
+				workloadClusterClient,
+				wr.konnectivityServerAudience,
+				wr.konnectivityServicePort,
+			)
+
 			workloadPhases := []WorkloadPhase{
 				{
 					Name: "RBAC",
 					Reconcile: func(ctx context.Context, _ *capiv1.Cluster) error {
-						return workloadClusterReconciler.reconcileWorkloadRBAC(ctx)
+						return rbacReconciler.ReconcileRBAC(ctx)
 					},
 					Condition:    v1alpha1.WorkloadRBACReadyCondition,
 					FailedReason: v1alpha1.WorkloadRBACFailedReason,
@@ -127,7 +118,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				{
 					Name: "cluster-info",
 					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						return workloadClusterReconciler.reconcileClusterInfoConfigMap(
+						return wr.reconcileClusterInfoConfigMap(
 							ctx,
 							wr.kubernetesClient,
 							cluster,
@@ -139,7 +130,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				{
 					Name: "kubeadm-config",
 					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						return workloadClusterReconciler.reconcileKubeadmConfig(ctx, hostedControlPlane, cluster)
+						return wr.reconcileKubeadmConfig(ctx, hostedControlPlane, cluster)
 					},
 					Condition:    v1alpha1.WorkloadKubeadmConfigReadyCondition,
 					FailedReason: v1alpha1.WorkloadKubeadmConfigFailedReason,
@@ -147,7 +138,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				{
 					Name: "kubelet-config",
 					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						return workloadClusterReconciler.reconcileKubeletConfig(ctx, hostedControlPlane, cluster)
+						return wr.reconcileKubeletConfig(ctx, hostedControlPlane, cluster)
 					},
 					Condition:    v1alpha1.WorkloadKubeletConfigReadyCondition,
 					FailedReason: v1alpha1.WorkloadKubeletConfigFailedReason,
@@ -168,24 +159,12 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 					FailedReason: v1alpha1.WorkloadCoreDNSFailedReason,
 				},
 				{
-					Name: "konnectivity-rbac",
+					Name: "konnectivity",
 					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						return workloadClusterReconciler.reconcileKonnectivityRBAC(ctx)
+						return konnectivityReconciler.ReconcileKonnectivity(ctx, hostedControlPlane, cluster)
 					},
 					Condition:    v1alpha1.WorkloadKonnectivityRBACReadyCondition,
 					FailedReason: v1alpha1.WorkloadKonnectivityRBACFailedReason,
-				},
-				{
-					Name: "konnectivity-daemonset",
-					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						return workloadClusterReconciler.reconcileKonnectivityDaemonSet(
-							ctx,
-							hostedControlPlane,
-							cluster,
-						)
-					},
-					Condition:    v1alpha1.WorkloadKonnectivityDaemonSetReadyCondition,
-					FailedReason: v1alpha1.WorkloadKonnectivityDaemonSetFailedReason,
 				},
 			}
 
@@ -211,320 +190,6 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 			return nil
 		},
 	)
-}
-
-// reconcileWorkloadRBAC mimics kuebadm phases, e.g.
-// - https://github.com/kubernetes/kubernetes/blob/6f06cd6e05704a9a7b18e74a048a297e5bdb5498/cmd/kubeadm/app/cmd/phases/init/bootstraptoken.go#L65
-func (wr *workloadClusterReconciler) reconcileWorkloadRBAC(ctx context.Context) error {
-	return tracing.WithSpan1(ctx, wr.tracer, "reconcileWorkloadRBAC",
-		func(ctx context.Context, span trace.Span) error {
-			phases := []struct {
-				Name     string
-				Generate func() (*RBACResources, error)
-			}{
-				{
-					Name:     "NodeBootstrapGetNodesRBAC",
-					Generate: wr.generateNodeBootstrapGetNodesRBAC,
-				},
-				{
-					Name:     "NodeBootstrapTokenPostCSRsRBAC",
-					Generate: wr.generateNodeBootstrapTokenPostCSRsRBAC,
-				},
-				{
-					Name:     "AutoApproveNodeBootstrapTokenRBAC",
-					Generate: wr.generateAutoApproveNodeBootstrapTokenRBAC,
-				},
-				{
-					Name:     "AutoApproveNodeCertificateRotationBAC",
-					Generate: wr.generateAutoApproveNodeCertificateRotationRBAC,
-				},
-				{
-					Name:     "ClusterInfoRBAC",
-					Generate: wr.generateClusterInfoRBAC,
-				},
-				{
-					Name:     "KubeletConfigRBAC",
-					Generate: wr.generateKubeletConfigRBAC,
-				},
-				{
-					Name:     "KubeletKubeadmConfigRBAC",
-					Generate: wr.generateKubeletKubeadmConfigRBAC,
-				},
-				{
-					Name:     "ClusterAdminBindingRBAC",
-					Generate: wr.generateClusterAdminBindingRBAC,
-				},
-			}
-
-			for _, phase := range phases {
-				resources, err := phase.Generate()
-				if err != nil {
-					return fmt.Errorf("failed to generate kubeadm phase %s: %w", phase.Name, err)
-				}
-				for _, clusterRole := range resources.ClusterRoles {
-					_, err := wr.kubernetesClient.RbacV1().ClusterRoles().
-						Apply(ctx, clusterRole, operatorutil.ApplyOptions)
-					if err != nil {
-						if apierrors.IsInvalid(err) {
-							if err := wr.kubernetesClient.RbacV1().ClusterRoles().
-								Delete(ctx, *clusterRole.Name, metav1.DeleteOptions{}); err != nil {
-								return fmt.Errorf(
-									"failed to delete invalid cluster role %s: %w",
-									*clusterRole.Name, err,
-								)
-							}
-							return operatorutil.ErrRequeueRequired
-						}
-						return fmt.Errorf("failed to apply cluster role %s: %w", *clusterRole.Name, err)
-					}
-				}
-
-				for _, clusterRoleBinding := range resources.ClusterRoleBindings {
-					_, err := wr.kubernetesClient.RbacV1().ClusterRoleBindings().
-						Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
-					if err != nil {
-						if apierrors.IsInvalid(err) {
-							if err := wr.kubernetesClient.RbacV1().ClusterRoleBindings().
-								Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{}); err != nil {
-								return fmt.Errorf(
-									"failed to delete invalid cluster role binding %s: %w",
-									*clusterRoleBinding.Name, err,
-								)
-							}
-							return operatorutil.ErrRequeueRequired
-						}
-						return fmt.Errorf("failed to apply cluster role binding %s: %w", *clusterRoleBinding.Name, err)
-					}
-				}
-
-				for _, role := range resources.Roles {
-					_, err := wr.kubernetesClient.RbacV1().Roles(*role.Namespace).
-						Apply(ctx, role, operatorutil.ApplyOptions)
-					if err != nil {
-						if apierrors.IsInvalid(err) {
-							if err := wr.kubernetesClient.RbacV1().Roles(*role.Namespace).
-								Delete(ctx, *role.Name, metav1.DeleteOptions{}); err != nil {
-								return fmt.Errorf(
-									"failed to delete invalid role %s in namespace %s: %w",
-									*role.Name, *role.Namespace, err,
-								)
-							}
-							return operatorutil.ErrRequeueRequired
-						}
-						return fmt.Errorf(
-							"failed to apply role %s in namespace %s: %w",
-							*role.Name, *role.Namespace, err,
-						)
-					}
-				}
-
-				for _, roleBinding := range resources.RoleBindings {
-					_, err := wr.kubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
-						Apply(ctx, roleBinding, operatorutil.ApplyOptions)
-					if err != nil {
-						if apierrors.IsInvalid(err) {
-							if err := wr.kubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
-								Delete(ctx, *roleBinding.Name, metav1.DeleteOptions{}); err != nil {
-								return fmt.Errorf(
-									"failed to delete invalid role binding %s in namespace %s: %w",
-									*roleBinding.Name, *roleBinding.Namespace, err,
-								)
-							}
-							return operatorutil.ErrRequeueRequired
-						}
-						return fmt.Errorf(
-							"failed to apply role binding %s in namespace %s: %w",
-							*roleBinding.Name, *roleBinding.Namespace, err,
-						)
-					}
-				}
-			}
-
-			return nil
-		},
-	)
-}
-
-func (wr *workloadClusterReconciler) generateAutoApproveNodeCertificateRotationRBAC() (*RBACResources, error) {
-	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.NodeAutoApproveCertificateRotationClusterRoleBinding).
-		WithRoleRef(
-			rbacv1ac.RoleRef().
-				WithAPIGroup(rbacv1.GroupName).
-				WithKind("ClusterRole").
-				WithName(konstants.CSRAutoApprovalClusterRoleName),
-		).
-		WithSubjects(
-			rbacv1ac.Subject().
-				WithKind(rbacv1.GroupKind).
-				WithName(konstants.NodesGroup),
-		)
-
-	return &RBACResources{
-		ClusterRoleBindings: []*rbacv1ac.ClusterRoleBindingApplyConfiguration{clusterRoleBinding},
-	}, nil
-}
-
-func (wr *workloadClusterReconciler) generateAutoApproveNodeBootstrapTokenRBAC() (*RBACResources, error) {
-	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.NodeAutoApproveBootstrapClusterRoleBinding).
-		WithRoleRef(
-			rbacv1ac.RoleRef().
-				WithAPIGroup(rbacv1.GroupName).
-				WithKind("ClusterRole").
-				WithName(konstants.CSRAutoApprovalClusterRoleName),
-		).
-		WithSubjects(
-			rbacv1ac.Subject().
-				WithKind(rbacv1.GroupKind).
-				WithName(konstants.NodeBootstrapTokenAuthGroup),
-		)
-
-	return &RBACResources{
-		ClusterRoleBindings: []*rbacv1ac.ClusterRoleBindingApplyConfiguration{clusterRoleBinding},
-	}, nil
-}
-
-func (wr *workloadClusterReconciler) generateClusterAdminBindingRBAC() (*RBACResources, error) {
-	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.ClusterAdminsGroupAndClusterRoleBinding).
-		WithRoleRef(
-			rbacv1ac.RoleRef().
-				WithAPIGroup(rbacv1.GroupName).
-				WithKind("ClusterRole").
-				WithName("cluster-admin"),
-		).
-		WithSubjects(
-			rbacv1ac.Subject().
-				WithKind(rbacv1.GroupKind).
-				WithName(konstants.ClusterAdminsGroupAndClusterRoleBinding),
-		)
-
-	return &RBACResources{
-		ClusterRoleBindings: []*rbacv1ac.ClusterRoleBindingApplyConfiguration{clusterRoleBinding},
-	}, nil
-}
-
-func (wr *workloadClusterReconciler) generateClusterInfoRBAC() (*RBACResources, error) {
-	role := rbacv1ac.Role(clusterinfo.BootstrapSignerClusterRoleName, metav1.NamespacePublic).
-		WithRules(
-			rbacv1ac.PolicyRule().
-				WithAPIGroups("").
-				WithVerbs("get").
-				WithResources("configmaps").
-				WithResourceNames(bootstrapapi.ConfigMapClusterInfo),
-		)
-
-	roleBinding := rbacv1ac.RoleBinding(clusterinfo.BootstrapSignerClusterRoleName, metav1.NamespacePublic).
-		WithRoleRef(
-			rbacv1ac.RoleRef().
-				WithAPIGroup(rbacv1.GroupName).
-				WithKind(*role.Kind).
-				WithName(*role.Name),
-		).
-		WithSubjects(
-			rbacv1ac.Subject().
-				WithKind(rbacv1.UserKind).
-				WithName(user.Anonymous),
-		)
-
-	return &RBACResources{
-		Roles:        []*rbacv1ac.RoleApplyConfiguration{role},
-		RoleBindings: []*rbacv1ac.RoleBindingApplyConfiguration{roleBinding},
-	}, nil
-}
-
-func (wr *workloadClusterReconciler) generateConfigMapRBAC(
-	configMapName string,
-	roleName string,
-) (*RBACResources, error) {
-	role := rbacv1ac.Role(roleName, metav1.NamespaceSystem).
-		WithRules(
-			rbacv1ac.PolicyRule().
-				WithAPIGroups("").
-				WithVerbs("get").
-				WithResources("configmaps").
-				WithResourceNames(configMapName),
-		)
-
-	roleBinding := rbacv1ac.RoleBinding(roleName, metav1.NamespaceSystem).
-		WithRoleRef(
-			rbacv1ac.RoleRef().
-				WithAPIGroup(rbacv1.GroupName).
-				WithKind(*role.Kind).
-				WithName(*role.Name),
-		).
-		WithSubjects(
-			rbacv1ac.Subject().
-				WithKind(rbacv1.GroupKind).
-				WithName(konstants.NodesGroup),
-			rbacv1ac.Subject().
-				WithKind(rbacv1.GroupKind).
-				WithName(konstants.NodeBootstrapTokenAuthGroup),
-		)
-
-	return &RBACResources{
-		Roles:        []*rbacv1ac.RoleApplyConfiguration{role},
-		RoleBindings: []*rbacv1ac.RoleBindingApplyConfiguration{roleBinding},
-	}, nil
-}
-
-func (wr *workloadClusterReconciler) generateKubeletConfigRBAC() (*RBACResources, error) {
-	return wr.generateConfigMapRBAC(
-		konstants.KubeletBaseConfigurationConfigMap,
-		konstants.KubeletBaseConfigMapRole,
-	)
-}
-
-func (wr *workloadClusterReconciler) generateKubeletKubeadmConfigRBAC() (*RBACResources, error) {
-	return wr.generateConfigMapRBAC(
-		konstants.KubeadmConfigConfigMap,
-		uploadconfig.NodesKubeadmConfigClusterRoleName,
-	)
-}
-
-func (wr *workloadClusterReconciler) generateNodeBootstrapGetNodesRBAC() (*RBACResources, error) {
-	clusterRole := rbacv1ac.ClusterRole(konstants.GetNodesClusterRoleName).
-		WithRules(
-			rbacv1ac.PolicyRule().
-				WithAPIGroups("").
-				WithResources("nodes").
-				WithVerbs("get"),
-		)
-
-	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.GetNodesClusterRoleName).
-		WithRoleRef(
-			rbacv1ac.RoleRef().
-				WithAPIGroup(rbacv1.GroupName).
-				WithKind(*clusterRole.Kind).
-				WithName(*clusterRole.Name),
-		).
-		WithSubjects(
-			rbacv1ac.Subject().
-				WithKind(rbacv1.GroupKind).
-				WithName(konstants.NodeBootstrapTokenAuthGroup),
-		)
-
-	return &RBACResources{
-		ClusterRoles:        []*rbacv1ac.ClusterRoleApplyConfiguration{clusterRole},
-		ClusterRoleBindings: []*rbacv1ac.ClusterRoleBindingApplyConfiguration{clusterRoleBinding},
-	}, nil
-}
-
-func (wr *workloadClusterReconciler) generateNodeBootstrapTokenPostCSRsRBAC() (*RBACResources, error) {
-	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.NodeKubeletBootstrap).
-		WithRoleRef(
-			rbacv1ac.RoleRef().
-				WithAPIGroup(rbacv1.GroupName).
-				WithKind("ClusterRole").
-				WithName(konstants.NodeBootstrapperClusterRoleName),
-		).
-		WithSubjects(
-			rbacv1ac.Subject().
-				WithKind(rbacv1.GroupKind).
-				WithName(konstants.NodeBootstrapTokenAuthGroup),
-		)
-
-	return &RBACResources{
-		ClusterRoleBindings: []*rbacv1ac.ClusterRoleBindingApplyConfiguration{clusterRoleBinding},
-	}, nil
 }
 
 func (wr *workloadClusterReconciler) reconcileClusterInfoConfigMap(
@@ -641,193 +306,4 @@ func (wr *workloadClusterReconciler) reconcileKubeletConfig(
 			return errorsUtil.IfErrErrorf("failed to apply kubeadm config configmap: %w", err)
 		},
 	)
-}
-
-func (wr *workloadClusterReconciler) reconcileKonnectivityRBAC(
-	ctx context.Context,
-) error {
-	return tracing.WithSpan1(ctx, wr.tracer, "reconcileKonnectivityRBAC",
-		func(ctx context.Context, span trace.Span) error {
-			serviceAccount := corev1ac.ServiceAccount(
-				"konnectivity-agent",
-				metav1.NamespaceSystem,
-			)
-
-			_, err := wr.kubernetesClient.CoreV1().
-				ServiceAccounts(metav1.NamespaceSystem).
-				Apply(ctx, serviceAccount, operatorutil.ApplyOptions)
-			if err != nil {
-				return fmt.Errorf("failed to apply konnectivity agent service account: %w", err)
-			}
-
-			clusterRoleBinding := rbacv1ac.ClusterRoleBinding(wr.konnectivityServerAudience).
-				WithRoleRef(
-					rbacv1ac.RoleRef().
-						WithAPIGroup(rbacv1.GroupName).
-						WithKind("ClusterRole").
-						WithName("system:auth-delegator"),
-				).
-				WithSubjects(
-					rbacv1ac.Subject().
-						WithKind(*serviceAccount.Kind).
-						WithName(*serviceAccount.Name).
-						WithNamespace(*serviceAccount.Namespace),
-				)
-
-			_, err = wr.kubernetesClient.RbacV1().ClusterRoleBindings().
-				Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
-			if err != nil {
-				if apierrors.IsInvalid(err) {
-					if err := wr.kubernetesClient.RbacV1().ClusterRoleBindings().
-						Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{}); err != nil {
-						return fmt.Errorf(
-							"failed to delete invalid konnectivity agent cluster role binding %s: %w",
-							*clusterRoleBinding.Name,
-							err,
-						)
-					}
-					return operatorutil.ErrRequeueRequired
-				}
-				return fmt.Errorf(
-					"failed to apply konnectivity agent cluster role binding %s: %w",
-					*clusterRoleBinding.Name,
-					err,
-				)
-			}
-
-			return nil
-		},
-	)
-}
-
-func (wr *workloadClusterReconciler) reconcileKonnectivityDaemonSet(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, wr.tracer, "reconcileKonnectivityDaemonSet",
-		func(ctx context.Context, span trace.Span) error {
-			serviceAccountTokenVolume := corev1ac.Volume().
-				WithName(wr.konnectivityServiceAccountName).
-				WithProjected(corev1ac.ProjectedVolumeSource().
-					WithSources(
-						corev1ac.VolumeProjection().
-							WithServiceAccountToken(corev1ac.ServiceAccountTokenProjection().
-								WithAudience(wr.konnectivityServerAudience).
-								WithExpirationSeconds(3600).
-								WithPath(wr.konnectivityServiceAccountTokenName),
-							),
-					).
-					WithDefaultMode(420),
-				)
-			serviceAccountTokenVolumeMount := corev1ac.VolumeMount().
-				WithName(*serviceAccountTokenVolume.Name).
-				WithMountPath("/var/run/secrets/tokens").
-				WithReadOnly(true)
-			healthPort := corev1ac.ContainerPort().
-				WithName("health").
-				WithContainerPort(8134).
-				WithProtocol(corev1.ProtocolTCP)
-
-			minorVersion, err := operatorutil.GetMinorVersion(hostedControlPlane)
-			if err != nil {
-				return fmt.Errorf("failed to get minor version of hosted control plane: %w", err)
-			}
-
-			template := corev1ac.PodTemplateSpec().
-				WithLabels(names.GetControlPlaneLabels(cluster, "konnectivity")).
-				WithSpec(corev1ac.PodSpec().
-					WithServiceAccountName(wr.konnectivityServiceAccountName).
-					WithTolerations(
-						corev1ac.Toleration().
-							WithKey("CriticalAddonsOnly").
-							WithOperator(corev1.TolerationOpExists),
-					).
-					WithContainers(
-						corev1ac.Container().
-							WithName("konnectivity-agent").
-							WithImage(
-								fmt.Sprintf("registry.k8s.io/kas-network-proxy/proxy-agent:v0.%d.0", minorVersion),
-							).
-							WithImagePullPolicy(corev1.PullAlways).
-							WithEnv(corev1ac.EnvVar().
-								WithName("NODE_NAME").
-								WithValueFrom(corev1ac.EnvVarSource().
-									WithFieldRef(corev1ac.ObjectFieldSelector().
-										WithFieldPath("spec.nodeName"),
-									),
-								),
-							).
-							WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
-								hostedControlPlane.Spec.KonnectivityClient.Resources,
-							)).
-							WithStartupProbe(operatorutil.CreateStartupProbe(
-								healthPort,
-								"/readyz",
-								corev1.URISchemeHTTP,
-							)).
-							WithReadinessProbe(operatorutil.CreateReadinessProbe(
-								healthPort,
-								"/readyz",
-								corev1.URISchemeHTTP,
-							)).
-							WithLivenessProbe(operatorutil.CreateLivenessProbe(
-								healthPort,
-								"/healthz",
-								corev1.URISchemeHTTP,
-							)).
-							WithArgs(wr.buildKonnectivityClientArgs(
-								hostedControlPlane,
-								cluster,
-								serviceAccountTokenVolumeMount,
-								healthPort,
-							)...).
-							WithPorts(healthPort).
-							WithVolumeMounts(serviceAccountTokenVolumeMount),
-					).
-					WithVolumes(serviceAccountTokenVolume),
-				)
-
-			template, err = operatorutil.SetChecksumAnnotations(ctx, wr.kubernetesClient, cluster.Namespace, template)
-			if err != nil {
-				return fmt.Errorf("failed to set checksum annotations: %w", err)
-			}
-
-			daemonSet := appsv1ac.DaemonSet("konnectivity-agent", metav1.NamespaceSystem).
-				WithSpec(appsv1ac.DaemonSetSpec().
-					WithSelector(names.GetControlPlaneSelector(cluster, "konnectivity")).
-					WithTemplate(template),
-				)
-
-			if err := operatorutil.ValidateMounts(daemonSet.Spec.Template.Spec); err != nil {
-				return fmt.Errorf("konnectivity daemonset has mounts without corresponding volume: %w", err)
-			}
-
-			_, err = wr.kubernetesClient.AppsV1().DaemonSets(metav1.NamespaceSystem).
-				Apply(ctx, daemonSet, operatorutil.ApplyOptions)
-			return errorsUtil.IfErrErrorf("failed to apply konnectivity agent daemonset: %w", err)
-		},
-	)
-}
-
-func (wr *workloadClusterReconciler) buildKonnectivityClientArgs(
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
-	serviceAccountTokenVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	healthPort *corev1ac.ContainerPortApplyConfiguration,
-) []string {
-	args := map[string]string{
-		"admin-server-port":  "8133",
-		"ca-cert":            path.Join(serviceaccount.DefaultAPITokenMountPath, corev1.ServiceAccountRootCAKey),
-		"health-server-port": strconv.Itoa(int(*healthPort.ContainerPort)),
-		"logtostderr":        "true",
-		"proxy-server-host":  cluster.Spec.ControlPlaneEndpoint.Host,
-		"proxy-server-port":  strconv.Itoa(int(wr.konnectivityServicePort)),
-		"agent-id":           "$(NODE_NAME)",
-		"service-account-token-path": path.Join(
-			*serviceAccountTokenVolumeMount.MountPath,
-			wr.konnectivityServiceAccountTokenName,
-		),
-	}
-	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.KonnectivityClient.Args, args)
 }
