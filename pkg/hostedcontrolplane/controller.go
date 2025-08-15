@@ -37,10 +37,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	controllerutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
 
@@ -80,8 +79,9 @@ type HostedControlPlaneReconciler struct {
 	ManagementCluster ManagementCluster
 }
 
-//+kubebuilder:rbac:groups="",resources=secrets,verbs=watch;list
-//+kubebuilder:rbac:groups="",resources=configmaps,verbs=watch;list
+//+kubebuilder:rbac:groups=core,resources=secrets,verbs=watch;list
+//+kubebuilder:rbac:groups=core,resources=services,verbs=watch;list
+//+kubebuilder:rbac:groups=core,resources=configmaps,verbs=watch;list
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=watch;list
 //+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=watch;list
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=watch;list
@@ -100,10 +100,10 @@ func (r *HostedControlPlaneReconciler) SetupWithManager(
 			For(&v1alpha1.HostedControlPlane{}).
 			Owns(&certmanagerv1.Certificate{}).
 			Owns(&corev1.Secret{}).
+			Owns(&corev1.Service{}).
 			Owns(&corev1.ConfigMap{}).
 			Owns(&appsv1.StatefulSet{}).
 			Owns(&appsv1.Deployment{}).
-			Owns(&gwv1alpha2.TLSRoute{}).
 			Watches(
 				&capiv1.Cluster{},
 				handler.EnqueueRequestsFromMapFunc(r.clusterToHostedControlPlane),
@@ -273,10 +273,8 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 			konnectivityConfigReconciler := &KonnectivityConfigReconciler{
 				kubernetesClient: r.KubernetesClient,
 			}
-
-			clusterPatchHelper, err := patch.NewHelper(cluster, r.Client)
-			if err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to create patch helper for Cluster: %w", err)
+			infrastructureClusterReconciler := &InfrastructureClusterReconciler{
+				client: r.Client,
 			}
 
 			phases := []Phase{
@@ -295,7 +293,13 @@ func (r *HostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				{
 					Name: "sync controlplane endpoint",
 					Reconcile: func(ctx context.Context, _ *v1alpha1.HostedControlPlane, cluster *capiv1.Cluster) error {
-						return errorsUtil.IfErrErrorf("failed to patch Cluster: %w", clusterPatchHelper.Patch(ctx, cluster))
+						if err := infrastructureClusterReconciler.SyncControlPlaneEndpoint(ctx, cluster); err != nil {
+							return fmt.Errorf("failed to sync control plane endpoint: %w", err)
+						}
+						if cluster.Spec.ControlPlaneEndpoint.IsZero() {
+							return fmt.Errorf("control plane endpoint is not set yet: %w", ErrRequeueRequired)
+						}
+						return nil
 					},
 					Condition:    v1alpha1.SyncControlPlaneEndpointReadyCondition,
 					FailedReason: v1alpha1.SyncControlPlaneEndpointFailedReason,

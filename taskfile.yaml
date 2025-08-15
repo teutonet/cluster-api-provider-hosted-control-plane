@@ -83,19 +83,6 @@ tasks:
     cmd: "{{ .golangciLintCmd }} run --fix={{ .fix }}"
     generates:
       - "{{ .artifactsDir }}/golangci-lint.json"
-  lint-fix:
-    deps:
-      - artifacts-dir
-      - format
-    sources:
-      - ./**/*.go
-      - ./.golangci.yaml
-    cmd:
-      task: lint
-      vars:
-        fix: "true"
-    generates:
-      - "{{ .artifactsDir }}/golangci-lint.json"
   test:
     deps:
       - artifacts-dir

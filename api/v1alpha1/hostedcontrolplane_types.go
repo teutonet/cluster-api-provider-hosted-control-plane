@@ -54,6 +54,10 @@ type HostedControlPlaneSpec struct {
 type HostedControlPlaneTemplateTemplateSpec struct {
 	//+kubebuilder:validation:Optional
 	Deployment HostedControlPlaneDeployment `json:"deployment,omitempty"`
+	//+kubebuilder:validation:Optional
+	KonnectivityClient HostedControlPlaneComponent `json:"konnectivityClient,omitempty"`
+	//+kubebuilder:validation:Optional
+	KubeProxy HostedControlPlaneComponent `json:"kubeProxy,omitempty"`
 }
 
 type HostedControlPlaneDeployment struct {
@@ -70,6 +74,13 @@ type HostedControlPlaneDeployment struct {
 type HostedControlPlaneComponent struct {
 	//+kubebuilder:validation:Optional
 	Args map[string]string `json:"args,omitempty"`
+	//+kubebuilder:validation:Optional
+	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+type HostedControlPlaneKubeProxyComponent struct {
+	HostedControlPlaneComponent `json:",inline"`
+	Disabled                    bool `json:"enabled,omitempty"`
 }
 
 type HostedControlPlaneAPIServerComponent struct {
