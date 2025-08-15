@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"strconv"
 
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
@@ -567,6 +568,7 @@ func (wr *WorkloadClusterReconciler) ReconcileKonnectivityRBAC(
 
 func (wr *WorkloadClusterReconciler) ReconcileKonnectivityDaemonSet(
 	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, workloadClusterReconcilerTracer, "ReconcileKonnectivityDaemonSet",
@@ -586,12 +588,17 @@ func (wr *WorkloadClusterReconciler) ReconcileKonnectivityDaemonSet(
 				)
 			serviceAccountTokenVolumeMount := corev1ac.VolumeMount().
 				WithName(*serviceAccountTokenVolume.Name).
-				WithMountPath(serviceaccount.DefaultAPITokenMountPath).
+				WithMountPath("/var/run/secrets/tokens").
 				WithReadOnly(true)
 			healthPort := corev1ac.ContainerPort().
 				WithName("health").
 				WithContainerPort(8134).
 				WithProtocol(corev1.ProtocolTCP)
+
+			minorVersion, err := operatorutil.GetMinorVersion(hostedControlPlane)
+			if err != nil {
+				return err
+			}
 
 			template := corev1ac.PodTemplateSpec().
 				WithLabels(names.GetControlPlaneLabels(cluster, "konnectivity")).
@@ -605,16 +612,49 @@ func (wr *WorkloadClusterReconciler) ReconcileKonnectivityDaemonSet(
 					WithContainers(
 						corev1ac.Container().
 							WithName("konnectivity-agent").
-							WithImage("registry.k8s.io/kas-network-proxy/proxy-agent:v0.33.0").
+							WithImage(
+								fmt.Sprintf("registry.k8s.io/kas-network-proxy/proxy-agent:v0.%d.0", minorVersion),
+							).
 							WithImagePullPolicy(corev1.PullAlways).
-							WithArgs(wr.buildKonnectivityClientArgs(cluster, serviceAccountTokenVolumeMount, healthPort)...).
+							WithEnv(corev1ac.EnvVar().
+								WithName("NODE_NAME").
+								WithValueFrom(corev1ac.EnvVarSource().
+									WithFieldRef(corev1ac.ObjectFieldSelector().
+										WithFieldPath("spec.nodeName"),
+									),
+								),
+							).
+							WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
+								hostedControlPlane.Spec.KonnectivityClient.Resources,
+							)).
+							WithStartupProbe(operatorutil.CreateStartupProbe(
+								healthPort,
+								"/readyz",
+								corev1.URISchemeHTTP,
+							)).
+							WithReadinessProbe(operatorutil.CreateReadinessProbe(
+								healthPort,
+								"/readyz",
+								corev1.URISchemeHTTP,
+							)).
+							WithLivenessProbe(operatorutil.CreateLivenessProbe(
+								healthPort,
+								"/healthz",
+								corev1.URISchemeHTTP,
+							)).
+							WithArgs(wr.buildKonnectivityClientArgs(
+								hostedControlPlane,
+								cluster,
+								serviceAccountTokenVolumeMount,
+								healthPort,
+							)...).
 							WithPorts(healthPort).
 							WithVolumeMounts(serviceAccountTokenVolumeMount),
 					).
 					WithVolumes(serviceAccountTokenVolume),
 				)
 
-			template, err := util.SetChecksumAnnotations(ctx, wr.kubernetesClient, cluster.Namespace, template)
+			template, err = util.SetChecksumAnnotations(ctx, wr.kubernetesClient, cluster.Namespace, template)
 			if err != nil {
 				return fmt.Errorf("failed to set checksum annotations: %w", err)
 			}
@@ -637,21 +677,24 @@ func (wr *WorkloadClusterReconciler) ReconcileKonnectivityDaemonSet(
 }
 
 func (wr *WorkloadClusterReconciler) buildKonnectivityClientArgs(
+	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 	serviceAccountTokenVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	healthPort *corev1ac.ContainerPortApplyConfiguration,
 ) []string {
 	args := map[string]string{
 		"admin-server-port":  "8133",
-		"ca-cert":            path.Join(*serviceAccountTokenVolumeMount.MountPath, corev1.ServiceAccountRootCAKey),
-		"health-server-port": fmt.Sprintf("%d", healthPort.ContainerPort),
+		"ca-cert":            path.Join(serviceaccount.DefaultAPITokenMountPath, corev1.ServiceAccountRootCAKey),
+		"health-server-port": strconv.Itoa(int(*healthPort.ContainerPort)),
 		"logtostderr":        "true",
-		"proxy-server-host":  names.GetKonnectivityServerHost(cluster),
-		"proxy-server-port":  fmt.Sprintf("%d", KonnectivityServicePort),
+		"proxy-server-host":  cluster.Spec.ControlPlaneEndpoint.Host,
+		"proxy-server-port":  strconv.Itoa(int(KonnectivityServicePort)),
+		"agent-id":           "$(NODE_NAME)",
+		"v":                  "9",
 		"service-account-token-path": path.Join(
 			*serviceAccountTokenVolumeMount.MountPath,
 			konnectivityServiceAccountTokenName,
 		),
 	}
-	return operatorutil.ArgsToSlice(args)
+	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.KonnectivityClient.Args, args)
 }

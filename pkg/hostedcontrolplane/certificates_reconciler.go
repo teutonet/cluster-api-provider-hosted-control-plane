@@ -174,10 +174,7 @@ func (cr *CertificateReconciler) ReconcileCACertificates(
 	)
 }
 
-func (cr *CertificateReconciler) createCertificateSpecs(
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
-) []struct {
+func (cr *CertificateReconciler) createCertificateSpecs(cluster *capiv1.Cluster) []struct {
 	name string
 	spec *certmanagerv1ac.CertificateSpecApplyConfiguration
 } {
@@ -212,6 +209,7 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 	etcdDNSNames = append(etcdDNSNames, slices.Keys(dnsNames)...)
 	etcdDNSNames = append(etcdDNSNames, slices.Values(dnsNames)...)
 	etcdDNSNames = append(etcdDNSNames, names.GetEtcdServiceName(cluster))
+	etcdDNSNames = append(etcdDNSNames, names.GetEtcdClientServiceName(cluster))
 
 	sort.Strings(etcdDNSNames)
 
@@ -231,11 +229,9 @@ func (cr *CertificateReconciler) createCertificateSpecs(
 				"kubernetes",
 				"kubernetes.default",
 				"kubernetes.default.svc",
-				cluster.Name,
 				names.GetServiceName(cluster),
 				names.GetInternalServiceHost(cluster),
-				cluster.Spec.ControlPlaneEndpoint.Host,
-			),
+			).WithIPAddresses(cluster.Spec.ControlPlaneEndpoint.Host, "10.96.0.1", "127.0.0.1"),
 		},
 		{
 			name: names.GetAPIServerKubeletClientCertificateName(cluster),
@@ -354,7 +350,7 @@ func (cr *CertificateReconciler) ReconcileCertificates(
 	return tracing.WithSpan1(ctx, hostedControlPlaneReconcilerTracer, "ReconcileCertificates",
 		func(ctx context.Context, span trace.Span) error {
 			needsRequeue := false
-			for _, cert := range cr.createCertificateSpecs(hostedControlPlane, cluster) {
+			for _, cert := range cr.createCertificateSpecs(cluster) {
 				if certObj, err := cr.reconcileCertificate(ctx,
 					hostedControlPlane, cluster,
 					cert.name, cert.spec,

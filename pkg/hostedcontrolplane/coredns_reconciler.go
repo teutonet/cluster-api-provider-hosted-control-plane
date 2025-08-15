@@ -291,30 +291,9 @@ func (cr *CoreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) err
 								readyPort,
 							).
 							WithVolumeMounts(corednsConfigVolumeMount).
-							WithLivenessProbe(corev1ac.Probe().
-								WithHTTPGet(corev1ac.HTTPGetAction().
-									WithPath("/health").
-									WithPort(intstr.FromString(*healthPort.Name)),
-								).
-								WithInitialDelaySeconds(60).
-								WithTimeoutSeconds(5).
-								WithSuccessThreshold(1).
-								WithFailureThreshold(5),
-							).
-							WithReadinessProbe(corev1ac.Probe().
-								WithHTTPGet(corev1ac.HTTPGetAction().
-									WithPath("/ready").
-									WithPort(intstr.FromString(*readyPort.Name)),
-								).
-								WithPeriodSeconds(2)).
-							WithStartupProbe(corev1ac.Probe().
-								WithHTTPGet(corev1ac.HTTPGetAction().
-									WithPath("/ready").
-									WithPort(intstr.FromString(*readyPort.Name)),
-								).
-								WithPeriodSeconds(2).
-								WithFailureThreshold(10),
-							).
+							WithLivenessProbe(operatorutil.CreateLivenessProbe(healthPort, "/health", corev1.URISchemeHTTP)).
+							WithReadinessProbe(operatorutil.CreateReadinessProbe(readyPort, "/ready", corev1.URISchemeHTTP)).
+							WithStartupProbe(operatorutil.CreateStartupProbe(readyPort, "/ready", corev1.URISchemeHTTP)).
 							WithSecurityContext(corev1ac.SecurityContext().
 								WithAllowPrivilegeEscalation(false).
 								WithCapabilities(corev1ac.Capabilities().

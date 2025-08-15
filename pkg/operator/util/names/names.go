@@ -148,6 +148,10 @@ func GetEtcdAPIServerClientSecretName(cluster *capiv1.Cluster) string {
 	return cluster.Name + "-etcd-apiserver-client"
 }
 
+func GetEtcdClientServiceName(cluster *capiv1.Cluster) string {
+	return GetEtcdServiceName(cluster) + "-client"
+}
+
 func GetEtcdServiceName(cluster *capiv1.Cluster) string {
 	return "e-" + cluster.Name + "-etcd"
 }
@@ -167,8 +171,4 @@ func GetEtcdDNSNames(cluster *capiv1.Cluster) map[string]string {
 	}), func(host string) (string, string) {
 		return host, fmt.Sprintf("%s.%s.%s.svc", host, serviceName, cluster.Namespace)
 	})
-}
-
-func GetKonnectivityServerHost(cluster *capiv1.Cluster) string {
-	return fmt.Sprintf("k-%s", cluster.Spec.ControlPlaneEndpoint.Host)
 }

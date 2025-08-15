@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net"
 	"path"
 	"strconv"
@@ -53,8 +52,9 @@ var (
 )
 
 var (
-	APIServerServicePort    = int32(443)
-	KonnectivityServicePort = int32(8132)
+	APIServerServicePort       = int32(443)
+	APIServerServiceLegacyPort = "legacy-api"
+	KonnectivityServicePort    = int32(8132)
 )
 
 var (
@@ -136,17 +136,21 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerDeployment(
 				konnectivityUDSMount,
 				additionalApiServerVolumeMounts,
 			)
-			konnectivityContainer := dr.createKonnectivityContainer(
+			konnectivityContainer, err := dr.createKonnectivityContainer(
 				hostedControlPlane,
 				konnectivityCertificatesVolume,
 				konnectivityKubeconfigVolume,
 				konnectivityUDSMount,
 			)
+			if err != nil {
+				return fmt.Errorf("failed to create konnectivity container: %w", err)
+			}
 
 			if deployment, err := dr.reconcileDeployment(
 				ctx,
 				hostedControlPlane,
 				cluster,
+				*hostedControlPlane.Spec.Replicas,
 				componentAPIServer,
 				ComponentETCD,
 				[]*corev1ac.ContainerApplyConfiguration{apiServerContainer, konnectivityContainer},
@@ -239,6 +243,7 @@ func (dr *APIServerResourcesReconciler) reconcileControllerManagerDeployment(
 				ctx,
 				hostedControlPlane,
 				cluster,
+				*hostedControlPlane.Spec.Replicas/int32(3),
 				componentControllerManager,
 				componentAPIServer,
 				[]*corev1ac.ContainerApplyConfiguration{container},
@@ -271,6 +276,7 @@ func (dr *APIServerResourcesReconciler) reconcileSchedulerDeployment(
 				ctx,
 				hostedControlPlane,
 				cluster,
+				*hostedControlPlane.Spec.Replicas/int32(3),
 				componentScheduler,
 				componentAPIServer,
 				[]*corev1ac.ContainerApplyConfiguration{container},
@@ -287,6 +293,7 @@ func (dr *APIServerResourcesReconciler) reconcileDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
+	replicas int32,
 	component string,
 	targetComponent string,
 	containers []*corev1ac.ContainerApplyConfiguration,
@@ -332,7 +339,7 @@ func (dr *APIServerResourcesReconciler) reconcileDeployment(
 					WithMaxSurge(intstr.FromInt32(*hostedControlPlane.Spec.Replicas)),
 				),
 			).
-			WithReplicas(*hostedControlPlane.Spec.Replicas).
+			WithReplicas(replicas).
 			WithSelector(names.GetControlPlaneSelector(cluster, component)).
 			WithTemplate(template),
 		).
@@ -396,6 +403,11 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerService(
 				WithPort(APIServerServicePort).
 				WithTargetPort(apiContainerPortName).
 				WithProtocol(corev1.ProtocolTCP)
+			legacyAPIPort := corev1ac.ServicePort().
+				WithName(APIServerServiceLegacyPort).
+				WithPort(6443).
+				WithTargetPort(*apiPort.TargetPort).
+				WithProtocol(*apiPort.Protocol)
 			service := corev1ac.Service(names.GetServiceName(cluster), hostedControlPlane.Namespace).
 				WithLabels(labels).
 				WithSpec(corev1ac.ServiceSpec().
@@ -403,6 +415,7 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerService(
 					WithSelector(labels).
 					WithPorts(
 						apiPort,
+						legacyAPIPort,
 						corev1ac.ServicePort().
 							WithName("konnectivity").
 							WithPort(KonnectivityServicePort).
@@ -421,11 +434,6 @@ func (dr *APIServerResourcesReconciler) reconcileAPIServerService(
 
 			if len(appliedService.Status.LoadBalancer.Ingress) == 0 {
 				return fmt.Errorf("service load balancer is not ready yet: %w", ErrServiceNotReady)
-			}
-
-			cluster.Spec.ControlPlaneEndpoint = capiv1.APIEndpoint{
-				Host: appliedService.Status.LoadBalancer.Ingress[0].IP,
-				Port: *apiPort.Port,
 			}
 
 			return nil
@@ -590,15 +598,7 @@ func (dr *APIServerResourcesReconciler) createKonnectivityCertificatesVolume(
 	return corev1ac.Volume().
 		WithName("konnectivity-certificates").
 		WithSecret(corev1ac.SecretVolumeSource().
-			WithSecretName(names.GetCASecretName(cluster)).
-			WithItems(
-				corev1ac.KeyToPath().
-					WithKey(corev1.TLSCertKey).
-					WithPath(konstants.CACertName),
-				corev1ac.KeyToPath().
-					WithKey(corev1.TLSPrivateKeyKey).
-					WithPath(konstants.CAKeyName),
-			),
+			WithSecretName(names.GetAPIServerSecretName(cluster)),
 		)
 }
 
@@ -649,7 +649,8 @@ func (dr *APIServerResourcesReconciler) buildAPIServerArgs(
 ) []string {
 	certificatesDir := *apiServerCertificatesVolumeMount.MountPath
 	egressSelectorConfigDir := *egressSelectorConfigVolumeMount.MountPath
-	nodeAdressTypes := slices.Map([]corev1.NodeAddressType{
+	nodeAddressTypes := slices.Map([]corev1.NodeAddressType{
+		corev1.NodeInternalIP,
 		corev1.NodeInternalDNS,
 		corev1.NodeExternalDNS,
 		corev1.NodeHostName,
@@ -663,13 +664,14 @@ func (dr *APIServerResourcesReconciler) buildAPIServerArgs(
 			egressSelectorConfigDir,
 			EgressSelectorConfigurationFileName,
 		),
+		"advertise-address":                  cluster.Spec.ControlPlaneEndpoint.Host,
 		"allow-privileged":                   "true",
 		"authorization-mode":                 konstants.ModeNode + "," + konstants.ModeRBAC,
 		"client-ca-file":                     path.Join(certificatesDir, konstants.CACertName),
 		"enable-bootstrap-token-auth":        "true",
 		"kubelet-client-certificate":         path.Join(certificatesDir, konstants.APIServerKubeletClientCertName),
 		"kubelet-client-key":                 path.Join(certificatesDir, konstants.APIServerKubeletClientKeyName),
-		"kubelet-preferred-address-types":    strings.Join(nodeAdressTypes, ","),
+		"kubelet-preferred-address-types":    strings.Join(nodeAddressTypes, ","),
 		"proxy-client-cert-file":             path.Join(certificatesDir, konstants.FrontProxyClientCertName),
 		"proxy-client-key-file":              path.Join(certificatesDir, konstants.FrontProxyClientKeyName),
 		"requestheader-allowed-names":        konstants.FrontProxyClientCertCommonName,
@@ -682,11 +684,10 @@ func (dr *APIServerResourcesReconciler) buildAPIServerArgs(
 		"service-account-key-file":           path.Join(certificatesDir, konstants.ServiceAccountPublicKeyName),
 		"service-account-signing-key-file":   path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
 		"service-cluster-ip-range":           "10.96.0.0/12",
-		"endpoint-reconciler-type":           "none",
 		"tls-cert-file":                      path.Join(certificatesDir, konstants.APIServerCertName),
 		"tls-private-key-file":               path.Join(certificatesDir, konstants.APIServerKeyName),
 		"etcd-servers": fmt.Sprintf("https://%s",
-			net.JoinHostPort(names.GetEtcdServiceName(cluster), "2379"),
+			net.JoinHostPort(names.GetEtcdClientServiceName(cluster), strconv.Itoa(int(ETCDClientPort))),
 		),
 		"etcd-cafile":   path.Join(certificatesDir, konstants.EtcdCACertName),
 		"etcd-certfile": path.Join(certificatesDir, konstants.APIServerEtcdClientCertName),
@@ -701,7 +702,7 @@ func (dr *APIServerResourcesReconciler) createKonnectivityContainer(
 	konnectivityCertificatesVolume *corev1ac.VolumeApplyConfiguration,
 	konnectivityKubeconfigVolume *corev1ac.VolumeApplyConfiguration,
 	konnectivityUDSVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-) *corev1ac.ContainerApplyConfiguration {
+) (*corev1ac.ContainerApplyConfiguration, error) {
 	konnectivityPort := corev1ac.ContainerPort().
 		WithName("konnectivity").
 		WithContainerPort(8132).
@@ -724,9 +725,14 @@ func (dr *APIServerResourcesReconciler) createKonnectivityContainer(
 		WithMountPath(konstants.KubernetesDir).
 		WithReadOnly(true)
 
+	minorVersion, err := operatorutil.GetMinorVersion(hostedControlPlane)
+	if err != nil {
+		return nil, err
+	}
+
 	return corev1ac.Container().
 		WithName("konnectivity-server").
-		WithImage("registry.k8s.io/kas-network-proxy/proxy-server:v0.33.0").
+		WithImage(fmt.Sprintf("registry.k8s.io/kas-network-proxy/proxy-server:v0.%d.0", minorVersion)).
 		WithImagePullPolicy(corev1.PullAlways).
 		WithArgs(dr.buildKonnectivityServerArgs(
 			hostedControlPlane,
@@ -735,15 +741,18 @@ func (dr *APIServerResourcesReconciler) createKonnectivityContainer(
 			konnectivityUDSVolumeMount,
 			konnectivityPort, adminPort, healthPort,
 		)...).
+		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
+			hostedControlPlane.Spec.Deployment.Konnectivity.Resources,
+		)).
 		WithPorts(konnectivityPort, adminPort, healthPort).
-		WithStartupProbe(dr.createStartupProbe(healthPort, "/healthz", corev1.URISchemeHTTP)).
-		WithReadinessProbe(dr.createReadinessProbe(healthPort, "/healthz", corev1.URISchemeHTTP)).
-		WithLivenessProbe(dr.createLivenessProbe(healthPort, "/healthz", corev1.URISchemeHTTP)).
+		WithStartupProbe(operatorutil.CreateStartupProbe(healthPort, "/healthz", corev1.URISchemeHTTP)).
+		WithReadinessProbe(operatorutil.CreateReadinessProbe(healthPort, "/healthz", corev1.URISchemeHTTP)).
+		WithLivenessProbe(operatorutil.CreateLivenessProbe(healthPort, "/healthz", corev1.URISchemeHTTP)).
 		WithVolumeMounts(
 			konnectivityCertificatesVolumeMount,
 			konnectivityKubeconfigVolumeMount,
 			konnectivityUDSVolumeMount,
-		)
+		), nil
 }
 
 func (dr *APIServerResourcesReconciler) buildKonnectivityServerArgs(
@@ -759,8 +768,8 @@ func (dr *APIServerResourcesReconciler) buildKonnectivityServerArgs(
 		"agent-namespace":         "kube-system",
 		"agent-service-account":   "konnectivity-agent",
 		"authentication-audience": KonnectivityServerAudience,
-		"cluster-cert":            path.Join(*konnectivityCertificatesVolumeMount.MountPath, konstants.CACertName),
-		"cluster-key":             path.Join(*konnectivityCertificatesVolumeMount.MountPath, konstants.CAKeyName),
+		"cluster-cert":            path.Join(*konnectivityCertificatesVolumeMount.MountPath, corev1.TLSCertKey),
+		"cluster-key":             path.Join(*konnectivityCertificatesVolumeMount.MountPath, corev1.TLSPrivateKeyKey),
 		"kubeconfig": path.Join(
 			*konnectivityKubeconfigVolumeMount.MountPath,
 			KonnectivityKubeconfigFileName,
@@ -772,9 +781,10 @@ func (dr *APIServerResourcesReconciler) buildKonnectivityServerArgs(
 		"server-port":  "0",
 		"uds-name":     path.Join(*konnectivityUDSVolumeMount.MountPath, "konnectivity-server.sock"),
 		"mode":         "grpc",
+		"v":            "9",
 	}
 
-	return operatorutil.ArgsToSlice(args)
+	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.Konnectivity.Args, args)
 }
 
 func (dr *APIServerResourcesReconciler) createAPIServerContainer(
@@ -817,62 +827,14 @@ func (dr *APIServerResourcesReconciler) createAPIServerContainer(
 			apiServerCertificatesVolumeMount, egressSelectorConfigVolumeMount,
 			apiPort,
 		)...).
+		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
+			hostedControlPlane.Spec.Deployment.APIServer.Resources,
+		)).
 		WithPorts(apiPort).
-		WithStartupProbe(dr.createStartupProbe(apiPort, "/livez", corev1.URISchemeHTTPS)).
-		WithReadinessProbe(dr.createReadinessProbe(apiPort, "/readyz", corev1.URISchemeHTTPS)).
-		WithLivenessProbe(dr.createLivenessProbe(apiPort, "/livez", corev1.URISchemeHTTPS)).
+		WithStartupProbe(operatorutil.CreateStartupProbe(apiPort, "/readyz", corev1.URISchemeHTTPS)).
+		WithReadinessProbe(operatorutil.CreateReadinessProbe(apiPort, "/readyz", corev1.URISchemeHTTPS)).
+		WithLivenessProbe(operatorutil.CreateLivenessProbe(apiPort, "/livez", corev1.URISchemeHTTPS)).
 		WithVolumeMounts(volumeMounts...)
-}
-
-func (dr *APIServerResourcesReconciler) createStartupProbe(
-	probePort *corev1ac.ContainerPortApplyConfiguration,
-	path string,
-	scheme corev1.URIScheme,
-) *corev1ac.ProbeApplyConfiguration {
-	healthCheckTimeout := konstants.ControlPlaneComponentHealthCheckTimeout.Seconds()
-	periodSeconds := int32(10)
-	failureThreshold := int32(math.Ceil(healthCheckTimeout / float64(periodSeconds)))
-	return dr.createProbe(path, probePort, scheme).
-		WithInitialDelaySeconds(0).
-		WithTimeoutSeconds(15).
-		WithFailureThreshold(failureThreshold).
-		WithPeriodSeconds(periodSeconds)
-}
-
-func (dr *APIServerResourcesReconciler) createReadinessProbe(
-	probePort *corev1ac.ContainerPortApplyConfiguration,
-	path string,
-	scheme corev1.URIScheme,
-) *corev1ac.ProbeApplyConfiguration {
-	return dr.createProbe(path, probePort, scheme).
-		WithInitialDelaySeconds(0).
-		WithTimeoutSeconds(15).
-		WithFailureThreshold(3).
-		WithPeriodSeconds(1)
-}
-
-func (dr *APIServerResourcesReconciler) createLivenessProbe(
-	probePort *corev1ac.ContainerPortApplyConfiguration,
-	path string,
-	scheme corev1.URIScheme,
-) *corev1ac.ProbeApplyConfiguration {
-	return dr.createProbe(path, probePort, scheme).
-		WithInitialDelaySeconds(0).
-		WithTimeoutSeconds(15).
-		WithFailureThreshold(8).
-		WithPeriodSeconds(10)
-}
-
-func (dr *APIServerResourcesReconciler) createProbe(
-	path string,
-	probePort *corev1ac.ContainerPortApplyConfiguration,
-	scheme corev1.URIScheme,
-) *corev1ac.ProbeApplyConfiguration {
-	return corev1ac.Probe().WithHTTPGet(corev1ac.HTTPGetAction().
-		WithPath(path).
-		WithPort(intstr.FromString(*probePort.Name)).
-		WithScheme(scheme),
-	)
 }
 
 func (dr *APIServerResourcesReconciler) createProbePort(
@@ -901,9 +863,12 @@ func (dr *APIServerResourcesReconciler) createSchedulerContainer(
 		WithCommand("kube-scheduler").
 		WithArgs(dr.buildSchedulerArgs(hostedControlPlane, schedulerKubeconfigVolumeMount)...).
 		WithPorts(probePort).
-		WithStartupProbe(dr.createStartupProbe(probePort, "/livez", corev1.URISchemeHTTPS)).
-		WithReadinessProbe(dr.createReadinessProbe(probePort, "/readyz", corev1.URISchemeHTTPS)).
-		WithLivenessProbe(dr.createLivenessProbe(probePort, "/livez", corev1.URISchemeHTTPS)).
+		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
+			hostedControlPlane.Spec.Deployment.Scheduler.Resources,
+		)).
+		WithStartupProbe(operatorutil.CreateStartupProbe(probePort, "/readyz", corev1.URISchemeHTTPS)).
+		WithReadinessProbe(operatorutil.CreateReadinessProbe(probePort, "/readyz", corev1.URISchemeHTTPS)).
+		WithLivenessProbe(operatorutil.CreateLivenessProbe(probePort, "/livez", corev1.URISchemeHTTPS)).
 		WithVolumeMounts(schedulerKubeconfigVolumeMount)
 }
 
@@ -926,10 +891,13 @@ func (dr *APIServerResourcesReconciler) createControllerManagerContainer(
 			controllerManagerCertificatesVolumeMount,
 			controllerManagerKubeconfigVolumeMount,
 		)...).
+		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
+			hostedControlPlane.Spec.Deployment.ControllerManager.Resources,
+		)).
 		WithPorts(probePort).
-		WithStartupProbe(dr.createStartupProbe(probePort, "/healthz", corev1.URISchemeHTTPS)).
-		WithReadinessProbe(dr.createReadinessProbe(probePort, "/healthz", corev1.URISchemeHTTPS)).
-		WithLivenessProbe(dr.createLivenessProbe(probePort, "/healthz", corev1.URISchemeHTTPS)).
+		WithStartupProbe(operatorutil.CreateStartupProbe(probePort, "/healthz", corev1.URISchemeHTTPS)).
+		WithReadinessProbe(operatorutil.CreateReadinessProbe(probePort, "/healthz", corev1.URISchemeHTTPS)).
+		WithLivenessProbe(operatorutil.CreateLivenessProbe(probePort, "/healthz", corev1.URISchemeHTTPS)).
 		WithVolumeMounts(controllerManagerCertificatesVolumeMount, controllerManagerKubeconfigVolumeMount)
 }
 

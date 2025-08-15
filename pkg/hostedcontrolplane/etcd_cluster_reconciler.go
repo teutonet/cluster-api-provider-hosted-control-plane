@@ -24,6 +24,7 @@ import (
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/utils/ptr"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
@@ -37,7 +38,10 @@ var (
 	ErrStatefulsetNotReady         = fmt.Errorf("etcd StatefulSet is not ready: %w", ErrRequeueRequired)
 )
 
-var ComponentETCD = "etcd"
+var (
+	ComponentETCD  = "etcd"
+	ETCDClientPort = int32(2379)
+)
 
 //+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=create;patch;delete
 //+kubebuilder:rbac:groups="",resources=services,verbs=create;patch
@@ -51,7 +55,7 @@ func (er *EtcdClusterReconciler) ReconcileEtcdCluster(
 		func(ctx context.Context, span trace.Span) error {
 			clientPort := corev1ac.ContainerPort().
 				WithName("client").
-				WithContainerPort(2379).
+				WithContainerPort(ETCDClientPort).
 				WithProtocol(corev1.ProtocolTCP)
 
 			peerPort := corev1ac.ContainerPort().
@@ -66,9 +70,20 @@ func (er *EtcdClusterReconciler) ReconcileEtcdCluster(
 
 			if err := er.reconcileService(ctx,
 				hostedControlPlane, cluster,
+				names.GetEtcdServiceName(cluster),
+				true,
 				clientPort, peerPort, metricsPort,
 			); err != nil {
 				return fmt.Errorf("failed to reconcile etcd service: %w", err)
+			}
+
+			if err := er.reconcileService(ctx,
+				hostedControlPlane, cluster,
+				names.GetEtcdClientServiceName(cluster),
+				false,
+				clientPort, peerPort, metricsPort,
+			); err != nil {
+				return fmt.Errorf("failed to reconcile etcd client service: %w", err)
 			}
 
 			return errorsUtil.IfErrErrorf("failed to reconcile etcd StatefulSet: %w",
@@ -82,36 +97,41 @@ func (er *EtcdClusterReconciler) reconcileService(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
+	name string,
+	headless bool,
 	clientPort *corev1ac.ContainerPortApplyConfiguration,
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
 ) error {
-	service := corev1ac.Service(names.GetEtcdServiceName(cluster), hostedControlPlane.Namespace).
+	spec := corev1ac.ServiceSpec().
+		WithType(corev1.ServiceTypeClusterIP).
+		WithSelector(names.GetControlPlaneLabels(cluster, ComponentETCD)).
+		WithPorts(
+			corev1ac.ServicePort().
+				WithName("etcd-client").
+				WithPort(ETCDClientPort).
+				WithTargetPort(intstr.FromString(*clientPort.Name)).
+				WithProtocol(corev1.ProtocolTCP),
+			corev1ac.ServicePort().
+				WithName("client-peer").
+				WithPort(2380).
+				WithTargetPort(intstr.FromString(*peerPort.Name)).
+				WithProtocol(corev1.ProtocolTCP),
+			corev1ac.ServicePort().
+				WithName("client-metrics").
+				WithPort(2381).
+				WithTargetPort(intstr.FromString(*metricsPort.Name)).
+				WithProtocol(corev1.ProtocolTCP),
+		)
+
+	if headless {
+		spec = spec.WithClusterIP(corev1.ClusterIPNone).WithPublishNotReadyAddresses(true)
+	}
+
+	service := corev1ac.Service(name, hostedControlPlane.Namespace).
 		WithLabels(names.GetControlPlaneLabels(cluster, ComponentETCD)).
 		WithOwnerReferences(getOwnerReferenceApplyConfiguration(hostedControlPlane)).
-		WithSpec(corev1ac.ServiceSpec().
-			WithType(corev1.ServiceTypeClusterIP).
-			WithClusterIP(corev1.ClusterIPNone).
-			WithPublishNotReadyAddresses(true).
-			WithPorts(
-				corev1ac.ServicePort().
-					WithName("etcd-client").
-					WithPort(2379).
-					WithTargetPort(intstr.FromString(*clientPort.Name)).
-					WithProtocol(corev1.ProtocolTCP),
-				corev1ac.ServicePort().
-					WithName("client-peer").
-					WithPort(2380).
-					WithTargetPort(intstr.FromString(*peerPort.Name)).
-					WithProtocol(corev1.ProtocolTCP),
-				corev1ac.ServicePort().
-					WithName("client-metrics").
-					WithPort(2381).
-					WithTargetPort(intstr.FromString(*metricsPort.Name)).
-					WithProtocol(corev1.ProtocolTCP),
-			).
-			WithSelector(names.GetControlPlaneLabels(cluster, ComponentETCD)),
-		)
+		WithSpec(spec)
 
 	_, err := er.kubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).
 		Apply(ctx, service, applyOptions)
@@ -236,7 +256,7 @@ func (er *EtcdClusterReconciler) createEtcdCertificatesVolume(
 					WithItems(
 						corev1ac.KeyToPath().
 							WithKey(corev1.TLSCertKey).
-							WithPath("ca.crt"),
+							WithPath(constants.CACertName),
 					),
 				),
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
@@ -274,6 +294,10 @@ func (er *EtcdClusterReconciler) createEtcdContainer(
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
+	readinessProbe := corev1ac.Probe().
+		WithExec(corev1ac.ExecAction().
+			WithCommand("etcdctl", "endpoint", "health"),
+		)
 	return corev1ac.Container().
 		WithName("etcd").
 		WithImage("registry.k8s.io/etcd:3.5.21-0").
@@ -297,7 +321,7 @@ func (er *EtcdClusterReconciler) createEtcdContainer(
 				WithValue("3"),
 			corev1ac.EnvVar().
 				WithName("ETCDCTL_CACERT").
-				WithValue(path.Join(*etcdCertificatesVolumeMount.MountPath, "ca.crt")),
+				WithValue(path.Join(*etcdCertificatesVolumeMount.MountPath, constants.CACertName)),
 			corev1ac.EnvVar().
 				WithName("ETCDCTL_CERT").
 				WithValue(path.Join(*etcdCertificatesVolumeMount.MountPath, "server.crt")),
@@ -306,9 +330,9 @@ func (er *EtcdClusterReconciler) createEtcdContainer(
 				WithValue(path.Join(*etcdCertificatesVolumeMount.MountPath, "server.key")),
 		).
 		WithPorts(clientPort, peerPort, metricsPort).
-		WithStartupProbe(er.createStartupProbe(metricsPort)).
-		WithReadinessProbe(er.createReadinessProbe(metricsPort)).
-		WithLivenessProbe(er.createLivenessProbe(metricsPort)).
+		WithStartupProbe(readinessProbe).
+		WithReadinessProbe(readinessProbe).
+		WithLivenessProbe(readinessProbe).
 		WithVolumeMounts(etcdDataVolumeMount, etcdCertificatesVolumeMount)
 }
 
@@ -341,11 +365,11 @@ func (er *EtcdClusterReconciler) buildEtcdArgs(
 		"auto-compaction-mode":        "revision",
 		"auto-compaction-retention":   "1000",
 		"client-cert-auth":            "true",
-		"trusted-ca-file":             path.Join(certificatesDir, "ca.crt"),
+		"trusted-ca-file":             path.Join(certificatesDir, constants.CACertName),
 		"cert-file":                   path.Join(certificatesDir, "server.crt"),
 		"key-file":                    path.Join(certificatesDir, "server.key"),
 		"peer-client-cert-auth":       "true",
-		"peer-trusted-ca-file":        path.Join(certificatesDir, "ca.crt"),
+		"peer-trusted-ca-file":        path.Join(certificatesDir, constants.CACertName),
 		"peer-cert-file":              path.Join(certificatesDir, "peer.crt"),
 		"peer-key-file":               path.Join(certificatesDir, "peer.key"),
 		"quota-backend-bytes":         "8589934592",
@@ -359,51 +383,10 @@ func (er *EtcdClusterReconciler) buildInitialCluster(
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 ) string {
 	entries := slices.MapToSlice(names.GetEtcdDNSNames(cluster),
-		func(host string, serviceSuffix string) string {
-			return fmt.Sprintf("%s=https://%s:%d", host, serviceSuffix, *peerPort.ContainerPort)
+		func(host string, dnsName string) string {
+			return fmt.Sprintf("%s=https://%s:%d", host, dnsName, *peerPort.ContainerPort)
 		},
 	)
 	sort.Strings(entries)
 	return strings.Join(entries, ",")
-}
-
-func (er *EtcdClusterReconciler) createStartupProbe(
-	probePort *corev1ac.ContainerPortApplyConfiguration,
-) *corev1ac.ProbeApplyConfiguration {
-	return er.createProbe("/readyz", probePort).
-		WithInitialDelaySeconds(0).
-		WithTimeoutSeconds(10).
-		WithFailureThreshold(30).
-		WithPeriodSeconds(3)
-}
-
-func (er *EtcdClusterReconciler) createReadinessProbe(
-	probePort *corev1ac.ContainerPortApplyConfiguration,
-) *corev1ac.ProbeApplyConfiguration {
-	return er.createProbe("/readyz", probePort).
-		WithInitialDelaySeconds(0).
-		WithTimeoutSeconds(15).
-		WithFailureThreshold(3).
-		WithPeriodSeconds(5)
-}
-
-func (er *EtcdClusterReconciler) createLivenessProbe(
-	probePort *corev1ac.ContainerPortApplyConfiguration,
-) *corev1ac.ProbeApplyConfiguration {
-	return er.createProbe("/livez", probePort).
-		WithInitialDelaySeconds(0).
-		WithTimeoutSeconds(15).
-		WithFailureThreshold(8).
-		WithPeriodSeconds(10)
-}
-
-func (er *EtcdClusterReconciler) createProbe(
-	path string,
-	probePort *corev1ac.ContainerPortApplyConfiguration,
-) *corev1ac.ProbeApplyConfiguration {
-	return corev1ac.Probe().WithHTTPGet(corev1ac.HTTPGetAction().
-		WithPath(path).
-		WithPort(intstr.FromString(*probePort.Name)).
-		WithScheme(corev1.URISchemeHTTP),
-	)
 }

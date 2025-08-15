@@ -98,8 +98,14 @@ func (r *HostedControlPlaneReconciler) reconcileWorkloadClusterResources(
 					FailedReason: v1alpha1.WorkloadKonnectivityRBACFailedReason,
 				},
 				{
-					Name:         "konnectivity-daemonset",
-					Reconcile:    workloadClusterReconciler.ReconcileKonnectivityDaemonSet,
+					Name: "konnectivity-daemonset",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+						return workloadClusterReconciler.ReconcileKonnectivityDaemonSet(
+							ctx,
+							hostedControlPlane,
+							cluster,
+						)
+					},
 					Condition:    v1alpha1.WorkloadKonnectivityDaemonSetReadyCondition,
 					FailedReason: v1alpha1.WorkloadKonnectivityDaemonSetFailedReason,
 				},

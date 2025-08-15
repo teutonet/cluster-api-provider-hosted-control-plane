@@ -127,6 +127,8 @@ linters:
           alias: kubeadmv1beta4
         - pkg: k8s.io/kubernetes/cmd/kubeadm/app/constants
           alias: konstants
+        - pkg: k8s.io/kubernetes/cmd/kubeadm/app/cmd/options
+          alias: kommandconstants
         - pkg: k8s.io/api/rbac/v1
           alias: rbacv1
         - pkg: k8s.io/client-go/applyconfigurations/rbac/v1
