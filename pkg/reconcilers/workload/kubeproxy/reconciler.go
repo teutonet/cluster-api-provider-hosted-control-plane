@@ -7,15 +7,14 @@ import (
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -42,21 +41,22 @@ func NewKubeProxyReconciler(
 	kubernetesClient kubernetes.Interface,
 ) KubeProxyReconciler {
 	return &kubeProxyReconciler{
-		kubernetesClient: kubernetesClient,
+		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
+			KubernetesClient: kubernetesClient,
+			Tracer:           tracing.GetTracer("kubeproxy"),
+		},
 		kubeProxyLabels: map[string]string{
 			"k8s-app":                       konstants.KubeProxy,
 			"kubernetes.io/cluster-service": "true",
 		},
 		kubeProxyConfigMountPath: "/var/lib/kube-proxy",
-		tracer:                   tracing.GetTracer("kubeproxy"),
 	}
 }
 
 type kubeProxyReconciler struct {
-	kubernetesClient         kubernetes.Interface
+	reconcilers.WorkloadResourceReconciler
 	kubeProxyLabels          map[string]string
 	kubeProxyConfigMountPath string
-	tracer                   string
 }
 
 var _ KubeProxyReconciler = &kubeProxyReconciler{}
@@ -66,7 +66,7 @@ func (kr *kubeProxyReconciler) ReconcileKubeProxy(
 	cluster *capiv1.Cluster,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 ) error {
-	return tracing.WithSpan1(ctx, kr.tracer, "ReconcileKubeProxy",
+	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeProxy",
 		func(ctx context.Context, span trace.Span) error {
 			phases := []struct {
 				Name      string
@@ -102,12 +102,12 @@ func (kr *kubeProxyReconciler) ReconcileKubeProxy(
 }
 
 func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error {
-	return tracing.WithSpan1(ctx, kr.tracer, "ReconcileKubeProxyRBAC",
+	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeProxyRBAC",
 		func(ctx context.Context, span trace.Span) error {
 			serviceAccount := corev1ac.ServiceAccount(proxy.KubeProxyServiceAccountName, metav1.NamespaceSystem)
 
-			_, err := kr.kubernetesClient.CoreV1().
-				ServiceAccounts(metav1.NamespaceSystem).
+			_, err := kr.KubernetesClient.CoreV1().
+				ServiceAccounts(*serviceAccount.Namespace).
 				Apply(ctx, serviceAccount, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply kube-proxy service account: %w", err)
@@ -125,7 +125,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error
 					WithNamespace(*serviceAccount.Namespace),
 				)
 
-			_, err = kr.kubernetesClient.RbacV1().ClusterRoleBindings().
+			_, err = kr.KubernetesClient.RbacV1().ClusterRoleBindings().
 				Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply kube-proxy cluster role binding: %w", err)
@@ -140,7 +140,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error
 						WithResourceNames(konstants.KubeProxyConfigMap),
 				)
 
-			_, err = kr.kubernetesClient.RbacV1().Roles(metav1.NamespaceSystem).
+			_, err = kr.KubernetesClient.RbacV1().Roles(*role.Namespace).
 				Apply(ctx, role, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply kube-proxy role: %w", err)
@@ -157,7 +157,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error
 					WithName(konstants.NodeBootstrapTokenAuthGroup),
 				)
 
-			_, err = kr.kubernetesClient.RbacV1().RoleBindings(metav1.NamespaceSystem).
+			_, err = kr.KubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
 				Apply(ctx, roleBinding, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply kube-proxy role binding: %w", err)
@@ -169,7 +169,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error
 }
 
 func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(ctx context.Context, cluster *capiv1.Cluster) error {
-	return tracing.WithSpan1(ctx, kr.tracer, "ReconcileKubeProxyConfigMap",
+	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeProxyConfigMap",
 		func(ctx context.Context, span trace.Span) error {
 			kubeconfigFileName := "kubeconfig.conf"
 			kubeconfig := &api.Config{
@@ -224,8 +224,8 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(ctx context.Context, 
 					konstants.KubeProxyConfigMapKey: string(kubeProxyConfigBytes),
 				})
 
-			_, err = kr.kubernetesClient.CoreV1().
-				ConfigMaps(metav1.NamespaceSystem).
+			_, err = kr.KubernetesClient.CoreV1().
+				ConfigMaps(*configMap.Namespace).
 				Apply(ctx, configMap, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply kube-proxy config map: %w", err)
@@ -240,7 +240,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 ) error {
-	return tracing.WithSpan1(ctx, kr.tracer, "ReconcileKubeProxyDaemonSet",
+	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeProxyDaemonSet",
 		func(ctx context.Context, span trace.Span) error {
 			kubeProxyConfigVolume := corev1ac.Volume().
 				WithName("kube-proxy-config").
@@ -271,69 +271,43 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 				WithMountPath("/lib/modules").
 				WithReadOnly(true)
 
-			template := corev1ac.PodTemplateSpec().
-				WithLabels(kr.kubeProxyLabels).
-				WithSpec(corev1ac.PodSpec().
-					WithServiceAccountName(proxy.KubeProxyServiceAccountName).
-					WithContainers(corev1ac.Container().
-						WithName(konstants.KubeProxy).
-						WithImage(
-							fmt.Sprintf("k8s.gcr.io/kube-proxy:%s", hostedControlPlane.Spec.Version),
-						).
-						WithCommand("/usr/local/bin/kube-proxy").
-						WithArgs(kr.buildArgs(kubeProxyConfigVolumeMount)...).
-						WithEnv(corev1ac.EnvVar().
-							WithName("NODE_NAME").
-							WithValueFrom(corev1ac.EnvVarSource().
-								WithFieldRef(corev1ac.ObjectFieldSelector().
-									WithFieldPath("spec.nodeName"),
-								),
-							),
-						).
-						WithVolumeMounts(kubeProxyConfigVolumeMount, xtablesLockVolumeMount, modulesVolumeMount).
-						WithSecurityContext(corev1ac.SecurityContext().
-							WithPrivileged(true),
+			container := corev1ac.Container().
+				WithName(konstants.KubeProxy).
+				WithImage(
+					fmt.Sprintf("k8s.gcr.io/kube-proxy:%s", hostedControlPlane.Spec.Version),
+				).
+				WithCommand("/usr/local/bin/kube-proxy").
+				WithArgs(kr.buildArgs(kubeProxyConfigVolumeMount)...).
+				WithEnv(corev1ac.EnvVar().
+					WithName("NODE_NAME").
+					WithValueFrom(corev1ac.EnvVarSource().
+						WithFieldRef(corev1ac.ObjectFieldSelector().
+							WithFieldPath("spec.nodeName"),
 						),
-					).
-					WithPriorityClassName("system-node-critical").
-					WithHostNetwork(true).
-					WithVolumes(kubeProxyConfigVolume, xtablesLockVolume, modulesVolume).
-					WithTolerations(corev1ac.Toleration().
-						WithOperator(corev1.TolerationOpExists),
 					),
+				).
+				WithVolumeMounts(kubeProxyConfigVolumeMount, xtablesLockVolumeMount, modulesVolumeMount).
+				WithSecurityContext(corev1ac.SecurityContext().
+					WithPrivileged(true),
 				)
 
-			if err := operatorutil.ValidateMounts(template.Spec); err != nil {
-				return fmt.Errorf("kubeproxy daemonset has mounts without corresponding volume: %w", err)
-			}
-
-			var err error
-			template, err = operatorutil.SetChecksumAnnotations(
+			_, err := kr.ReconcileDaemonSet(
 				ctx,
-				kr.kubernetesClient,
+				konstants.KubeProxy,
 				metav1.NamespaceSystem,
-				template,
+				proxy.KubeProxyServiceAccountName,
+				"system-node-critical",
+				true,
+				kr.kubeProxyLabels,
+				[]*corev1ac.TolerationApplyConfiguration{
+					corev1ac.Toleration().
+						WithOperator(corev1.TolerationOpExists),
+				},
+				[]*corev1ac.ContainerApplyConfiguration{container},
+				[]*corev1ac.VolumeApplyConfiguration{kubeProxyConfigVolume, xtablesLockVolume, modulesVolume},
 			)
-			if err != nil {
-				return fmt.Errorf("failed to set checksum annotations for kube-proxy template: %w", err)
-			}
 
-			daemonSet := appsv1ac.DaemonSet(konstants.KubeProxy, metav1.NamespaceSystem).
-				WithLabels(kr.kubeProxyLabels).
-				WithSpec(appsv1ac.DaemonSetSpec().
-					WithSelector(metav1ac.LabelSelector().
-						WithMatchLabels(kr.kubeProxyLabels),
-					).
-					WithTemplate(template),
-				)
-
-			_, err = kr.kubernetesClient.AppsV1().DaemonSets(metav1.NamespaceSystem).
-				Apply(ctx, daemonSet, operatorutil.ApplyOptions)
-			if err != nil {
-				return fmt.Errorf("failed to apply kube-proxy daemon set: %w", err)
-			}
-
-			return nil
+			return err
 		},
 	)
 }

@@ -16,11 +16,12 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/apiserver"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/apiserverresources"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/certificates"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/infrastructure_cluster"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/kubeconfig"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/tlsroutes"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
@@ -28,7 +29,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -46,6 +49,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
 
@@ -108,8 +112,10 @@ var _ HostedControlPlaneReconciler = &hostedControlPlaneReconciler{}
 //+kubebuilder:rbac:groups=core,resources=configmaps,verbs=watch;list
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=watch;list
 //+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=watch;list
+//+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=watch;list
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=watch;list
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=tlsroutes,verbs=watch;list
+//+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=watch;list
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=watch;list
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes,verbs=watch;list
 
@@ -128,6 +134,14 @@ func (r *hostedControlPlaneReconciler) SetupWithManager(
 			Owns(&corev1.ConfigMap{}).
 			Owns(&appsv1.StatefulSet{}).
 			Owns(&appsv1.Deployment{}).
+			Owns(&policyv1.PodDisruptionBudget{}).
+			Owns(&gwv1alpha2.TLSRoute{}).
+			Watches(&corev1.Secret{},
+				handler.EnqueueRequestsFromMapFunc(r.secretToHostedControlPlane),
+				builder.WithPredicates(
+					predicates.ResourceIsChanged(mgr.GetScheme(), predicateLogger),
+				),
+			).
 			Watches(
 				&capiv1.Cluster{},
 				handler.EnqueueRequestsFromMapFunc(r.clusterToHostedControlPlane),
@@ -141,14 +155,14 @@ func (r *hostedControlPlaneReconciler) SetupWithManager(
 
 func (r *hostedControlPlaneReconciler) clusterToHostedControlPlane(
 	_ context.Context,
-	o client.Object,
+	object client.Object,
 ) []reconcile.Request {
-	c, ok := o.(*capiv1.Cluster)
+	cluster, ok := object.(*capiv1.Cluster)
 	if !ok {
-		panic(fmt.Sprintf("Expected a Cluster but got a %T", c))
+		panic(fmt.Sprintf("Expected a Cluster but got a %T", cluster))
 	}
 
-	controlPlaneRef := c.Spec.ControlPlaneRef
+	controlPlaneRef := cluster.Spec.ControlPlaneRef
 	if controlPlaneRef != nil && controlPlaneRef.Kind == "HostedControlPlane" {
 		return []reconcile.Request{
 			{
@@ -161,6 +175,51 @@ func (r *hostedControlPlaneReconciler) clusterToHostedControlPlane(
 	}
 
 	return nil
+}
+
+func (r *hostedControlPlaneReconciler) secretToHostedControlPlane(
+	ctx context.Context,
+	object client.Object,
+) []reconcile.Request {
+	secret, ok := object.(*corev1.Secret)
+	if !ok {
+		panic(fmt.Sprintf("Expected a Secret but got a %T", secret))
+	}
+
+	return slices.Flatten(slices.FilterMap(slices.FilterMap(secret.OwnerReferences, func(
+		ownerRef metav1.OwnerReference, _ int,
+	) (client.ObjectKey, bool) {
+		if ownerRef.Kind == "Certificate" &&
+			ownerRef.APIVersion == certmanagerv1.SchemeGroupVersion.String() {
+			return client.ObjectKey{
+				Namespace: secret.Namespace,
+				Name:      ownerRef.Name,
+			}, true
+		}
+		return client.ObjectKey{}, false
+	}), func(key client.ObjectKey, _ int) ([]reconcile.Request, bool) {
+		certificate := &certmanagerv1.Certificate{}
+		if err := r.client.Get(ctx, key, certificate); err != nil {
+			return []reconcile.Request{}, false
+		}
+		return slices.FilterMap(
+			certificate.OwnerReferences,
+			func(ownerRef metav1.OwnerReference, _ int) (reconcile.Request,
+				bool,
+			) {
+				if ownerRef.Kind == "HostedControlPlane" &&
+					ownerRef.APIVersion == v1alpha1.SchemeGroupVersion.String() {
+					return reconcile.Request{
+						NamespacedName: client.ObjectKey{
+							Namespace: key.Namespace,
+							Name:      ownerRef.Name,
+						},
+					}, true
+				}
+				return reconcile.Request{}, false
+			},
+		), true
+	}))
 }
 
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes,verbs=get;update;patch
@@ -297,7 +356,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				r.etcdClientPort,
 				r.etcdComponentLabel,
 			)
-			apiServerReconciler := apiserver.NewApiServerResourcesReconciler(
+			apiServerResourcesReconciler := apiserverresources.NewApiServerResourcesReconciler(
 				r.kubernetesClient,
 				r.apiServerServicePort,
 				r.apiServerServiceLegacyPortName,
@@ -307,15 +366,20 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				r.konnectivityClientKubeconfigName,
 				r.konnectivityServerAudience,
 			)
+			tlsRoutesReconciler := tlsroutes.NewTLSRoutesReconciler(
+				r.gatewayClient,
+				r.apiServerServicePort,
+				r.konnectivityServicePort,
+			)
 			infrastructureClusterReconciler := infrastructure_cluster.NewInfrastructureClusterReconciler(
 				r.client,
-				r.apiServerServiceLegacyPortName,
+				r.apiServerServicePort,
 			)
 			workloadClusterReconciler := workload.NewWorkloadClusterReconciler(
 				r.kubernetesClient,
 				r.managementCluster,
 				r.konnectivityServerAudience,
-				r.konnectivityServicePort,
+				r.apiServerServicePort,
 			)
 
 			phases := []Phase{
@@ -327,24 +391,13 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				},
 				{
 					Name:         "apiserver service",
-					Reconcile:    apiServerReconciler.ReconcileApiServerService,
+					Reconcile:    apiServerResourcesReconciler.ReconcileApiServerService,
 					Condition:    v1alpha1.APIServerServiceReadyCondition,
 					FailedReason: v1alpha1.APIServerServiceFailedReason,
 				},
 				{
-					Name: "sync controlplane endpoint",
-					Reconcile: func(ctx context.Context, _ *v1alpha1.HostedControlPlane, cluster *capiv1.Cluster) error {
-						if err := infrastructureClusterReconciler.SyncControlPlaneEndpoint(ctx, cluster); err != nil {
-							return fmt.Errorf("failed to sync control plane endpoint: %w", err)
-						}
-						if cluster.Spec.ControlPlaneEndpoint.IsZero() {
-							return fmt.Errorf(
-								"control plane endpoint is not set yet: %w",
-								operatorutil.ErrRequeueRequired,
-							)
-						}
-						return nil
-					},
+					Name:         "sync controlplane endpoint",
+					Reconcile:    infrastructureClusterReconciler.SyncControlPlaneEndpoint,
 					Condition:    v1alpha1.SyncControlPlaneEndpointReadyCondition,
 					FailedReason: v1alpha1.SyncControlPlaneEndpointFailedReason,
 				},
@@ -367,10 +420,16 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					FailedReason: v1alpha1.EtcdClusterFailedReason,
 				},
 				{
-					Name:         "apiserver resources",
-					Reconcile:    apiServerReconciler.ReconcileApiServerDeployments,
+					Name:         "apiserver deployments",
+					Reconcile:    apiServerResourcesReconciler.ReconcileApiServerDeployments,
 					Condition:    v1alpha1.APIServerDeploymentsReadyCondition,
 					FailedReason: v1alpha1.APIServerDeploymentsFailedReason,
+				},
+				{
+					Name:         "tlsroutes",
+					Reconcile:    tlsRoutesReconciler.ReconcileTLSRoutes,
+					Condition:    v1alpha1.APIServerTLSRoutesReadyCondition,
+					FailedReason: v1alpha1.APIServerTLSRoutesFailedReason,
 				},
 				{
 					Name:         "workload cluster resources",

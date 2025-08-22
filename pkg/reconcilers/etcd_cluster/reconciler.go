@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
 	"k8s.io/client-go/kubernetes"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/utils/ptr"
@@ -65,9 +66,6 @@ var (
 	errStatefulsetNotReady = fmt.Errorf("etcd StatefulSet is not ready: %w", operatorutil.ErrRequeueRequired)
 )
 
-//+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=create;patch;delete
-//+kubebuilder:rbac:groups="",resources=services,verbs=create;patch
-
 func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
@@ -108,12 +106,19 @@ func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 				return fmt.Errorf("failed to reconcile etcd client service: %w", err)
 			}
 
-			return errorsUtil.IfErrErrorf("failed to reconcile etcd StatefulSet: %w",
-				er.reconcileStatefulSet(ctx, hostedControlPlane, cluster, clientPort, peerPort, metricsPort),
+			err := er.reconcileStatefulSet(ctx, hostedControlPlane, cluster, clientPort, peerPort, metricsPort)
+			if err != nil {
+				return fmt.Errorf("failed to reconcile etcd StatefulSet: %w", err)
+			}
+
+			return errorsUtil.IfErrErrorf("failed to reconcile etcd PodDisruptionBudget: %w",
+				er.reconcilePodDisruptionBudget(ctx, hostedControlPlane, cluster),
 			)
 		},
 	)
 }
+
+//+kubebuilder:rbac:groups="",resources=services,verbs=create;patch
 
 func (er *etcdClusterReconciler) reconcileService(
 	ctx context.Context,
@@ -157,13 +162,15 @@ func (er *etcdClusterReconciler) reconcileService(
 				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(spec)
 
-			_, err := er.kubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).
+			_, err := er.kubernetesClient.CoreV1().Services(*service.Namespace).
 				Apply(ctx, service, operatorutil.ApplyOptions)
 
 			return errorsUtil.IfErrErrorf("failed to apply etcd service: %w", err)
 		},
 	)
 }
+
+//+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=create;patch;delete
 
 func (er *etcdClusterReconciler) reconcileStatefulSet(
 	ctx context.Context,
@@ -233,7 +240,7 @@ func (er *etcdClusterReconciler) reconcileStatefulSet(
 					),
 				)
 
-			statefulSetObj, err := er.kubernetesClient.AppsV1().StatefulSets(hostedControlPlane.Namespace).
+			statefulSetObj, err := er.kubernetesClient.AppsV1().StatefulSets(*statefulSet.Namespace).
 				Apply(ctx, statefulSet, operatorutil.ApplyOptions)
 
 			if apierrors.IsInvalid(err) {
@@ -420,4 +427,29 @@ func (er *etcdClusterReconciler) buildInitialCluster(
 	)
 	sort.Strings(entries)
 	return strings.Join(entries, ",")
+}
+
+//+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=create;patch
+
+func (er *etcdClusterReconciler) reconcilePodDisruptionBudget(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+) error {
+	pdbName := names.GetEtcdStatefulSetName(cluster)
+	pdb := policyv1ac.PodDisruptionBudget(pdbName, hostedControlPlane.Namespace).
+		WithLabels(names.GetControlPlaneLabels(cluster, er.componentLabel)).
+		WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
+		WithSpec(policyv1ac.PodDisruptionBudgetSpec().
+			WithMaxUnavailable(intstr.FromInt32(1)).
+			WithSelector(names.GetControlPlaneSelector(cluster, er.componentLabel)),
+		)
+
+	_, err := er.kubernetesClient.PolicyV1().PodDisruptionBudgets(*pdb.Namespace).
+		Apply(ctx, pdb, operatorutil.ApplyOptions)
+	if err != nil {
+		return fmt.Errorf("failed to apply etcd PodDisruptionBudget: %w", err)
+	}
+
+	return nil
 }

@@ -1,4 +1,4 @@
-package apiserver
+package apiserverresources
 
 import (
 	"context"
@@ -13,17 +13,16 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
-	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
 	"k8s.io/client-go/kubernetes"
 	kubenames "k8s.io/kubernetes/cmd/kube-controller-manager/names"
 	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
@@ -32,10 +31,7 @@ import (
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 )
 
-var (
-	errDeploymentNotReady = fmt.Errorf("deployment is not ready: %w", operatorutil.ErrRequeueRequired)
-	errServiceNotReady    = fmt.Errorf("service is not ready: %w", operatorutil.ErrRequeueRequired)
-)
+var errServiceNotReady = fmt.Errorf("service is not ready: %w", operatorutil.ErrRequeueRequired)
 
 type ApiServerResourcesReconciler interface {
 	ReconcileApiServerService(
@@ -61,49 +57,48 @@ func NewApiServerResourcesReconciler(
 	konnectivityServerAudience string,
 ) ApiServerResourcesReconciler {
 	return &apiServerResourcesReconciler{
-		kubernetesClient:                 kubernetesClient,
-		apiServerServicePort:             apiServerServicePort,
-		apiServerServiceLegacyPortName:   apiServerServiceLegacyPortName,
-		etcdComponentLabel:               etcdComponentLabel,
-		etcdClientPort:                   etcdClientPort,
-		konnectivityServicePort:          konnectivityServicePort,
-		konnectivityClientKubeconfigName: konnectivityClientKubeconfigName,
-		konnectivityServerAudience:       konnectivityServerAudience,
-		tracer:                           tracing.GetTracer("apiServerResources"),
+		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
+			Tracer:           tracing.GetTracer("apiServerResources"),
+			KubernetesClient: kubernetesClient,
+		},
+		apiServerServicePort:                apiServerServicePort,
+		apiServerServiceLegacyPortName:      apiServerServiceLegacyPortName,
+		etcdComponentLabel:                  etcdComponentLabel,
+		etcdClientPort:                      etcdClientPort,
+		konnectivityServicePort:             konnectivityServicePort,
+		konnectivityClientKubeconfigName:    konnectivityClientKubeconfigName,
+		konnectivityServerAudience:          konnectivityServerAudience,
+		egressSelectorConfigMountPath:       "/etc/kubernetes/egress/configurations",
+		egressSelectorConfigurationFileName: "egress-selector-configuration.yaml",
+		componentAPIServer:                  "api-server",
+		componentControllerManager:          "controller-manager",
+		componentScheduler:                  "scheduler",
+		apiContainerPortName:                intstr.FromString("api"),
+		konnectivityContainerPortName:       intstr.FromString("konnectivity"),
+		konnectivityKubeconfigFileName:      "konnectivity-server.conf",
 	}
 }
 
 type apiServerResourcesReconciler struct {
-	kubernetesClient                 kubernetes.Interface
-	apiServerServicePort             int32
-	apiServerServiceLegacyPortName   string
-	etcdComponentLabel               string
-	etcdClientPort                   int32
-	konnectivityServicePort          int32
-	konnectivityClientKubeconfigName string
-	konnectivityServerAudience       string
-	tracer                           string
+	reconcilers.ManagementResourceReconciler
+	apiServerServicePort                int32
+	apiServerServiceLegacyPortName      string
+	etcdComponentLabel                  string
+	etcdClientPort                      int32
+	konnectivityServicePort             int32
+	konnectivityClientKubeconfigName    string
+	konnectivityServerAudience          string
+	egressSelectorConfigMountPath       string
+	egressSelectorConfigurationFileName string
+	componentAPIServer                  string
+	componentControllerManager          string
+	componentScheduler                  string
+	apiContainerPortName                intstr.IntOrString
+	konnectivityContainerPortName       intstr.IntOrString
+	konnectivityKubeconfigFileName      string
 }
 
 var _ ApiServerResourcesReconciler = &apiServerResourcesReconciler{}
-
-var (
-	egressSelectorConfigMountPath       = "/etc/kubernetes/egress/configurations"
-	EgressSelectorConfigurationFileName = "egress-selector-configuration.yaml"
-)
-
-var (
-	componentAPIServer         = "api-server"
-	componentControllerManager = "controller-manager"
-	componentScheduler         = "scheduler"
-)
-
-var (
-	apiContainerPortName          = intstr.FromString("api")
-	konnectivityContainerPortName = intstr.FromString("konnectivity")
-)
-
-var KonnectivityKubeconfigFileName = "konnectivity-server.conf"
 
 func (arr *apiServerResourcesReconciler) ReconcileApiServerDeployments(
 	ctx context.Context,
@@ -117,16 +112,20 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerDeployments(
 		return fmt.Errorf("failed to reconcile API server deployment: %w", err)
 	}
 
+	if err := arr.reconcilePodDisruptionBudget(ctx, hostedControlPlane, cluster); err != nil {
+		return fmt.Errorf("failed to reconcile pod disruption budget: %w", err)
+	}
+
 	needsRequeue := false
 	if err := arr.reconcileControllerManagerDeployment(ctx, hostedControlPlane, cluster); err != nil {
-		if !errors.Is(err, errDeploymentNotReady) {
+		if !errors.Is(err, reconcilers.ErrResourceNotReady) {
 			return fmt.Errorf("failed to reconcile controller manager deployment: %w", err)
 		}
 		needsRequeue = true
 	}
 
 	if err := arr.reconcileSchedulerDeployment(ctx, hostedControlPlane, cluster); err != nil {
-		if !errors.Is(err, errDeploymentNotReady) {
+		if !errors.Is(err, reconcilers.ErrResourceNotReady) {
 			return fmt.Errorf("failed to reconcile scheduler deployment: %w", err)
 		}
 		needsRequeue = true
@@ -148,7 +147,7 @@ func (arr *apiServerResourcesReconciler) reconcileKonnectivityConfig(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, arr.tracer, "ReconcileKonnectivityConfig",
+	return tracing.WithSpan1(ctx, arr.Tracer, "ReconcileKonnectivityConfig",
 		func(ctx context.Context, span trace.Span) error {
 			egressSelectorConfig := &v1beta1.EgressSelectorConfiguration{
 				TypeMeta: metav1.TypeMeta{
@@ -182,10 +181,10 @@ func (arr *apiServerResourcesReconciler) reconcileKonnectivityConfig(
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithData(map[string]string{
-					EgressSelectorConfigurationFileName: buf.String(),
+					arr.egressSelectorConfigurationFileName: buf.String(),
 				})
 
-			_, err = arr.kubernetesClient.CoreV1().ConfigMaps(hostedControlPlane.Namespace).
+			_, err = arr.KubernetesClient.CoreV1().ConfigMaps(*configMap.Namespace).
 				Apply(ctx, configMap, operatorutil.ApplyOptions)
 			return errorsUtil.IfErrErrorf("failed to patch konnectivity configmap: %w", err)
 		},
@@ -197,7 +196,7 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, arr.tracer, "ReconcileAPIServerDeployment",
+	return tracing.WithSpan1(ctx, arr.Tracer, "ReconcileAPIServerDeployment",
 		func(ctx context.Context, span trace.Span) error {
 			apiServerCertificatesVolume := arr.createAPIServerCertificatesVolume(cluster)
 			egressSelectorConfigVolume := arr.createEgressSelectorConfigVolume(cluster)
@@ -241,12 +240,11 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				return fmt.Errorf("failed to create konnectivity container: %w", err)
 			}
 
-			if deployment, err := arr.reconcileDeployment(
+			if deployment, err := arr.ReconcileDeployment(
 				ctx,
-				hostedControlPlane,
 				cluster,
 				*hostedControlPlane.Spec.Replicas,
-				componentAPIServer,
+				arr.componentAPIServer,
 				arr.etcdComponentLabel,
 				[]*corev1ac.ContainerApplyConfiguration{apiServerContainer, konnectivityContainer},
 				volumes,
@@ -313,7 +311,7 @@ func (arr *apiServerResourcesReconciler) reconcileControllerManagerDeployment(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, arr.tracer, "ReconcileControllerManagerDeployment",
+	return tracing.WithSpan1(ctx, arr.Tracer, "ReconcileControllerManagerDeployment",
 		func(ctx context.Context, span trace.Span) error {
 			controllerManagerCertificatesVolume := arr.createControllerManagerCertificatesVolume(cluster)
 			controllerManagerKubeconfigVolume := arr.createControllerManagerKubeconfigVolume(cluster)
@@ -334,13 +332,12 @@ func (arr *apiServerResourcesReconciler) reconcileControllerManagerDeployment(
 				controllerManagerKubeconfigVolume,
 			}
 
-			_, err := arr.reconcileDeployment(
+			_, err := arr.ReconcileDeployment(
 				ctx,
-				hostedControlPlane,
 				cluster,
-				*hostedControlPlane.Spec.Replicas/int32(3),
-				componentControllerManager,
-				componentAPIServer,
+				*hostedControlPlane.Spec.Deployment.ControllerManager.Replicas,
+				arr.componentControllerManager,
+				arr.componentAPIServer,
 				[]*corev1ac.ContainerApplyConfiguration{container},
 				volumes,
 			)
@@ -354,7 +351,7 @@ func (arr *apiServerResourcesReconciler) reconcileSchedulerDeployment(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, arr.tracer, "ReconcileSchedulerDeployment",
+	return tracing.WithSpan1(ctx, arr.Tracer, "ReconcileSchedulerDeployment",
 		func(ctx context.Context, span trace.Span) error {
 			schedulerKubeconfigVolume := arr.createSchedulerKubeconfigVolume(cluster)
 
@@ -367,130 +364,18 @@ func (arr *apiServerResourcesReconciler) reconcileSchedulerDeployment(
 				schedulerKubeconfigVolume,
 			}
 
-			_, err := arr.reconcileDeployment(
+			_, err := arr.ReconcileDeployment(
 				ctx,
-				hostedControlPlane,
 				cluster,
-				*hostedControlPlane.Spec.Replicas/int32(3),
-				componentScheduler,
-				componentAPIServer,
+				*hostedControlPlane.Spec.Deployment.Scheduler.Replicas,
+				arr.componentScheduler,
+				arr.componentAPIServer,
 				[]*corev1ac.ContainerApplyConfiguration{container},
 				volumes,
 			)
 			return err
 		},
 	)
-}
-
-//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=create;patch
-
-func (arr *apiServerResourcesReconciler) reconcileDeployment(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
-	replicas int32,
-	component string,
-	targetComponent string,
-	containers []*corev1ac.ContainerApplyConfiguration,
-	volumes []*corev1ac.VolumeApplyConfiguration,
-) (*appsv1.Deployment, error) {
-	return tracing.WithSpan(ctx, arr.tracer, "ReconcileDeployment",
-		func(ctx context.Context, span trace.Span) (*appsv1.Deployment, error) {
-			span.SetAttributes(
-				attribute.String("Component", component),
-				attribute.String("TargetComponent", targetComponent),
-				attribute.Int64("Replicas", int64(replicas)),
-			)
-
-			template := corev1ac.PodTemplateSpec().
-				WithLabels(names.GetControlPlaneLabels(cluster, component)).
-				WithSpec(corev1ac.PodSpec().
-					WithTopologySpreadConstraints(
-						operatorutil.CreatePodTopologySpreadConstraints(
-							names.GetControlPlaneSelector(cluster, component),
-						),
-					).
-					WithAutomountServiceAccountToken(false).
-					WithEnableServiceLinks(false).
-					WithContainers(containers...).
-					WithVolumes(volumes...).
-					WithAffinity(corev1ac.Affinity().
-						WithPodAffinity(corev1ac.PodAffinity().
-							WithPreferredDuringSchedulingIgnoredDuringExecution(
-								corev1ac.WeightedPodAffinityTerm().
-									WithWeight(100).
-									WithPodAffinityTerm(corev1ac.PodAffinityTerm().
-										WithLabelSelector(names.GetControlPlaneSelector(cluster, targetComponent)).
-										WithTopologyKey(corev1.LabelHostname),
-									),
-							),
-						)),
-				)
-
-			template, err := operatorutil.SetChecksumAnnotations(ctx, arr.kubernetesClient, cluster.Namespace, template)
-			if err != nil {
-				return nil, fmt.Errorf("failed to set checksum annotations: %w", err)
-			}
-
-			deploymentName := fmt.Sprintf("%s-%s", cluster.Name, component)
-			deployment := appsv1ac.Deployment(deploymentName, cluster.Namespace).
-				WithLabels(names.GetControlPlaneLabels(cluster, component)).
-				WithSpec(appsv1ac.DeploymentSpec().
-					WithStrategy(appsv1ac.DeploymentStrategy().
-						WithType(appsv1.RollingUpdateDeploymentStrategyType).
-						WithRollingUpdate(appsv1ac.RollingUpdateDeployment().
-							WithMaxSurge(intstr.FromInt32(*hostedControlPlane.Spec.Replicas)),
-						),
-					).
-					WithReplicas(replicas).
-					WithSelector(names.GetControlPlaneSelector(cluster, component)).
-					WithTemplate(template),
-				).
-				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane))
-
-			if err := operatorutil.ValidateMounts(deployment.Spec.Template.Spec); err != nil {
-				return nil, fmt.Errorf("deployment %s has mounts without corresponding volume: %w", deploymentName, err)
-			}
-
-			appliedDeployment, err := arr.kubernetesClient.AppsV1().Deployments(hostedControlPlane.Namespace).Apply(ctx,
-				deployment,
-				operatorutil.ApplyOptions,
-			)
-			if err != nil {
-				return nil, errorsUtil.IfErrErrorf("failed to patch deployment: %w", err)
-			}
-
-			if !isDeploymentReady(appliedDeployment) {
-				return nil, errDeploymentNotReady
-			}
-
-			return appliedDeployment, nil
-		},
-	)
-}
-
-func isDeploymentReady(deployment *appsv1.Deployment) bool {
-	if deployment == nil {
-		return false
-	}
-
-	if deployment.Spec.Replicas != nil && deployment.Status.ReadyReplicas < *deployment.Spec.Replicas {
-		return false
-	}
-
-	if deployment.Spec.Replicas != nil && deployment.Status.AvailableReplicas < *deployment.Spec.Replicas {
-		return false
-	}
-
-	if deployment.Spec.Replicas != nil && deployment.Status.UpdatedReplicas < *deployment.Spec.Replicas {
-		return false
-	}
-
-	if deployment.Status.ObservedGeneration < deployment.Generation {
-		return false
-	}
-
-	return true
 }
 
 //+kubebuilder:rbac:groups=core,resources=services,verbs=create;update;patch
@@ -500,13 +385,13 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerService(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, arr.tracer, "ReconcileApiServerService",
+	return tracing.WithSpan1(ctx, arr.Tracer, "ReconcileApiServerService",
 		func(ctx context.Context, span trace.Span) error {
-			labels := names.GetControlPlaneLabels(cluster, componentAPIServer)
+			labels := names.GetControlPlaneLabels(cluster, arr.componentAPIServer)
 			apiPort := corev1ac.ServicePort().
 				WithName("api").
 				WithPort(arr.apiServerServicePort).
-				WithTargetPort(apiContainerPortName).
+				WithTargetPort(arr.apiContainerPortName).
 				WithProtocol(corev1.ProtocolTCP)
 			legacyAPIPort := corev1ac.ServicePort().
 				WithName(arr.apiServerServiceLegacyPortName).
@@ -524,12 +409,12 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerService(
 						corev1ac.ServicePort().
 							WithName("konnectivity").
 							WithPort(arr.konnectivityServicePort).
-							WithTargetPort(konnectivityContainerPortName).
+							WithTargetPort(arr.konnectivityContainerPortName).
 							WithProtocol(corev1.ProtocolTCP),
 					),
 				).
 				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane))
-			appliedService, err := arr.kubernetesClient.CoreV1().Services(hostedControlPlane.Namespace).Apply(ctx,
+			appliedService, err := arr.KubernetesClient.CoreV1().Services(*service.Namespace).Apply(ctx,
 				service,
 				operatorutil.ApplyOptions,
 			)
@@ -540,6 +425,8 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerService(
 			if len(appliedService.Status.LoadBalancer.Ingress) == 0 {
 				return fmt.Errorf("service load balancer is not ready yet: %w", errServiceNotReady)
 			}
+
+			hostedControlPlane.Status.LegacyIP = appliedService.Status.LoadBalancer.Ingress[0].IP
 
 			return nil
 		},
@@ -586,7 +473,7 @@ func (arr *apiServerResourcesReconciler) createKonnectivityKubeconfigVolume(
 			WithItems(
 				corev1ac.KeyToPath().
 					WithKey(capisecretutil.KubeconfigDataName).
-					WithPath(KonnectivityKubeconfigFileName),
+					WithPath(arr.konnectivityKubeconfigFileName),
 			),
 		)
 }
@@ -757,7 +644,6 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 	nodeAddressTypes := slices.Map([]corev1.NodeAddressType{
 		corev1.NodeInternalIP,
 		corev1.NodeInternalDNS,
-		corev1.NodeExternalDNS,
 		corev1.NodeHostName,
 	},
 		func(item corev1.NodeAddressType, _ int) string {
@@ -765,12 +651,15 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 		})
 
 	args := map[string]string{
-		"advertise-address":                  cluster.Spec.ControlPlaneEndpoint.Host,
-		"allow-privileged":                   "true",
-		"authorization-mode":                 konstants.ModeNode + "," + konstants.ModeRBAC,
-		"client-ca-file":                     path.Join(certificatesDir, konstants.CACertName),
-		"enable-bootstrap-token-auth":        "true",
-		"egress-selector-config-file":        path.Join(egressSelectorConfigDir, EgressSelectorConfigurationFileName),
+		"advertise-address":           hostedControlPlane.Status.LegacyIP,
+		"allow-privileged":            "true",
+		"authorization-mode":          konstants.ModeNode + "," + konstants.ModeRBAC,
+		"client-ca-file":              path.Join(certificatesDir, konstants.CACertName),
+		"enable-bootstrap-token-auth": "true",
+		"egress-selector-config-file": path.Join(
+			egressSelectorConfigDir,
+			arr.egressSelectorConfigurationFileName,
+		),
 		"kubelet-client-certificate":         path.Join(certificatesDir, konstants.APIServerKubeletClientCertName),
 		"kubelet-client-key":                 path.Join(certificatesDir, konstants.APIServerKubeletClientKeyName),
 		"kubelet-preferred-address-types":    strings.Join(nodeAddressTypes, ","),
@@ -806,7 +695,7 @@ func (arr *apiServerResourcesReconciler) createKonnectivityContainer(
 	konnectivityUDSVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 ) (*corev1ac.ContainerApplyConfiguration, error) {
 	konnectivityPort := corev1ac.ContainerPort().
-		WithName("konnectivity").
+		WithName(arr.konnectivityContainerPortName.String()).
 		WithContainerPort(8132).
 		WithProtocol(corev1.ProtocolTCP)
 	adminPort := corev1ac.ContainerPort().
@@ -874,7 +763,7 @@ func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 		"cluster-key":             path.Join(*konnectivityCertificatesVolumeMount.MountPath, corev1.TLSPrivateKeyKey),
 		"kubeconfig": path.Join(
 			*konnectivityKubeconfigVolumeMount.MountPath,
-			KonnectivityKubeconfigFileName,
+			arr.konnectivityKubeconfigFileName,
 		),
 		"server-count": strconv.Itoa(int(*hostedControlPlane.Spec.Replicas)),
 		"admin-port":   strconv.Itoa(int(*adminPort.ContainerPort)),
@@ -897,7 +786,7 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 	additionalVolumeMounts []*corev1ac.VolumeMountApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
 	apiPort := corev1ac.ContainerPort().
-		WithName(apiContainerPortName.String()).
+		WithName(arr.apiContainerPortName.String()).
 		WithContainerPort(konstants.KubeAPIServerPort).
 		WithProtocol(corev1.ProtocolTCP)
 
@@ -907,7 +796,7 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 		WithReadOnly(true)
 	egressSelectorConfigVolumeMount := corev1ac.VolumeMount().
 		WithName(*egressSelectorConfigVolume.Name).
-		WithMountPath(egressSelectorConfigMountPath).
+		WithMountPath(arr.egressSelectorConfigMountPath).
 		WithReadOnly(true)
 
 	volumeMounts := []*corev1ac.VolumeMountApplyConfiguration{
@@ -1053,4 +942,29 @@ func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 	}
 
 	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.ControllerManager.Args, args)
+}
+
+//+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=create;patch
+
+func (arr *apiServerResourcesReconciler) reconcilePodDisruptionBudget(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+) error {
+	pdbName := fmt.Sprintf("%s-%s", cluster.Name, arr.componentAPIServer)
+	pdb := policyv1ac.PodDisruptionBudget(pdbName, hostedControlPlane.Namespace).
+		WithLabels(names.GetControlPlaneLabels(cluster, arr.componentAPIServer)).
+		WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
+		WithSpec(policyv1ac.PodDisruptionBudgetSpec().
+			WithMinAvailable(intstr.FromInt32(1)).
+			WithSelector(names.GetControlPlaneSelector(cluster, arr.componentAPIServer)),
+		)
+
+	_, err := arr.KubernetesClient.PolicyV1().PodDisruptionBudgets(*pdb.Namespace).
+		Apply(ctx, pdb, operatorutil.ApplyOptions)
+	if err != nil {
+		return fmt.Errorf("failed to apply API server PodDisruptionBudget: %w", err)
+	}
+
+	return nil
 }

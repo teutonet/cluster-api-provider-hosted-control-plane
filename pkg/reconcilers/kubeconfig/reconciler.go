@@ -163,7 +163,7 @@ func (kr *kubeconfigReconciler) reconcileKubeconfig(
 					capisecretutil.KubeconfigDataName: kubeconfigBytes,
 				})
 
-			_, err = kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
+			_, err = kr.kubernetesClient.CoreV1().Secrets(*kubeconfigSecret.Namespace).
 				Apply(ctx, kubeconfigSecret, operatorutil.ApplyOptions)
 			return errorsUtil.IfErrErrorf("failed to patch kubeconfig secret: %w", err)
 		},

@@ -2,66 +2,90 @@ package infrastructure_cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	slices "github.com/samber/lo"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
-	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
 type InfrastructureClusterReconciler interface {
-	SyncControlPlaneEndpoint(ctx context.Context, cluster *capiv1.Cluster) error
+	SyncControlPlaneEndpoint(
+		ctx context.Context,
+		hostedControlPlane *v1alpha1.HostedControlPlane,
+		cluster *capiv1.Cluster,
+	) error
 }
 
 func NewInfrastructureClusterReconciler(
 	client client.Client,
-	apiServerServiceLegacyPortName string,
+	apiServerServicePort int32,
 ) InfrastructureClusterReconciler {
 	return &infrastructureClusterReconciler{
-		client:                         client,
-		apiServerServiceLegacyPortName: apiServerServiceLegacyPortName,
-		tracer:                         tracing.GetTracer("infrastructureCluster"),
+		client:               client,
+		apiServerServicePort: apiServerServicePort,
+		tracer:               tracing.GetTracer("infrastructureCluster"),
 	}
 }
 
 type infrastructureClusterReconciler struct {
-	client                         client.Client
-	apiServerServiceLegacyPortName string
-	tracer                         string
+	client               client.Client
+	apiServerServicePort int32
+	tracer               string
 }
 
 var _ InfrastructureClusterReconciler = &infrastructureClusterReconciler{}
 
+var errGatewayMissingListener = errors.New("gateway is missing a TLS listener with a wildcard hostname")
+
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=*,verbs=get;patch
-//+kubebuilder:rbac:groups=core,resources=service,verbs=get
+//+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get
 
 func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, i.tracer, "SyncControlPlaneEndpoint",
 		func(ctx context.Context, span trace.Span) error {
-			service := &corev1.Service{
+			gateway := &gwv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      names.GetServiceName(cluster),
-					Namespace: cluster.Namespace,
+					Namespace: hostedControlPlane.Spec.Gateway.Namespace,
+					Name:      hostedControlPlane.Spec.Gateway.Name,
 				},
 			}
-			if err := i.client.Get(ctx, client.ObjectKeyFromObject(service), service); err != nil {
-				return fmt.Errorf("failed to get service: %w", err)
+			if err := i.client.Get(ctx, client.ObjectKeyFromObject(gateway), gateway); err != nil {
+				return fmt.Errorf("failed to get gateway: %w", err)
 			}
 
-			port := slices.SliceToMap(service.Spec.Ports, func(port corev1.ServicePort) (string, int32) {
-				return port.Name, port.Port
-			})[i.apiServerServiceLegacyPortName]
+			listener, found := slices.Find(gateway.Spec.Listeners, func(listener gwv1.Listener) bool {
+				return listener.Protocol == gwv1.TLSProtocolType && listener.Hostname != nil &&
+					strings.HasPrefix(string(*listener.Hostname), "*.")
+			})
+			if !found {
+				return fmt.Errorf(
+					"no listener found in gateway %s/%s: %w",
+					gateway.Namespace, gateway.Name,
+					errGatewayMissingListener,
+				)
+			}
+
+			endpoint := capiv1.APIEndpoint{
+				Host: fmt.Sprintf("%s.%s.%s",
+					cluster.Name, cluster.Namespace, strings.TrimPrefix(string(*listener.Hostname), "*."),
+				),
+				Port: i.apiServerServicePort,
+			}
 
 			infraCluster := &unstructured.Unstructured{}
 
@@ -79,16 +103,23 @@ func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 			}
 
 			if err := unstructured.SetNestedMap(infraCluster.Object, map[string]interface{}{
-				"host": service.Status.LoadBalancer.Ingress[0].IP,
-				"port": int64(port),
+				"host": endpoint.Host,
+				"port": int64(endpoint.Port),
 			}, "spec", "controlPlaneEndpoint"); err != nil {
 				return fmt.Errorf("failed to set control plane endpoint: %w", err)
 			}
 
-			return errorsUtil.IfErrErrorf(
-				"failed to patch infrastructure cluster: %w",
-				patchHelper.Patch(ctx, infraCluster),
-			)
+			if err = patchHelper.Patch(ctx, infraCluster); err != nil {
+				return fmt.Errorf("failed to patch infrastructure cluster: %w", err)
+			}
+
+			if cluster.Spec.ControlPlaneEndpoint.IsZero() ||
+				cluster.Spec.ControlPlaneEndpoint.Host != endpoint.Host ||
+				cluster.Spec.ControlPlaneEndpoint.Port != endpoint.Port {
+				return fmt.Errorf("control plane endpoint is not yet set: %w", operatorutil.ErrRequeueRequired)
+			}
+
+			return nil
 		},
 	)
 }

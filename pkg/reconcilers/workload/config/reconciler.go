@@ -91,7 +91,7 @@ func (cr *configReconciler) ReconcileClusterInfoConfigMap(
 				})
 
 			_, err = cr.kubernetesClient.CoreV1().
-				ConfigMaps(metav1.NamespacePublic).
+				ConfigMaps(*configMap.Namespace).
 				Apply(ctx, configMap, operatorutil.ApplyOptions)
 			return errorsUtil.IfErrErrorf("failed to apply cluster info configmap: %w", err)
 		},
@@ -131,7 +131,7 @@ func (cr *configReconciler) ReconcileKubeadmConfig(
 				)
 
 			_, err = cr.kubernetesClient.CoreV1().
-				ConfigMaps(metav1.NamespaceSystem).
+				ConfigMaps(*configMap.Namespace).
 				Apply(ctx, configMap, operatorutil.ApplyOptions)
 			return errorsUtil.IfErrErrorf("failed to apply kubeadm config configmap: %w", err)
 		},
@@ -173,7 +173,7 @@ func (cr *configReconciler) ReconcileKubeletConfig(
 				)
 
 			_, err = cr.kubernetesClient.CoreV1().
-				ConfigMaps(metav1.NamespaceSystem).
+				ConfigMaps(*configMap.Namespace).
 				Apply(ctx, configMap, operatorutil.ApplyOptions)
 			return errorsUtil.IfErrErrorf("failed to apply kubelet config configmap: %w", err)
 		},

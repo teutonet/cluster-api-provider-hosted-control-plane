@@ -172,3 +172,15 @@ func GetEtcdDNSNames(cluster *capiv1.Cluster) map[string]string {
 		return host, fmt.Sprintf("%s.%s.%s.svc", host, serviceName, cluster.Namespace)
 	})
 }
+
+func GetTLSRouteName(cluster *capiv1.Cluster) string {
+	return cluster.Name
+}
+
+func GetKonnectivityTLSRouteName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-konnectivity"
+}
+
+func GetKonnectivityServerHost(cluster *capiv1.Cluster) string {
+	return fmt.Sprintf("konnectivity.%s", cluster.Spec.ControlPlaneEndpoint.Host)
+}
