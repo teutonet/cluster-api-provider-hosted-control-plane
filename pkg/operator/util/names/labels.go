@@ -10,20 +10,13 @@ func GetControlPlaneLabels(cluster *capiv1.Cluster, component string) map[string
 		"cluster.x-k8s.io/cluster-name": cluster.Name,
 	}
 	if component != "" {
-		labels["component"] = component
+		labels["app.kubernetes.io/component"] = component
 	}
 	return labels
 }
 
 func GetControlPlaneSelector(cluster *capiv1.Cluster, component string) *metav1ac.LabelSelectorApplyConfiguration {
+	labels := GetControlPlaneLabels(cluster, component)
 	selector := metav1ac.LabelSelector()
-	selector.WithMatchLabels(map[string]string{
-		"cluster.x-k8s.io/cluster-name": cluster.Name,
-	})
-	if component != "" {
-		selector.WithMatchLabels(map[string]string{
-			"component": component,
-		})
-	}
-	return selector
+	return selector.WithMatchLabels(labels)
 }

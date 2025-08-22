@@ -7,15 +7,15 @@ import (
 
 	"github.com/coredns/corefile-migration/migration/corefile"
 	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers"
+	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
 	"k8s.io/client-go/kubernetes"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -29,7 +29,10 @@ func NewCoreDNSReconciler(
 	kubernetesClient kubernetes.Interface,
 ) CoreDNSReconciler {
 	return &coreDNSReconciler{
-		kubernetesClient: kubernetesClient,
+		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
+			KubernetesClient: kubernetesClient,
+			Tracer:           tracing.GetTracer("coredns"),
+		},
 		coreDNSLabels: map[string]string{
 			"k8s-app":                       "kube-dns",
 			"kubernetes.io/cluster-service": "true",
@@ -41,12 +44,11 @@ func NewCoreDNSReconciler(
 		coreDNSMetricsPortName:    "metrics",
 		coreDNSConfigMapName:      "coredns",
 		coreDNSCorefileFileName:   "Corefile",
-		tracer:                    tracing.GetTracer("coredns"),
 	}
 }
 
 type coreDNSReconciler struct {
-	kubernetesClient          kubernetes.Interface
+	reconcilers.WorkloadResourceReconciler
 	coreDNSLabels             map[string]string
 	coreDNSServiceAccountName string
 	coreDNSDNSPortName        string
@@ -54,13 +56,12 @@ type coreDNSReconciler struct {
 	coreDNSMetricsPortName    string
 	coreDNSConfigMapName      string
 	coreDNSCorefileFileName   string
-	tracer                    string
 }
 
 var _ CoreDNSReconciler = &coreDNSReconciler{}
 
 func (cr *coreDNSReconciler) ReconcileCoreDNS(ctx context.Context, cluster *capiv1.Cluster) error {
-	return tracing.WithSpan1(ctx, cr.tracer, "ReconcileCoreDNS",
+	return tracing.WithSpan1(ctx, cr.Tracer, "ReconcileCoreDNS",
 		func(ctx context.Context, span trace.Span) error {
 			phases := []struct {
 				Name      string
@@ -98,12 +99,12 @@ func (cr *coreDNSReconciler) ReconcileCoreDNS(ctx context.Context, cluster *capi
 }
 
 func (cr *coreDNSReconciler) reconcileCoreDNSRBAC(ctx context.Context) error {
-	return tracing.WithSpan1(ctx, cr.tracer, "ReconcileCoreDNSRBAC",
+	return tracing.WithSpan1(ctx, cr.Tracer, "ReconcileCoreDNSRBAC",
 		func(ctx context.Context, span trace.Span) error {
 			serviceAccount := corev1ac.ServiceAccount(cr.coreDNSServiceAccountName, metav1.NamespaceSystem)
 
-			_, err := cr.kubernetesClient.CoreV1().
-				ServiceAccounts(metav1.NamespaceSystem).
+			_, err := cr.KubernetesClient.CoreV1().
+				ServiceAccounts(*serviceAccount.Namespace).
 				Apply(ctx, serviceAccount, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply CoreDNS service account: %w", err)
@@ -125,7 +126,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSRBAC(ctx context.Context) error {
 						WithResources("endpointslices"),
 				)
 
-			_, err = cr.kubernetesClient.RbacV1().ClusterRoles().
+			_, err = cr.KubernetesClient.RbacV1().ClusterRoles().
 				Apply(ctx, clusterRole, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply CoreDNS cluster role: %w", err)
@@ -145,7 +146,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSRBAC(ctx context.Context) error {
 						WithNamespace(*serviceAccount.Namespace),
 				)
 
-			_, err = cr.kubernetesClient.RbacV1().ClusterRoleBindings().
+			_, err = cr.KubernetesClient.RbacV1().ClusterRoleBindings().
 				Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply CoreDNS cluster role binding: %w", err)
@@ -157,7 +158,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSRBAC(ctx context.Context) error {
 }
 
 func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, _ *capiv1.Cluster) error {
-	return tracing.WithSpan1(ctx, cr.tracer, "ReconcileCoreDNSConfigMap",
+	return tracing.WithSpan1(ctx, cr.Tracer, "ReconcileCoreDNSConfigMap",
 		func(ctx context.Context, span trace.Span) error {
 			defaultCorefile := &corefile.Corefile{
 				Servers: []*corefile.Server{
@@ -237,8 +238,8 @@ func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, _ *c
 					cr.coreDNSCorefileFileName: defaultCorefile.ToString(),
 				})
 
-			_, err := cr.kubernetesClient.CoreV1().
-				ConfigMaps(metav1.NamespaceSystem).
+			_, err := cr.KubernetesClient.CoreV1().
+				ConfigMaps(*configMap.Namespace).
 				Apply(ctx, configMap, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply CoreDNS configmap: %w", err)
@@ -250,9 +251,8 @@ func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, _ *c
 }
 
 func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) error {
-	return tracing.WithSpan1(ctx, cr.tracer, "ReconcileCoreDNSDeployment",
+	return tracing.WithSpan1(ctx, cr.Tracer, "ReconcileCoreDNSDeployment",
 		func(ctx context.Context, span trace.Span) error {
-			labelSelector := metav1ac.LabelSelector().WithMatchLabels(cr.coreDNSLabels)
 			coreDNSConfigVolume := corev1ac.Volume().
 				WithName("config-volume").
 				WithConfigMap(corev1ac.ConfigMapVolumeSource().
@@ -276,86 +276,65 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) err
 				WithName("ready").
 				WithContainerPort(8181).
 				WithProtocol(corev1.ProtocolTCP)
-			template := corev1ac.PodTemplateSpec().
-				WithLabels(cr.coreDNSLabels).
-				WithSpec(corev1ac.PodSpec().
-					WithTopologySpreadConstraints(operatorutil.CreatePodTopologySpreadConstraints(labelSelector)).
-					WithServiceAccountName(cr.coreDNSServiceAccountName).
-					WithPriorityClassName("system-cluster-critical").
-					WithTolerations(corev1ac.Toleration().WithOperator(corev1.TolerationOpExists)).
-					WithContainers(
-						corev1ac.Container().
-							WithName("coredns").
-							WithImage("registry.k8s.io/coredns/coredns:v1.12.0").
-							WithImagePullPolicy(corev1.PullAlways).
-							WithArgs("-conf", path.Join(*corednsConfigVolumeMount.MountPath, cr.coreDNSCorefileFileName)).
-							WithPorts(
-								corev1ac.ContainerPort().
-									WithName(cr.coreDNSDNSPortName).
-									WithContainerPort(53).
-									WithProtocol(corev1.ProtocolUDP),
-								corev1ac.ContainerPort().
-									WithName(cr.coreDNSTCPDNSPortName).
-									WithContainerPort(53).
-									WithProtocol(corev1.ProtocolTCP),
-								corev1ac.ContainerPort().
-									WithName(cr.coreDNSMetricsPortName).
-									WithContainerPort(9153).
-									WithProtocol(corev1.ProtocolTCP),
-								healthPort,
-								readyPort,
-							).
-							WithVolumeMounts(corednsConfigVolumeMount).
-							WithLivenessProbe(operatorutil.CreateLivenessProbe(healthPort, "/health", corev1.URISchemeHTTP)).
-							WithReadinessProbe(operatorutil.CreateReadinessProbe(readyPort, "/ready", corev1.URISchemeHTTP)).
-							WithStartupProbe(operatorutil.CreateStartupProbe(readyPort, "/ready", corev1.URISchemeHTTP)).
-							WithSecurityContext(corev1ac.SecurityContext().
-								WithAllowPrivilegeEscalation(false).
-								WithCapabilities(corev1ac.Capabilities().
-									WithDrop("ALL").
-									WithAdd("NET_BIND_SERVICE"),
-								).
-								WithReadOnlyRootFilesystem(true).
-								WithRunAsNonRoot(true).
-								WithRunAsUser(1000),
-							),
+			container := corev1ac.Container().
+				WithName("coredns").
+				WithImage("registry.k8s.io/coredns/coredns:v1.12.0").
+				WithImagePullPolicy(corev1.PullAlways).
+				WithArgs("-conf", path.Join(*corednsConfigVolumeMount.MountPath, cr.coreDNSCorefileFileName)).
+				WithPorts(
+					corev1ac.ContainerPort().
+						WithName(cr.coreDNSDNSPortName).
+						WithContainerPort(53).
+						WithProtocol(corev1.ProtocolUDP),
+					corev1ac.ContainerPort().
+						WithName(cr.coreDNSTCPDNSPortName).
+						WithContainerPort(53).
+						WithProtocol(corev1.ProtocolTCP),
+					corev1ac.ContainerPort().
+						WithName(cr.coreDNSMetricsPortName).
+						WithContainerPort(9153).
+						WithProtocol(corev1.ProtocolTCP),
+					healthPort,
+					readyPort,
+				).
+				WithVolumeMounts(corednsConfigVolumeMount).
+				WithLivenessProbe(operatorutil.CreateLivenessProbe(healthPort, "/health", corev1.URISchemeHTTP)).
+				WithReadinessProbe(operatorutil.CreateReadinessProbe(readyPort, "/ready", corev1.URISchemeHTTP)).
+				WithStartupProbe(operatorutil.CreateStartupProbe(readyPort, "/ready", corev1.URISchemeHTTP)).
+				WithSecurityContext(corev1ac.SecurityContext().
+					WithAllowPrivilegeEscalation(false).
+					WithCapabilities(corev1ac.Capabilities().
+						WithDrop("ALL").
+						WithAdd("NET_BIND_SERVICE"),
 					).
-					WithEnableServiceLinks(false).
-					WithVolumes(coreDNSConfigVolume).
-					WithDNSPolicy(corev1.DNSDefault),
+					WithReadOnlyRootFilesystem(true).
+					WithRunAsNonRoot(true).
+					WithRunAsUser(1000),
 				)
 
-			template, err := operatorutil.SetChecksumAnnotations(
+			_, err := cr.ReconcileDeployment(
 				ctx,
-				cr.kubernetesClient,
+				"coredns",
 				metav1.NamespaceSystem,
-				template,
+				2,
+				cr.coreDNSServiceAccountName,
+				"system-cluster-critical",
+				cr.coreDNSLabels,
+				[]*corev1ac.TolerationApplyConfiguration{
+					corev1ac.Toleration().
+						WithOperator(corev1.TolerationOpExists),
+				},
+				[]*corev1ac.ContainerApplyConfiguration{container},
+				[]*corev1ac.VolumeApplyConfiguration{coreDNSConfigVolume},
 			)
-			if err != nil {
-				return fmt.Errorf("failed to set checksum annotations: %w", err)
-			}
 
-			deployment := appsv1ac.Deployment("coredns", metav1.NamespaceSystem).
-				WithLabels(cr.coreDNSLabels).
-				WithSpec(appsv1ac.DeploymentSpec().
-					WithReplicas(2).
-					WithSelector(labelSelector).
-					WithTemplate(template),
-				)
-
-			_, err = cr.kubernetesClient.AppsV1().Deployments(metav1.NamespaceSystem).
-				Apply(ctx, deployment, operatorutil.ApplyOptions)
-			if err != nil {
-				return fmt.Errorf("failed to apply CoreDNS deployment: %w", err)
-			}
-
-			return nil
+			return errorsUtil.IfErrErrorf("failed to reconcile CoreDNS deployment: %w", err)
 		},
 	)
 }
 
 func (cr *coreDNSReconciler) reconcileCoreDNSService(ctx context.Context) error {
-	return tracing.WithSpan1(ctx, cr.tracer, "ReconcileCoreDNSService",
+	return tracing.WithSpan1(ctx, cr.Tracer, "ReconcileCoreDNSService",
 		func(ctx context.Context, span trace.Span) error {
 			service := corev1ac.Service("kube-dns", metav1.NamespaceSystem).
 				WithLabels(cr.coreDNSLabels).
@@ -382,8 +361,8 @@ func (cr *coreDNSReconciler) reconcileCoreDNSService(ctx context.Context) error 
 					WithType(corev1.ServiceTypeClusterIP),
 				)
 
-			_, err := cr.kubernetesClient.CoreV1().
-				Services(metav1.NamespaceSystem).
+			_, err := cr.KubernetesClient.CoreV1().
+				Services(*service.Namespace).
 				Apply(ctx, service, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply CoreDNS service: %w", err)

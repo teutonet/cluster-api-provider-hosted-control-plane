@@ -69,6 +69,11 @@ var (
 	errCertificateNotReady = fmt.Errorf("certificate not ready: %w", operatorutil.ErrRequeueRequired)
 )
 
+type certificateSpec struct {
+	name string
+	spec *certmanagerv1ac.CertificateSpecApplyConfiguration
+}
+
 //+kubebuilder:rbac:groups=cert-manager.io,resources=issuers,verbs=create;update;patch
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=create;update;patch
 
@@ -81,25 +86,17 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 		func(ctx context.Context, span trace.Span) error {
 			createCertificateSpec := func(
 				issuer *certmanagerv1ac.IssuerApplyConfiguration,
+				commonName string,
 				secretName string,
-				name string,
+				additionalUsages ...certmanagerv1.KeyUsage,
 			) *certmanagerv1ac.CertificateSpecApplyConfiguration {
-				return certmanagerv1ac.CertificateSpec().
-					WithSecretName(secretName).
-					WithIssuerRef(certmanagermetav1ac.IssuerReference().
-						WithKind(*issuer.Kind).
-						WithName(*issuer.Name),
-					).
-					WithCommonName(name).
-					WithDNSNames(name).
-					WithUsages(
-						certmanagerv1.UsageDigitalSignature,
-						certmanagerv1.UsageKeyEncipherment,
-						certmanagerv1.UsageCertSign,
-					).
-					WithIsCA(true).
-					WithDuration(metav1.Duration{Duration: cr.caCertificateDuration}).
-					WithRenewBeforePercentage(cr.certificateRenewBefore)
+				return cr.createCertificateSpec(
+					*issuer.Name,
+					commonName,
+					secretName,
+					true,
+					additionalUsages...,
+				)
 			}
 
 			rootIssuer := certmanagerv1ac.Issuer(names.GetRootIssuerName(cluster), hostedControlPlane.Namespace).
@@ -207,31 +204,52 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 	)
 }
 
-func (cr *certificateReconciler) createCertificateSpecs(cluster *capiv1.Cluster) []struct {
-	name string
-	spec *certmanagerv1ac.CertificateSpecApplyConfiguration
-} {
+func (cr *certificateReconciler) createCertificateSpec(
+	caIssuerName string,
+	commonName string,
+	secretName string,
+	isCA bool,
+	additionalUsages ...certmanagerv1.KeyUsage,
+) *certmanagerv1ac.CertificateSpecApplyConfiguration {
+	usages := []certmanagerv1.KeyUsage{
+		certmanagerv1.UsageKeyEncipherment,
+		certmanagerv1.UsageDigitalSignature,
+	}
+	usages = append(usages, additionalUsages...)
+	if isCA {
+		usages = append(usages, certmanagerv1.UsageCertSign)
+	}
+
+	return certmanagerv1ac.CertificateSpec().
+		WithSecretName(secretName).
+		WithIssuerRef(certmanagermetav1ac.IssuerReference().
+			WithKind(certmanagerv1.IssuerKind).
+			WithName(caIssuerName),
+		).
+		WithUsages(usages...).
+		WithIsCA(isCA).
+		WithCommonName(commonName).
+		WithDuration(metav1.Duration{Duration: slices.Ternary(isCA, cr.caCertificateDuration, cr.certificateDuration)}).
+		WithRenewBeforePercentage(cr.certificateRenewBefore)
+}
+
+func (cr *certificateReconciler) createCertificateSpecs(
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+) []certificateSpec {
 	createCertificateSpec := func(
 		caIssuerName string,
 		commonName string,
 		secretName string,
 		additionalUsages ...certmanagerv1.KeyUsage,
 	) *certmanagerv1ac.CertificateSpecApplyConfiguration {
-		usages := []certmanagerv1.KeyUsage{
-			certmanagerv1.UsageKeyEncipherment,
-			certmanagerv1.UsageDigitalSignature,
-		}
-		usages = append(usages, additionalUsages...)
-		return certmanagerv1ac.CertificateSpec().
-			WithSecretName(secretName).
-			WithIssuerRef(certmanagermetav1ac.IssuerReference().
-				WithKind(certmanagerv1.IssuerKind).
-				WithName(caIssuerName),
-			).
-			WithUsages(usages...).
-			WithCommonName(commonName).
-			WithDuration(metav1.Duration{Duration: cr.certificateDuration}).
-			WithRenewBeforePercentage(cr.certificateRenewBefore)
+		return cr.createCertificateSpec(
+			caIssuerName,
+			commonName,
+			secretName,
+			false,
+			additionalUsages...,
+		)
 	}
 
 	etcdDNSNames := []string{
@@ -246,10 +264,7 @@ func (cr *certificateReconciler) createCertificateSpecs(cluster *capiv1.Cluster)
 
 	sort.Strings(etcdDNSNames)
 
-	return []struct {
-		name string
-		spec *certmanagerv1ac.CertificateSpecApplyConfiguration
-	}{
+	return []certificateSpec{
 		{
 			name: names.GetAPIServerCertificateName(cluster),
 			spec: createCertificateSpec(
@@ -262,9 +277,11 @@ func (cr *certificateReconciler) createCertificateSpecs(cluster *capiv1.Cluster)
 				"kubernetes",
 				"kubernetes.default",
 				"kubernetes.default.svc",
+				cluster.Spec.ControlPlaneEndpoint.Host,
+				names.GetKonnectivityServerHost(cluster),
 				names.GetServiceName(cluster),
 				names.GetInternalServiceHost(cluster),
-			).WithIPAddresses(cluster.Spec.ControlPlaneEndpoint.Host, "10.96.0.1", "127.0.0.1"),
+			).WithIPAddresses(hostedControlPlane.Status.LegacyIP, "10.96.0.1", "127.0.0.1"),
 		},
 		{
 			name: names.GetAPIServerKubeletClientCertificateName(cluster),
@@ -383,7 +400,7 @@ func (cr *certificateReconciler) ReconcileCertificates(
 	return tracing.WithSpan1(ctx, cr.tracer, "ReconcileCertificates",
 		func(ctx context.Context, span trace.Span) error {
 			needsRequeue := false
-			for _, cert := range cr.createCertificateSpecs(cluster) {
+			for _, cert := range cr.createCertificateSpecs(hostedControlPlane, cluster) {
 				if certObj, err := cr.reconcileCertificate(ctx,
 					hostedControlPlane, cluster,
 					cert.name, cert.spec,
@@ -428,7 +445,7 @@ func (cr *certificateReconciler) reconcileCertificate(
 					),
 				)
 
-			result, err := cr.certManagerClient.CertmanagerV1().Certificates(hostedControlPlane.Namespace).
+			result, err := cr.certManagerClient.CertmanagerV1().Certificates(*certificate.Namespace).
 				Apply(ctx, certificate, operatorutil.ApplyOptions)
 			if err != nil {
 				return nil, fmt.Errorf("failed to patch certificate: %w", err)

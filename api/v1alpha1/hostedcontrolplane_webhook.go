@@ -11,7 +11,6 @@ import (
 	semver "github.com/blang/semver/v4"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -39,24 +38,6 @@ type hostedControlPlaneWebhook struct {
 var _ webhook.CustomValidator = &hostedControlPlaneWebhook{
 	groupKind: SchemeGroupVersion.WithKind("HostedControlPlane").GroupKind(),
 	specPath:  field.NewPath("spec"),
-}
-
-var _ webhook.CustomDefaulter = &hostedControlPlaneWebhook{
-	groupKind: SchemeGroupVersion.WithKind("HostedControlPlane").GroupKind(),
-	specPath:  field.NewPath("spec"),
-}
-
-func (w *hostedControlPlaneWebhook) Default(_ context.Context, obj runtime.Object) error {
-	hostedControlPlane, err := w.castObjectToHostedControlPlane(obj)
-	if err != nil {
-		return err
-	}
-
-	if hostedControlPlane.Spec.ETCD.VolumeSize.IsZero() {
-		hostedControlPlane.Spec.ETCD.VolumeSize = resource.MustParse("8Gi")
-	}
-
-	return nil
 }
 
 func (w *hostedControlPlaneWebhook) ValidateCreate(

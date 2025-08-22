@@ -153,8 +153,8 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
 						return konnectivityReconciler.ReconcileKonnectivity(ctx, hostedControlPlane, cluster)
 					},
-					Condition:    v1alpha1.WorkloadKonnectivityRBACReadyCondition,
-					FailedReason: v1alpha1.WorkloadKonnectivityRBACFailedReason,
+					Condition:    v1alpha1.WorkloadKonnectivityReadyCondition,
+					FailedReason: v1alpha1.WorkloadKonnectivityFailedReason,
 				},
 			}
 

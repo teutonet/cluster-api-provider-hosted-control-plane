@@ -55,21 +55,31 @@ type HostedControlPlaneSpec struct {
 type HostedControlPlaneTemplateTemplateSpec struct {
 	//+kubebuilder:validation:Optional
 	Deployment HostedControlPlaneDeployment `json:"deployment,omitempty"`
+	//+kubebuilder:validation:Required
+	Gateway GatewayReference `json:"gateway"`
+
 	//+kubebuilder:validation:Optional
 	KonnectivityClient HostedControlPlaneComponent `json:"konnectivityClient,omitempty"`
 	//+kubebuilder:validation:Optional
-	KubeProxy HostedControlPlaneKubeProxyComponent `json:"kubeProxy,omitempty"`
+	KubeProxy KubeProxyComponent `json:"kubeProxy,omitempty"`
 	//+kubebuilder:validation:Optional
-	ETCD HostedControlPlaneETCDComponent `json:"etcd,omitempty"`
+	ETCD ETCDComponent `json:"etcd,omitempty"`
+}
+
+type GatewayReference struct {
+	//+kubebuilder:validation:Required
+	Namespace string `json:"namespace"`
+	//+kubebuilder:validation:Required
+	Name string `json:"name"`
 }
 
 type HostedControlPlaneDeployment struct {
 	//+kubebuilder:validation:Optional
-	Scheduler HostedControlPlaneComponent `json:"scheduler,omitempty"`
+	Scheduler ScalableHostedControlPlaneComponent `json:"scheduler,omitempty"`
 	//+kubebuilder:validation:Optional
-	APIServer HostedControlPlaneAPIServerComponent `json:"apiServer,omitempty"`
+	APIServer APIServerComponent `json:"apiServer,omitempty"`
 	//+kubebuilder:validation:Optional
-	ControllerManager HostedControlPlaneComponent `json:"controllerManager,omitempty"`
+	ControllerManager ScalableHostedControlPlaneComponent `json:"controllerManager,omitempty"`
 	//+kubebuilder:validation:Optional
 	Konnectivity HostedControlPlaneComponent `json:"konnectivity,omitempty"`
 }
@@ -81,17 +91,26 @@ type HostedControlPlaneComponent struct {
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-type HostedControlPlaneKubeProxyComponent struct {
+type ScalableHostedControlPlaneComponent struct {
 	HostedControlPlaneComponent `json:",inline"`
-	Disabled                    bool `json:"enabled,omitempty"`
+	//+kubebuilder:validation:Optional
+	//+kubebuilder:default=1
+	Replicas *int32 `json:"replicas,omitempty"`
 }
 
-type HostedControlPlaneETCDComponent struct {
+type KubeProxyComponent struct {
+	HostedControlPlaneComponent `json:",inline"`
 	//+kubebuilder:validation:Optional
+	Disabled bool `json:"enabled,omitempty"`
+}
+
+type ETCDComponent struct {
+	//+kubebuilder:validation:Optional
+	//+kubebuilder:default="8Gi"
 	VolumeSize resource.Quantity `json:"volumeSize,omitempty"`
 }
 
-type HostedControlPlaneAPIServerComponent struct {
+type APIServerComponent struct {
 	HostedControlPlaneComponent `json:",inline"`
 	//+kubebuilder:validation:Optional
 	Mounts map[string]HostedControlPlaneMount `json:"mounts,omitempty"`
@@ -112,6 +131,8 @@ type HostedControlPlaneMount struct {
 type HostedControlPlaneStatus struct {
 	//+kubebuilder:validation:Optional
 	Conditions capiv1.Conditions `json:"conditions,omitempty"`
+	//+kubebuilder:validation:Optional
+	LegacyIP string `json:"legacyIP,omitempty"`
 
 	// Required fields by CAPI
 	// https://cluster-api.sigs.k8s.io/developer/providers/contracts/control-plane#controlplane-replicas
