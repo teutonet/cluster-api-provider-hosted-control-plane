@@ -3,10 +3,12 @@ package config
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -39,22 +41,32 @@ type ConfigReconciler interface {
 	) error
 	ReconcileKubeletConfig(
 		ctx context.Context,
-		hostedControlPlane *v1alpha1.HostedControlPlane,
-		cluster *capiv1.Cluster,
 	) error
 }
 
 func NewConfigReconciler(
-	kubernetesClient kubernetes.Interface,
+	kubernetesClient *alias.WorkloadClusterClient,
+	serviceDomain string,
+	serviceCIDR string,
+	podCIDR string,
+	dnsIP net.IP,
 ) ConfigReconciler {
 	return &configReconciler{
 		kubernetesClient: kubernetesClient,
+		serviceDomain:    serviceDomain,
+		serviceCIDR:      serviceCIDR,
+		podCIDR:          podCIDR,
+		dnsIP:            dnsIP,
 		tracer:           tracing.GetTracer("config"),
 	}
 }
 
 type configReconciler struct {
-	kubernetesClient kubernetes.Interface
+	kubernetesClient *alias.WorkloadClusterClient
+	serviceDomain    string
+	serviceCIDR      string
+	podCIDR          string
+	dnsIP            net.IP
 	tracer           string
 }
 
@@ -111,9 +123,9 @@ func (cr *configReconciler) ReconcileKubeadmConfig(
 			}
 			conf := initConfiguration.ClusterConfiguration
 			conf.Networking = kubeadm.Networking{
-				DNSDomain:     "cluster.local",
-				PodSubnet:     "192.168.0.0/16",
-				ServiceSubnet: "10.96.0.0/12",
+				DNSDomain:     cr.serviceDomain,
+				PodSubnet:     cr.podCIDR,
+				ServiceSubnet: cr.serviceCIDR,
 			}
 			conf.KubernetesVersion = hostedControlPlane.Spec.Version
 			conf.ControlPlaneEndpoint = cluster.Spec.ControlPlaneEndpoint.String()
@@ -140,8 +152,6 @@ func (cr *configReconciler) ReconcileKubeadmConfig(
 
 func (cr *configReconciler) ReconcileKubeletConfig(
 	ctx context.Context,
-	_ *v1alpha1.HostedControlPlane,
-	_ *capiv1.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, cr.tracer, "reconcileKubeletConfig",
 		func(ctx context.Context, span trace.Span) error {
@@ -153,8 +163,8 @@ func (cr *configReconciler) ReconcileKubeletConfig(
 			kubeletConfiguration.Kind = "KubeletConfiguration"
 			kubeletConfiguration.Authentication.X509.ClientCAFile = "/etc/kubernetes/pki/ca.crt"
 			kubeletConfiguration.CgroupDriver = konstants.CgroupDriverSystemd
-			kubeletConfiguration.ClusterDNS = []string{"10.96.0.10"}
-			kubeletConfiguration.ClusterDomain = "cluster.local"
+			kubeletConfiguration.ClusterDNS = []string{cr.dnsIP.String()}
+			kubeletConfiguration.ClusterDomain = cr.serviceDomain
 			kubeletConfiguration.RotateCertificates = true
 			kubeletConfiguration.StaticPodPath = kubeadmv1beta4.DefaultManifestsDir
 			kubeletConfiguration.Logging.FlushFrequency.SerializeAsString = false

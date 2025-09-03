@@ -4,6 +4,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	semconv "go.opentelemetry.io/otel/semconv/v1.34.0"
+	"google.golang.org/grpc/grpclog"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -35,8 +37,10 @@ import (
 	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
 
+var hostedControlPlaneControllerName = "hcp-controller"
+
 func Start(ctx context.Context, version string, operatorConfig etc.Config) (err error) {
-	ctx = configureLogging(ctx, operatorConfig.LogFormat)
+	ctx = configureLogging(ctx, operatorConfig.LogFormat, operatorConfig.LogLevel)
 
 	scheme, err := NewScheme()
 	if err != nil {
@@ -87,7 +91,7 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (err 
 		return err
 	}
 
-	tp, err := setupTracerProvider(ctx, operatorConfig.ServiceName, version)
+	tp, err := setupTracerProvider(ctx, hostedControlPlaneControllerName, version)
 	if err != nil {
 		return err
 	}
@@ -105,17 +109,21 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (err 
 	return nil
 }
 
-func configureLogging(ctx context.Context, format etc.LogFormat) context.Context {
+func configureLogging(ctx context.Context, format etc.LogFormat, logLevel slog.Leveler) context.Context {
 	var stdoutHandler slog.Handler
 	var stderrHandler slog.Handler
 
+	handlerOptions := &slog.HandlerOptions{
+		Level: logLevel,
+	}
+
 	switch format {
 	case etc.JSON:
-		stdoutHandler = slog.NewJSONHandler(os.Stdout, nil)
-		stderrHandler = slog.NewJSONHandler(os.Stderr, nil)
+		stdoutHandler = slog.NewJSONHandler(os.Stdout, handlerOptions)
+		stderrHandler = slog.NewJSONHandler(os.Stderr, handlerOptions)
 	case etc.TEXT:
-		stdoutHandler = slog.NewTextHandler(os.Stdout, nil)
-		stderrHandler = slog.NewTextHandler(os.Stderr, nil)
+		stdoutHandler = slog.NewTextHandler(os.Stdout, handlerOptions)
+		stderrHandler = slog.NewTextHandler(os.Stderr, handlerOptions)
 	}
 
 	handler := logging.NewTracingLoggingHandler(
@@ -126,6 +134,9 @@ func configureLogging(ctx context.Context, format etc.LogFormat) context.Context
 			),
 		),
 	)
+
+	// Disable gRPC logging as it is noisy and we log errors as usual.
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(io.Discard, io.Discard, io.Discard))
 
 	logrLogger := logr.FromSlogHandler(handler)
 	log.SetLogger(logrLogger)
@@ -138,7 +149,6 @@ func setupControllers(
 	maxConcurrentReconciles int,
 	tracingWrapper func(rt http.RoundTripper) http.RoundTripper,
 ) error {
-	hostedControlPlaneControllerName := "hcp-controller"
 	predicateLogger, err := logr.FromContext(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get logger from context: %w", err)

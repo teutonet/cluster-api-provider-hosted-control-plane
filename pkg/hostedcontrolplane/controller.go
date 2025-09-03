@@ -4,8 +4,8 @@ package hostedcontrolplane
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -15,7 +15,6 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
-	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/apiserverresources"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/certificates"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster"
@@ -31,6 +30,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
@@ -73,9 +73,13 @@ func NewHostedControlPlaneReconciler(
 		gatewayClient:                    gatewayClient,
 		recorder:                         recorder,
 		managementCluster:                workload.NewManagementCluster(kubernetesClient, tracingWrapper, "controller"),
+		caCertificatesDuration:           31 * 24 * time.Hour,
+		certificatesDuration:             24 * time.Hour,
 		apiServerServicePort:             int32(443),
 		etcdComponentLabel:               "etcd",
-		etcdClientPort:                   int32(2379),
+		etcdServerPort:                   int32(2379),
+		etcdServerStorageBuffer:          resource.MustParse("500Mi"),
+		etcdServerStorageIncrement:       resource.MustParse("1Gi"),
 		konnectivityClientKubeconfigName: "konnectivity-client",
 		controllerKubeconfigName:         "controller",
 		konnectivityServerAudience:       "system:konnectivity-server",
@@ -93,9 +97,13 @@ type hostedControlPlaneReconciler struct {
 	gatewayClient                    gwclient.Interface
 	recorder                         record.EventRecorder
 	managementCluster                workload.ManagementCluster
+	caCertificatesDuration           time.Duration
+	certificatesDuration             time.Duration
 	apiServerServicePort             int32
 	etcdComponentLabel               string
-	etcdClientPort                   int32
+	etcdServerPort                   int32
+	etcdServerStorageBuffer          resource.Quantity
+	etcdServerStorageIncrement       resource.Quantity
 	konnectivityClientKubeconfigName string
 	controllerKubeconfigName         string
 	konnectivityServerAudience       string
@@ -110,9 +118,11 @@ var _ HostedControlPlaneReconciler = &hostedControlPlaneReconciler{}
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=watch;list
 //+kubebuilder:rbac:groups=core,resources=services,verbs=watch;list
 //+kubebuilder:rbac:groups=core,resources=configmaps,verbs=watch;list
+//+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=watch;list
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=watch;list
 //+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=watch;list
 //+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=watch;list
+//+kubebuilder:rbac:groups=scheduling.k8s.io,resources=priorityclasses,verbs=watch;list
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=watch;list
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=tlsroutes,verbs=watch;list
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=watch;list
@@ -138,6 +148,12 @@ func (r *hostedControlPlaneReconciler) SetupWithManager(
 			Owns(&gwv1alpha2.TLSRoute{}).
 			Watches(&corev1.Secret{},
 				handler.EnqueueRequestsFromMapFunc(r.secretToHostedControlPlane),
+				builder.WithPredicates(
+					predicates.ResourceIsChanged(mgr.GetScheme(), predicateLogger),
+				),
+			).
+			Watches(&corev1.ConfigMap{},
+				handler.EnqueueRequestsFromMapFunc(r.configMapToHostedControlPlane),
 				builder.WithPredicates(
 					predicates.ResourceIsChanged(mgr.GetScheme(), predicateLogger),
 				),
@@ -186,40 +202,103 @@ func (r *hostedControlPlaneReconciler) secretToHostedControlPlane(
 		panic(fmt.Sprintf("Expected a Secret but got a %T", secret))
 	}
 
-	return slices.Flatten(slices.FilterMap(slices.FilterMap(secret.OwnerReferences, func(
-		ownerRef metav1.OwnerReference, _ int,
-	) (client.ObjectKey, bool) {
-		if ownerRef.Kind == "Certificate" &&
-			ownerRef.APIVersion == certmanagerv1.SchemeGroupVersion.String() {
-			return client.ObjectKey{
-				Namespace: secret.Namespace,
-				Name:      ownerRef.Name,
-			}, true
-		}
-		return client.ObjectKey{}, false
-	}), func(key client.ObjectKey, _ int) ([]reconcile.Request, bool) {
-		certificate := &certmanagerv1.Certificate{}
-		if err := r.client.Get(ctx, key, certificate); err != nil {
-			return []reconcile.Request{}, false
-		}
-		return slices.FilterMap(
-			certificate.OwnerReferences,
-			func(ownerRef metav1.OwnerReference, _ int) (reconcile.Request,
-				bool,
-			) {
-				if ownerRef.Kind == "HostedControlPlane" &&
-					ownerRef.APIVersion == v1alpha1.SchemeGroupVersion.String() {
-					return reconcile.Request{
-						NamespacedName: client.ObjectKey{
-							Namespace: key.Namespace,
-							Name:      ownerRef.Name,
-						},
-					}, true
+	certificateOwnerRefs := slices.Filter(secret.OwnerReferences, func(ownerRef metav1.OwnerReference, _ int) bool {
+		return ownerRef.Kind == "Certificate" && ownerRef.APIVersion == certmanagerv1.SchemeGroupVersion.String()
+	})
+
+	if len(certificateOwnerRefs) > 0 {
+		return slices.Flatten(slices.FilterMap(slices.Map(certificateOwnerRefs,
+			func(ownerRef metav1.OwnerReference, _ int) client.ObjectKey {
+				return client.ObjectKey{
+					Namespace: secret.Namespace,
+					Name:      ownerRef.Name,
 				}
-				return reconcile.Request{}, false
 			},
-		), true
-	}))
+		), func(key client.ObjectKey, _ int) ([]reconcile.Request, bool) {
+			return r.resolveOwnerRefsToHostedControlPlanes(ctx, key)
+		}))
+	}
+
+	hostedControlPlanes := v1alpha1.HostedControlPlaneList{}
+	if err := r.client.List(ctx, &hostedControlPlanes, client.InNamespace(secret.Namespace)); err != nil {
+		return nil
+	}
+
+	for _, hostedControlPlane := range hostedControlPlanes.Items {
+		if slices.SomeBy(slices.Entries(hostedControlPlane.Spec.Deployment.APIServer.Mounts),
+			func(mount slices.Entry[string, v1alpha1.HostedControlPlaneMount]) bool {
+				return mount.Value.Secret != nil && mount.Value.Secret.SecretName == secret.Name
+			},
+		) {
+			return []reconcile.Request{{
+				NamespacedName: client.ObjectKey{
+					Namespace: hostedControlPlane.Namespace,
+					Name:      hostedControlPlane.Name,
+				},
+			}}
+		}
+	}
+
+	return nil
+}
+
+func (r *hostedControlPlaneReconciler) configMapToHostedControlPlane(
+	ctx context.Context,
+	object client.Object,
+) []reconcile.Request {
+	configMap, ok := object.(*corev1.ConfigMap)
+	if !ok {
+		panic(fmt.Sprintf("Expected a ConfigMap but got a %T", configMap))
+	}
+
+	hostedControlPlanes := v1alpha1.HostedControlPlaneList{}
+	if err := r.client.List(ctx, &hostedControlPlanes, client.InNamespace(configMap.Namespace)); err != nil {
+		return nil
+	}
+
+	for _, hostedControlPlane := range hostedControlPlanes.Items {
+		if slices.SomeBy(slices.Entries(hostedControlPlane.Spec.Deployment.APIServer.Mounts),
+			func(mount slices.Entry[string, v1alpha1.HostedControlPlaneMount]) bool {
+				return mount.Value.ConfigMap != nil && mount.Value.ConfigMap.Name == configMap.Name
+			},
+		) {
+			return []reconcile.Request{{
+				NamespacedName: client.ObjectKey{
+					Namespace: hostedControlPlane.Namespace,
+					Name:      hostedControlPlane.Name,
+				},
+			}}
+		}
+	}
+
+	return nil
+}
+
+func (r *hostedControlPlaneReconciler) resolveOwnerRefsToHostedControlPlanes(
+	ctx context.Context,
+	key client.ObjectKey,
+) ([]reconcile.Request, bool) {
+	certificate := &certmanagerv1.Certificate{}
+	if err := r.client.Get(ctx, key, certificate); err != nil {
+		return []reconcile.Request{}, false
+	}
+	return slices.FilterMap(
+		certificate.OwnerReferences,
+		func(ownerRef metav1.OwnerReference, _ int) (reconcile.Request,
+			bool,
+		) {
+			if ownerRef.Kind == "HostedControlPlane" &&
+				ownerRef.APIVersion == v1alpha1.SchemeGroupVersion.String() {
+				return reconcile.Request{
+					NamespacedName: client.ObjectKey{
+						Namespace: key.Namespace,
+						Name:      ownerRef.Name,
+					},
+				}, true
+			}
+			return reconcile.Request{}, false
+		},
+	), true
 }
 
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes,verbs=get;update;patch
@@ -333,16 +412,60 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 			}
 
 			type Phase struct {
-				Reconcile    func(context.Context, *v1alpha1.HostedControlPlane, *capiv1.Cluster) error
+				Reconcile    func(context.Context, *v1alpha1.HostedControlPlane, *capiv1.Cluster) (string, error)
 				Condition    capiv1.ConditionType
 				FailedReason string
 				Name         string
 			}
 
+			serviceDomain := "cluster.local"
+			serviceCIDR := "10.96.0.0/12"
+			podCIDR := "10.0.0.0/16"
+			if cluster.Spec.ClusterNetwork != nil {
+				if cluster.Spec.ClusterNetwork.ServiceDomain != "" {
+					serviceDomain = cluster.Spec.ClusterNetwork.ServiceDomain
+				}
+
+				if clusterServiceCIDR := cluster.Spec.ClusterNetwork.Services.String(); clusterServiceCIDR != "" {
+					serviceCIDR = clusterServiceCIDR
+				}
+
+				if clusterPodCIDR := cluster.Spec.ClusterNetwork.Pods.String(); clusterPodCIDR != "" {
+					podCIDR = clusterPodCIDR
+				}
+			}
+
+			var dnsIP net.IP
+			var kubernetesServiceIP net.IP
+			if serviceCIDRIP, _, err := net.ParseCIDR(serviceCIDR); err != nil {
+				conditions.MarkFalse(
+					hostedControlPlane,
+					v1alpha1.WorkloadClusterResourcesReadyCondition,
+					v1alpha1.WorkloadClusterResourcesFailedReason,
+					capiv1.ConditionSeverityError,
+					"Failed to parse Service CIDR %q: %v", serviceCIDR, err,
+				)
+				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to parse Service CIDR %q: %w", serviceCIDR, err)
+			} else {
+				dnsIP = make(net.IP, len(serviceCIDRIP))
+				copy(dnsIP, serviceCIDRIP)
+				kubernetesServiceIP = make(net.IP, len(serviceCIDRIP))
+				copy(kubernetesServiceIP, serviceCIDRIP)
+				switch {
+				case serviceCIDRIP.To4() != nil:
+					dnsIP[len(dnsIP)-1] += 10
+					kubernetesServiceIP[len(kubernetesServiceIP)-1] += 1
+				case serviceCIDRIP.To16() != nil:
+					dnsIP[len(dnsIP)-1] += 16
+					kubernetesServiceIP[len(kubernetesServiceIP)-1] += 1
+				}
+			}
+
 			certificateReconciler := certificates.NewCertificateReconciler(
 				r.certManagerClient,
-				365*24*time.Hour,
-				(365*24*time.Hour)/12,
+				kubernetesServiceIP,
+				r.caCertificatesDuration,
+				r.certificatesDuration,
 				r.konnectivityServerAudience,
 			)
 			kubeconfigReconciler := kubeconfig.NewKubeconfigReconciler(
@@ -353,15 +476,18 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 			)
 			etcdClusterReconciler := etcd_cluster.NewEtcdClusterReconciler(
 				r.kubernetesClient,
-				r.etcdClientPort,
+				r.etcdServerPort,
+				r.etcdServerStorageBuffer,
+				r.etcdServerStorageIncrement,
 				r.etcdComponentLabel,
 			)
 			apiServerResourcesReconciler := apiserverresources.NewApiServerResourcesReconciler(
 				r.kubernetesClient,
+				serviceCIDR,
 				r.apiServerServicePort,
 				r.apiServerServiceLegacyPortName,
 				r.etcdComponentLabel,
-				r.etcdClientPort,
+				r.etcdServerPort,
 				r.konnectivityServicePort,
 				r.konnectivityClientKubeconfigName,
 				r.konnectivityServerAudience,
@@ -378,6 +504,10 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 			workloadClusterReconciler := workload.NewWorkloadClusterReconciler(
 				r.kubernetesClient,
 				r.managementCluster,
+				serviceDomain,
+				serviceCIDR,
+				podCIDR,
+				dnsIP,
 				r.konnectivityServerAudience,
 				r.apiServerServicePort,
 			)
@@ -408,8 +538,10 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 					FailedReason: v1alpha1.CertificatesFailedReason,
 				},
 				{
-					Name:         "kubeconfig",
-					Reconcile:    kubeconfigReconciler.ReconcileKubeconfigs,
+					Name: "kubeconfig",
+					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane, cluster *capiv1.Cluster) (string, error) {
+						return "", kubeconfigReconciler.ReconcileKubeconfigs(ctx, hostedControlPlane, cluster)
+					},
 					Condition:    v1alpha1.KubeconfigReadyCondition,
 					FailedReason: v1alpha1.KubeconfigFailedReason,
 				},
@@ -440,24 +572,32 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 			}
 
 			for _, phase := range phases {
-				if err := phase.Reconcile(ctx, hostedControlPlane, cluster); err != nil {
+				if notReadyReason, err := phase.Reconcile(ctx, hostedControlPlane, cluster); err != nil {
 					conditions.MarkFalse(
 						hostedControlPlane,
 						phase.Condition,
 						phase.FailedReason,
 						capiv1.ConditionSeverityError,
-						"Reconciling %s failed: %v", phase.Name, err,
+						"Reconciling phase %s failed: %v", phase.Name, err,
 					)
-					if errors.Is(err, operatorutil.ErrRequeueRequired) {
-						return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
-					}
 					return reconcile.Result{}, err
+				} else if notReadyReason != "" {
+					conditions.MarkFalse(
+						hostedControlPlane,
+						phase.Condition,
+						notReadyReason,
+						capiv1.ConditionSeverityInfo,
+						"phase %s not ready", phase.Name,
+					)
+					return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 				} else {
 					conditions.MarkTrue(hostedControlPlane, phase.Condition)
 				}
 			}
 
-			return ctrl.Result{}, nil
+			return ctrl.Result{
+				RequeueAfter: 1 * time.Minute,
+			}, nil
 		},
 	)
 }

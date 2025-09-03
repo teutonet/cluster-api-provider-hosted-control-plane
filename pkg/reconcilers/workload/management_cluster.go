@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,7 +18,7 @@ import (
 )
 
 type ManagementCluster interface {
-	GetWorkloadClusterClient(ctx context.Context, cluster *capiv1.Cluster) (*kubernetes.Clientset, error)
+	GetWorkloadClusterClient(ctx context.Context, cluster *capiv1.Cluster) (*alias.WorkloadClusterClient, error)
 }
 
 func NewManagementCluster(

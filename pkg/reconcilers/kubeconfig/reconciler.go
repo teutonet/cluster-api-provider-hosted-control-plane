@@ -69,7 +69,7 @@ func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, kr.tracer, "ReconcileKubeconfig",
+	return tracing.WithSpan1(ctx, kr.tracer, "ReconcileKubeconfigs",
 		func(ctx context.Context, span trace.Span) error {
 			localEndpoint := capiv1.APIEndpoint{
 				Host: "localhost",

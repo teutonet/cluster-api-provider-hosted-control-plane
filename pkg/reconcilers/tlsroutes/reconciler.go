@@ -2,7 +2,6 @@ package tlsroutes
 
 import (
 	"context"
-	"fmt"
 
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
@@ -26,7 +25,7 @@ type TLSRoutesReconciler interface {
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv1.Cluster,
-	) error
+	) (string, error)
 }
 
 func NewTLSRoutesReconciler(
@@ -57,9 +56,9 @@ func (trr *tlsRoutesReconciler) ReconcileTLSRoutes(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, trr.tracer, "ReconcileTLSRoutes",
-		func(ctx context.Context, span trace.Span) error {
+) (string, error) {
+	return tracing.WithSpan(ctx, trr.tracer, "ReconcileTLSRoutes",
+		func(ctx context.Context, span trace.Span) (string, error) {
 			apiServerTLSRoute := trr.createTLSRoute(
 				names.GetTLSRouteName(cluster),
 				cluster,
@@ -68,8 +67,10 @@ func (trr *tlsRoutesReconciler) ReconcileTLSRoutes(
 				trr.apiServerServicePort,
 			)
 
-			if err := trr.applyAndCheckTLSRoute(ctx, apiServerTLSRoute); err != nil {
-				return err
+			if ready, err := trr.applyAndCheckTLSRoute(ctx, apiServerTLSRoute); err != nil {
+				return "", err
+			} else if !ready {
+				return "Api Server TLS route not ready", nil
 			}
 
 			konnectivityTLSRoute := trr.createTLSRoute(
@@ -80,13 +81,15 @@ func (trr *tlsRoutesReconciler) ReconcileTLSRoutes(
 				trr.konnectivityServicePort,
 			)
 
-			if err := trr.applyAndCheckTLSRoute(ctx, konnectivityTLSRoute); err != nil {
-				return err
+			if ready, err := trr.applyAndCheckTLSRoute(ctx, konnectivityTLSRoute); err != nil {
+				return "", err
+			} else if !ready {
+				return "konnectivity TLS route not ready", nil
 			}
 
 			hostedControlPlane.Status.Ready = true
 
-			return nil
+			return "", nil
 		},
 	)
 }
@@ -120,9 +123,9 @@ func (trr *tlsRoutesReconciler) createTLSRoute(
 func (trr *tlsRoutesReconciler) applyAndCheckTLSRoute(
 	ctx context.Context,
 	tlsRoute *v1alpha2.TLSRouteApplyConfiguration,
-) error {
-	return tracing.WithSpan1(ctx, trr.tracer, "ApplyAndCheckTLSRoute",
-		func(ctx context.Context, span trace.Span) error {
+) (bool, error) {
+	return tracing.WithSpan(ctx, trr.tracer, "ApplyAndCheckTLSRoute",
+		func(ctx context.Context, span trace.Span) (bool, error) {
 			span.SetAttributes(
 				attribute.String("TLSRouteName", *tlsRoute.Name),
 				attribute.String("TLSRouteNamespace", *tlsRoute.Namespace),
@@ -131,7 +134,7 @@ func (trr *tlsRoutesReconciler) applyAndCheckTLSRoute(
 			appliedTLSRoute, err := trr.gatewayClient.GatewayV1alpha2().TLSRoutes(*tlsRoute.Namespace).
 				Apply(ctx, tlsRoute, operatorutil.ApplyOptions)
 			if err != nil {
-				return errorsUtil.IfErrErrorf("failed to apply %s TLSRoute: %w", *tlsRoute.Name, err)
+				return false, errorsUtil.IfErrErrorf("failed to apply %s TLSRoute: %w", *tlsRoute.Name, err)
 			}
 
 			if !slices.ContainsBy(appliedTLSRoute.Status.Parents, func(parent gwv1.RouteParentStatus) bool {
@@ -141,10 +144,10 @@ func (trr *tlsRoutesReconciler) applyAndCheckTLSRoute(
 							condition.Status == metav1.ConditionTrue
 					})
 			}) {
-				return fmt.Errorf("%s TLSRoute is not ready: %w", *tlsRoute.Name, operatorutil.ErrRequeueRequired)
+				return false, nil
 			}
 
-			return nil
+			return true, nil
 		},
 	)
 }

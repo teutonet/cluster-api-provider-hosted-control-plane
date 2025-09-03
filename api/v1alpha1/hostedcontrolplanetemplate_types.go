@@ -30,7 +30,7 @@ type HostedControlPlaneTemplateResource struct {
 	ObjectMeta metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	//+kubebuilder:validation:Required
-	Spec HostedControlPlaneTemplateTemplateSpec `json:"spec"`
+	Spec HostedControlPlaneInlineSpec `json:"spec"`
 }
 
 //+kubebuilder:object:root=true

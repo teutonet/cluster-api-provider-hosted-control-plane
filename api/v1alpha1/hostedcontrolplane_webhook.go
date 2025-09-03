@@ -27,7 +27,7 @@ func (c *HostedControlPlane) SetupWebhookWithManager(mgr ctrl.Manager) error {
 		Complete())
 }
 
-//+kubebuilder:webhook:path=/validate-hcp-teuto-net-v1alpha1-hostedcontrolplane,mutating=false,failurePolicy=fail,sideEffects=None,groups=hcp.teuto.net,resources=hostedcontrolplanes,verbs=create;update,versions=v1alpha1,name=vhostedcontrolplane.kb.io,admissionReviewVersions=v1
+//+kubebuilder:webhook:path=/validate-controlplane-cluster-x-k8s-io-v1alpha1-hostedcontrolplane,mutating=false,failurePolicy=fail,sideEffects=None,groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes,verbs=create;update,versions=v1alpha1,name=vhostedcontrolplane.kb.io,admissionReviewVersions=v1,serviceName=controller-manager
 //+kubebuilder:metadata:annotations="cert-manager.io/inject-ca-from=cluster-api-control-plane-provider-hosted-control-plane-webhook-ca"
 
 type hostedControlPlaneWebhook struct {
@@ -49,8 +49,30 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 		return []string{}, err
 	}
 
+	fieldErrs := field.ErrorList{}
+
 	if _, fieldErr := w.parseVersion(newHostedControlPlane); fieldErr != nil {
-		return []string{}, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{fieldErr})
+		fieldErrs = append(fieldErrs, fieldErr)
+	}
+
+	if newHostedControlPlane.Spec.ETCD.AutoGrow && !newHostedControlPlane.Spec.ETCD.VolumeSize.IsZero() {
+		fieldErrs = append(fieldErrs, field.Invalid(
+			w.specPath.Child("etcd").Child("autoGrow"),
+			newHostedControlPlane.Spec.ETCD.AutoGrow,
+			"autoGrow cannot be true when volumeSize is set",
+		))
+	}
+
+	if !newHostedControlPlane.Spec.ETCD.AutoGrow && newHostedControlPlane.Spec.ETCD.VolumeSize.IsZero() {
+		fieldErrs = append(fieldErrs, field.Invalid(
+			w.specPath.Child("etcd").Child("autoGrow"),
+			newHostedControlPlane.Spec.ETCD.AutoGrow,
+			"autoGrow cannot be false when volumeSize is not set",
+		))
+	}
+
+	if len(fieldErrs) > 0 {
+		return []string{}, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, fieldErrs)
 	}
 
 	return []string{}, nil
@@ -114,16 +136,36 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 		)})
 	}
 
-	if newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(oldHostedControlPlane.Spec.ETCD.VolumeSize) == -1 {
-		return warnings, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{field.Invalid(
-			w.specPath.Child("etcd").Child("volumeSize"),
-			newHostedControlPlane.Spec.ETCD.VolumeSize,
-			fmt.Sprintf(
-				"volume size cannot be decreased from %v to %v",
-				oldHostedControlPlane.Spec.ETCD.VolumeSize,
-				newHostedControlPlane.Spec.ETCD.VolumeSize,
-			),
-		)})
+	if !newHostedControlPlane.Spec.ETCD.AutoGrow {
+		if oldHostedControlPlane.Spec.ETCD.AutoGrow {
+			if newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(oldHostedControlPlane.Status.ETCDVolumeSize) == -1 {
+				return warnings, apierrors.NewInvalid(
+					w.groupKind,
+					newHostedControlPlane.Name,
+					field.ErrorList{field.Invalid(
+						w.specPath.Child("etcd").Child("volumeSize"),
+						newHostedControlPlane.Spec.ETCD.VolumeSize,
+						fmt.Sprintf(
+							"volume size cannot be decreased from %v to %v",
+							oldHostedControlPlane.Status.ETCDVolumeSize,
+							newHostedControlPlane.Spec.ETCD.VolumeSize,
+						),
+					)},
+				)
+			}
+		} else {
+			if newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(oldHostedControlPlane.Spec.ETCD.VolumeSize) == -1 {
+				return warnings, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{field.Invalid(
+					w.specPath.Child("etcd").Child("volumeSize"),
+					newHostedControlPlane.Spec.ETCD.VolumeSize,
+					fmt.Sprintf(
+						"volume size cannot be decreased from %v to %v",
+						oldHostedControlPlane.Spec.ETCD.VolumeSize,
+						newHostedControlPlane.Spec.ETCD.VolumeSize,
+					),
+				)})
+			}
+		}
 	}
 
 	return warnings, nil

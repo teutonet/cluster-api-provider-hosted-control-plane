@@ -144,12 +144,24 @@ func GetEtcdAPIServerClientCertificateName(cluster *capiv1.Cluster) string {
 	return cluster.Name + "-etcd-apiserver-client"
 }
 
-func GetEtcdAPIServerClientSecretName(cluster *capiv1.Cluster) string {
+func GetEtcdAPIServerClientCertificateSecretName(cluster *capiv1.Cluster) string {
 	return cluster.Name + "-etcd-apiserver-client"
+}
+
+func GetEtcdControllerClientCertificateName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-etcd-controller-client"
+}
+
+func GetEtcdControllerClientCertificateSecretName(cluster *capiv1.Cluster) string {
+	return cluster.Name + "-etcd-controller-client"
 }
 
 func GetEtcdClientServiceName(cluster *capiv1.Cluster) string {
 	return GetEtcdServiceName(cluster) + "-client"
+}
+
+func GetEtcdClientServiceDNSName(cluster *capiv1.Cluster) string {
+	return GetEtcdClientServiceName(cluster) + "." + cluster.Namespace + ".svc"
 }
 
 func GetEtcdServiceName(cluster *capiv1.Cluster) string {

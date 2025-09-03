@@ -17,9 +17,16 @@ import (
 //+kubebuilder:resource:path=hostedcontrolplanes,scope=Namespaced,categories=cluster-api,shortName=hcp
 //+kubebuilder:subresource:status
 //+kubebuilder:storageversion
-//+kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
+//+kubebuilder:printcolumn:name="Initialized",type=boolean,JSONPath=`.status.initialized`
+//+kubebuilder:printcolumn:name="API Server Available",type=string,JSONPath=`.status.conditions[?(@.type == "Ready")].status`
 //+kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
-//+kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type == "Ready")].status`
+//+kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
+//+kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
+//+kubebuilder:printcolumn:name="Unavailable",type=integer,JSONPath=`.status.unavailableReplicas`
+//+kubebuilder:printcolumn:name="ETCD Size",type=string,JSONPath=`.status.etcdVolumeSize`
+//+kubebuilder:printcolumn:name="Max ETCD Space Usage",type=string,JSONPath=`.status.etcdVolumeUsage`
+//+kubebuilder:printcolumn:name="Paused",type=string,JSONPath=`.metadata.annotations['cluster\.x-k8s\.io/paused']`
+//+kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
 //+kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 //+kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
 //+kubebuilder:metadata:annotations={"cert-manager.io/inject-ca-from=system/controller-manager-serving-certificate"}
@@ -49,21 +56,23 @@ type HostedControlPlaneSpec struct {
 	//+kubebuilder:validation:Optional
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	HostedControlPlaneTemplateTemplateSpec `json:",inline"`
+	HostedControlPlaneInlineSpec `json:",inline"`
 }
 
-type HostedControlPlaneTemplateTemplateSpec struct {
+type HostedControlPlaneInlineSpec struct {
 	//+kubebuilder:validation:Optional
 	Deployment HostedControlPlaneDeployment `json:"deployment,omitempty"`
 	//+kubebuilder:validation:Required
 	Gateway GatewayReference `json:"gateway"`
+	//+kubebuilder:default:10.0.0.0/16
+	ClusterCIDR string `json:"clusterCIDR,omitempty"`
 
 	//+kubebuilder:validation:Optional
-	KonnectivityClient HostedControlPlaneComponent `json:"konnectivityClient,omitempty"`
+	KonnectivityClient HostedControlPlaneContainer `json:"konnectivityClient,omitempty"`
 	//+kubebuilder:validation:Optional
 	KubeProxy KubeProxyComponent `json:"kubeProxy,omitempty"`
-	//+kubebuilder:validation:Optional
-	ETCD ETCDComponent `json:"etcd,omitempty"`
+	//+kubebuilder:default={}
+	ETCD *ETCDComponent `json:"etcd,omitempty"`
 }
 
 type GatewayReference struct {
@@ -75,45 +84,55 @@ type GatewayReference struct {
 
 type HostedControlPlaneDeployment struct {
 	//+kubebuilder:validation:Optional
-	Scheduler ScalableHostedControlPlaneComponent `json:"scheduler,omitempty"`
+	APIServer APIServerPod `json:"apiServer,omitempty"`
 	//+kubebuilder:validation:Optional
-	APIServer APIServerComponent `json:"apiServer,omitempty"`
+	ControllerManager ScalableHostedControlPlanePod `json:"controllerManager,omitempty"`
 	//+kubebuilder:validation:Optional
-	ControllerManager ScalableHostedControlPlaneComponent `json:"controllerManager,omitempty"`
-	//+kubebuilder:validation:Optional
-	Konnectivity HostedControlPlaneComponent `json:"konnectivity,omitempty"`
+	Scheduler ScalableHostedControlPlanePod `json:"scheduler,omitempty"`
 }
 
-type HostedControlPlaneComponent struct {
+type HostedControlPlanePod struct {
+	HostedControlPlaneContainer `json:",inline"`
+	//+kubebuilder:validation:Optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
+}
+
+type HostedControlPlaneContainer struct {
 	//+kubebuilder:validation:Optional
 	Args map[string]string `json:"args,omitempty"`
 	//+kubebuilder:validation:Optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-type ScalableHostedControlPlaneComponent struct {
-	HostedControlPlaneComponent `json:",inline"`
+type ScalableHostedControlPlanePod struct {
+	HostedControlPlanePod `json:",inline"`
 	//+kubebuilder:validation:Optional
 	//+kubebuilder:default=1
 	Replicas *int32 `json:"replicas,omitempty"`
 }
 
 type KubeProxyComponent struct {
-	HostedControlPlaneComponent `json:",inline"`
+	HostedControlPlanePod `json:",inline"`
 	//+kubebuilder:validation:Optional
 	Disabled bool `json:"enabled,omitempty"`
 }
 
 type ETCDComponent struct {
 	//+kubebuilder:validation:Optional
-	//+kubebuilder:default="8Gi"
 	VolumeSize resource.Quantity `json:"volumeSize,omitempty"`
+	// AutoGrow will increase the volume size automatically when it is near full.
+	//+kubebuilder:default=true
+	AutoGrow bool `json:"autoGrow,omitempty"`
+	//+kubebuilder:validation:Optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
 }
 
-type APIServerComponent struct {
-	HostedControlPlaneComponent `json:",inline"`
+type APIServerPod struct {
+	HostedControlPlanePod `json:",inline"`
 	//+kubebuilder:validation:Optional
 	Mounts map[string]HostedControlPlaneMount `json:"mounts,omitempty"`
+	//+kubebuilder:validation:Optional
+	Konnectivity HostedControlPlaneContainer `json:"konnectivity,omitempty"`
 }
 
 //+kubebuilder:validation:MinProperties=2
@@ -133,6 +152,10 @@ type HostedControlPlaneStatus struct {
 	Conditions capiv1.Conditions `json:"conditions,omitempty"`
 	//+kubebuilder:validation:Optional
 	LegacyIP string `json:"legacyIP,omitempty"`
+	//+kubebuilder:validation:Optional
+	ETCDVolumeSize resource.Quantity `json:"etcdVolumeSize,omitempty"`
+	//+kubebuilder:validation:Optional
+	ETCDVolumeUsage resource.Quantity `json:"etcdVolumeUsage,omitempty"`
 
 	// Required fields by CAPI
 	// https://cluster-api.sigs.k8s.io/developer/providers/contracts/control-plane#controlplane-replicas
