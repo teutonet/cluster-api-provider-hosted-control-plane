@@ -2,21 +2,32 @@ package etcd_cluster
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
+	"net"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
@@ -24,7 +35,6 @@ import (
 	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
 	"k8s.io/client-go/kubernetes"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
-	"k8s.io/utils/ptr"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
@@ -33,49 +43,48 @@ type EtcdClusterReconciler interface {
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv1.Cluster,
-	) error
+	) (string, error)
 }
 
 func NewEtcdClusterReconciler(
 	kubernetesClient kubernetes.Interface,
-	etcdClientPort int32,
+	etcdServerPort int32,
+	etcdServerStorageBuffer resource.Quantity,
+	etcdServerStorageIncrement resource.Quantity,
 	componentLabel string,
 ) EtcdClusterReconciler {
 	return &etcdClusterReconciler{
-		kubernetesClient: kubernetesClient,
-		etcdClientPort:   etcdClientPort,
-		componentLabel:   componentLabel,
-		tracer:           tracing.GetTracer("EtcdCluster"),
+		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
+			Tracer:           tracing.GetTracer("EtcdCluster"),
+			KubernetesClient: kubernetesClient,
+		},
+		etcdServerPort:             etcdServerPort,
+		etcdServerStorageBuffer:    etcdServerStorageBuffer,
+		etcdServerStorageIncrement: etcdServerStorageIncrement,
+		componentLabel:             componentLabel,
 	}
 }
 
 type etcdClusterReconciler struct {
-	kubernetesClient kubernetes.Interface
-	etcdClientPort   int32
-	componentLabel   string
-	tracer           string
+	reconcilers.ManagementResourceReconciler
+	etcdServerPort             int32
+	etcdServerStorageBuffer    resource.Quantity
+	etcdServerStorageIncrement resource.Quantity
+	componentLabel             string
 }
 
 var _ EtcdClusterReconciler = &etcdClusterReconciler{}
-
-var (
-	errStatefulSetRecreateRequired = fmt.Errorf(
-		"recreate required for etcd StatefulSet: %w",
-		operatorutil.ErrRequeueRequired,
-	)
-	errStatefulsetNotReady = fmt.Errorf("etcd StatefulSet is not ready: %w", operatorutil.ErrRequeueRequired)
-)
 
 func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, er.tracer, "ReconcileEtcdCluster",
-		func(ctx context.Context, span trace.Span) error {
-			clientPort := corev1ac.ContainerPort().
-				WithName("client").
-				WithContainerPort(er.etcdClientPort).
+) (string, error) {
+	return tracing.WithSpan(ctx, er.Tracer, "ReconcileEtcdCluster",
+		func(ctx context.Context, span trace.Span) (string, error) {
+			serverPort := corev1ac.ContainerPort().
+				WithName("server").
+				WithContainerPort(er.etcdServerPort).
 				WithProtocol(corev1.ProtocolTCP)
 
 			peerPort := corev1ac.ContainerPort().
@@ -92,27 +101,281 @@ func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 				hostedControlPlane, cluster,
 				names.GetEtcdServiceName(cluster),
 				true,
-				clientPort, peerPort, metricsPort,
+				serverPort, peerPort, metricsPort,
 			); err != nil {
-				return fmt.Errorf("failed to reconcile etcd service: %w", err)
+				return "", fmt.Errorf("failed to reconcile etcd service: %w", err)
 			}
 
 			if err := er.reconcileService(ctx,
 				hostedControlPlane, cluster,
 				names.GetEtcdClientServiceName(cluster),
 				false,
-				clientPort, peerPort, metricsPort,
+				serverPort, peerPort, metricsPort,
 			); err != nil {
-				return fmt.Errorf("failed to reconcile etcd client service: %w", err)
+				return "", fmt.Errorf("failed to reconcile etcd client service: %w", err)
 			}
 
-			err := er.reconcileStatefulSet(ctx, hostedControlPlane, cluster, clientPort, peerPort, metricsPort)
-			if err != nil {
-				return fmt.Errorf("failed to reconcile etcd StatefulSet: %w", err)
+			hostedControlPlane.Status.ETCDVolumeSize = er.getETCDVolumeSize(hostedControlPlane)
+
+			if err := er.reconcilePVCSizes(ctx, hostedControlPlane, cluster); err != nil {
+				return "", fmt.Errorf("failed to reconcile size of etcd PVCs: %w", err)
 			}
 
-			return errorsUtil.IfErrErrorf("failed to reconcile etcd PodDisruptionBudget: %w",
+			if ready, err := er.reconcileStatefulSet(
+				ctx, hostedControlPlane, cluster, serverPort, peerPort, metricsPort,
+			); err != nil {
+				return "", fmt.Errorf("failed to reconcile etcd StatefulSet: %w", err)
+			} else if !ready {
+				return "etcd StatefulSet is not ready", nil
+			}
+
+			if err := er.reconcileETCDSpaceUsage(ctx, hostedControlPlane, cluster); err != nil {
+				return "", fmt.Errorf("failed to reconcile etcd space usage: %w", err)
+			}
+
+			return "", errorsUtil.IfErrErrorf("failed to reconcile etcd PodDisruptionBudget: %w",
 				er.reconcilePodDisruptionBudget(ctx, hostedControlPlane, cluster),
+			)
+		},
+	)
+}
+
+//+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=patch;list
+
+func (er *etcdClusterReconciler) reconcilePVCSizes(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+) error {
+	return tracing.WithSpan1(ctx, er.Tracer, "ReconcilePVCSizes",
+		func(ctx context.Context, span trace.Span) error {
+			pvcClient := er.KubernetesClient.CoreV1().PersistentVolumeClaims(hostedControlPlane.Namespace)
+
+			pvcList, err := pvcClient.List(ctx, metav1.ListOptions{
+				LabelSelector: strings.Join(slices.MapToSlice(
+					names.GetControlPlaneSelector(cluster, er.componentLabel).MatchLabels,
+					func(key string, value string) string {
+						return fmt.Sprintf("%s=%s", key, value)
+					},
+				), ","),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to list etcd PVCs: %w", err)
+			}
+
+			for _, pvc := range pvcList.Items {
+				if pvc.Spec.Resources.Requests.Storage().Cmp(hostedControlPlane.Status.ETCDVolumeSize) == -1 {
+					pvcWithNewSize := corev1ac.PersistentVolumeClaim(pvc.Name, pvc.Namespace).
+						WithSpec(corev1ac.PersistentVolumeClaimSpec().WithResources(
+							corev1ac.VolumeResourceRequirements().WithRequests(corev1.ResourceList{
+								corev1.ResourceStorage: hostedControlPlane.Status.ETCDVolumeSize,
+							})),
+						)
+					_, err := pvcClient.Apply(ctx, pvcWithNewSize, operatorutil.ApplyOptions)
+					if err != nil {
+						return fmt.Errorf(
+							"failed to apply size change to etcd PVC %s: %w",
+							path.Join(pvc.Namespace, pvc.Name),
+							err,
+						)
+					}
+				}
+			}
+
+			return nil
+		},
+	)
+}
+
+func (er *etcdClusterReconciler) getETCDVolumeSize(hostedControlPlane *v1alpha1.HostedControlPlane) resource.Quantity {
+	if hostedControlPlane.Spec.ETCD.AutoGrow {
+		value := hostedControlPlane.Status.ETCDVolumeSize.DeepCopy()
+		value.Sub(hostedControlPlane.Status.ETCDVolumeUsage)
+		if value.Cmp(er.etcdServerStorageBuffer) == -1 {
+			newValue := hostedControlPlane.Status.ETCDVolumeSize.DeepCopy()
+			newValue.Add(er.etcdServerStorageIncrement)
+			return newValue
+		}
+		return hostedControlPlane.Status.ETCDVolumeSize
+	} else {
+		return hostedControlPlane.Spec.ETCD.VolumeSize
+	}
+}
+
+func (er *etcdClusterReconciler) reconcileETCDSpaceUsage(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+) error {
+	return tracing.WithSpan1(ctx, er.Tracer, "ReconcileETCDSpaceUsage",
+		func(ctx context.Context, span trace.Span) (err error) {
+			statuses, err := callETCDFuncOnAllMembers(
+				ctx,
+				er.KubernetesClient,
+				hostedControlPlane,
+				cluster,
+				er.etcdServerPort,
+				clientv3.Client.Status,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to get etcd member statuses: %w", err)
+			}
+
+			dbSize := slices.Max(slices.Map(slices.Values(statuses),
+				func(status *clientv3.StatusResponse, _ int) int64 {
+					return status.DbSize
+				},
+			))
+
+			dbSizeQuantity := resource.NewQuantity(dbSize, resource.BinarySI)
+			if dbSizeQuantity.Cmp(resource.MustParse("1G")) >= 0 {
+				dbSizeQuantity.SetScaled(dbSizeQuantity.ScaledValue(resource.Giga), resource.Giga)
+			} else {
+				dbSizeQuantity.SetScaled(dbSizeQuantity.ScaledValue(resource.Mega), resource.Mega)
+			}
+			hostedControlPlane.Status.ETCDVolumeUsage = *dbSizeQuantity
+
+			return nil
+		},
+	)
+}
+
+func callETCDFuncOnAllMembers[R any](
+	ctx context.Context,
+	kubernetesClient kubernetes.Interface,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+	etcdServerPort int32,
+	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (*R, error),
+) (map[string]*R, error) {
+	return tracing.WithSpan(ctx, "EtcdCluster", "CallETCDFuncOnAllMembers",
+		func(ctx context.Context, span trace.Span) (map[string]*R, error) {
+			caPool, clientCertificate, err := getETCDConnectionTLS(ctx, kubernetesClient, hostedControlPlane, cluster)
+			if err != nil {
+				return nil, err
+			}
+			endpoints := slices.MapValues(names.GetEtcdDNSNames(cluster), func(endpoint string, _ string) string {
+				return fmt.Sprintf("https://%s", net.JoinHostPort(endpoint, strconv.Itoa(int(etcdServerPort))))
+			})
+			results := make(map[string]*R, len(endpoints))
+			var errs error
+			for _, endpoint := range endpoints {
+				result, err := callETCDFuncOnMember(ctx, endpoint, caPool, clientCertificate, etcdFunc)
+				errs = errors.Join(errs, err)
+				results[endpoint] = result
+			}
+
+			return results, errs
+		},
+	)
+}
+
+func getETCDConnectionTLS(
+	ctx context.Context,
+	kubernetesClient kubernetes.Interface,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+) (*x509.CertPool, tls.Certificate, error) {
+	return tracing.WithSpan3(ctx, "EtcdCluster", "GetETCDConnectionTLS",
+		func(ctx context.Context, span trace.Span) (*x509.CertPool, tls.Certificate, error) {
+			secrets := kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace)
+			etcdCASecret, err := secrets.
+				Get(ctx, names.GetEtcdCASecretName(cluster), metav1.GetOptions{})
+			if err != nil {
+				return nil, tls.Certificate{}, fmt.Errorf("failed to get etcd CA secret: %w", err)
+			}
+
+			caPool := x509.NewCertPool()
+			if !caPool.AppendCertsFromPEM(etcdCASecret.Data[corev1.TLSCertKey]) {
+				return nil, tls.Certificate{}, fmt.Errorf("failed to append etcd CA cert to pool")
+			}
+
+			clientCertificateSecret, err := secrets.
+				Get(ctx, names.GetEtcdControllerClientCertificateSecretName(cluster), metav1.GetOptions{})
+			if err != nil {
+				return nil, tls.Certificate{}, fmt.Errorf(
+					"failed to get etcd API server client certificate secret: %w",
+					err,
+				)
+			}
+			clientCertificate, err := tls.X509KeyPair(
+				clientCertificateSecret.Data[corev1.TLSCertKey],
+				clientCertificateSecret.Data[corev1.TLSPrivateKeyKey],
+			)
+			if err != nil {
+				return nil, tls.Certificate{}, fmt.Errorf("failed to load etcd API server client certificate: %w", err)
+			}
+			return caPool, clientCertificate, nil
+		},
+	)
+}
+
+func callETCDFuncOnMember[R any](
+	ctx context.Context,
+	endpoint string,
+	caPool *x509.CertPool,
+	clientCertificate tls.Certificate,
+	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (*R, error),
+) (*R, error) {
+	return tracing.WithSpan(ctx, "EtcdCluster", "CallETCDFuncOnMember",
+		func(ctx context.Context, span trace.Span) (*R, error) {
+			etcdConfig := clientv3.Config{
+				Endpoints: []string{endpoint},
+				Logger:    zap.NewNop(),
+				TLS: &tls.Config{
+					InsecureSkipVerify: false,
+					RootCAs:            caPool,
+					Certificates:       []tls.Certificate{clientCertificate},
+					MinVersion:         tls.VersionTLS12,
+				},
+				DialOptions: []grpc.DialOption{grpc.WithBlock()},
+				DialTimeout: 10 * time.Second,
+			}
+			etcdClient, err := clientv3.New(etcdConfig)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create etcd client for endpoint %s: %w", endpoint, err)
+			}
+			defer func() {
+				if closeErr := etcdClient.Close(); closeErr != nil {
+					err = errors.Join(
+						err,
+						fmt.Errorf("failed to close etcd client for endpoint %s: %w", endpoint, closeErr),
+					)
+				}
+			}()
+
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+
+			return etcdFunc(*etcdClient, ctx, endpoint)
+		},
+	)
+}
+
+func callETCDFuncOnAnyMember[R any](
+	ctx context.Context,
+	kubernetesClient kubernetes.Interface,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+	etcdServerPort int32,
+	etcdFunc func(client clientv3.Client, ctx context.Context) (*R, error),
+) (*R, error) {
+	return tracing.WithSpan(ctx, "EtcdCluster", "CallETCDFuncOnAnyMember",
+		func(ctx context.Context, span trace.Span) (*R, error) {
+			caPool, clientCertificate, err := getETCDConnectionTLS(ctx, kubernetesClient, hostedControlPlane, cluster)
+			if err != nil {
+				return nil, err
+			}
+
+			endpoint := fmt.Sprintf("https://%s", net.JoinHostPort(
+				names.GetEtcdClientServiceDNSName(cluster),
+				strconv.Itoa(int(etcdServerPort)),
+			))
+
+			return callETCDFuncOnMember(ctx, endpoint, caPool, clientCertificate,
+				func(client clientv3.Client, ctx context.Context, _ string) (*R, error) {
+					return etcdFunc(client, ctx)
+				},
 			)
 		},
 	)
@@ -126,20 +389,20 @@ func (er *etcdClusterReconciler) reconcileService(
 	cluster *capiv1.Cluster,
 	name string,
 	headless bool,
-	clientPort *corev1ac.ContainerPortApplyConfiguration,
+	serverPort *corev1ac.ContainerPortApplyConfiguration,
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
 ) error {
-	return tracing.WithSpan1(ctx, er.tracer, "ReconcileEtcdService",
+	return tracing.WithSpan1(ctx, er.Tracer, "ReconcileEtcdService",
 		func(ctx context.Context, span trace.Span) error {
 			spec := corev1ac.ServiceSpec().
 				WithType(corev1.ServiceTypeClusterIP).
 				WithSelector(names.GetControlPlaneLabels(cluster, er.componentLabel)).
 				WithPorts(
 					corev1ac.ServicePort().
-						WithName("etcd-client").
-						WithPort(er.etcdClientPort).
-						WithTargetPort(intstr.FromString(*clientPort.Name)).
+						WithName("etcd-server").
+						WithPort(er.etcdServerPort).
+						WithTargetPort(intstr.FromString(*serverPort.Name)).
 						WithProtocol(corev1.ProtocolTCP),
 					corev1ac.ServicePort().
 						WithName("client-peer").
@@ -162,7 +425,7 @@ func (er *etcdClusterReconciler) reconcileService(
 				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(spec)
 
-			_, err := er.kubernetesClient.CoreV1().Services(*service.Namespace).
+			_, err := er.KubernetesClient.CoreV1().Services(*service.Namespace).
 				Apply(ctx, service, operatorutil.ApplyOptions)
 
 			return errorsUtil.IfErrErrorf("failed to apply etcd service: %w", err)
@@ -176,12 +439,12 @@ func (er *etcdClusterReconciler) reconcileStatefulSet(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-	clientPort *corev1ac.ContainerPortApplyConfiguration,
+	serverPort *corev1ac.ContainerPortApplyConfiguration,
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
-) error {
-	return tracing.WithSpan1(ctx, er.tracer, "ReconcileEtcdStatefulSet",
-		func(ctx context.Context, span trace.Span) error {
+) (bool, error) {
+	return tracing.WithSpan(ctx, er.Tracer, "ReconcileEtcdStatefulSet",
+		func(ctx context.Context, span trace.Span) (bool, error) {
 			etcdCertificatesVolume := er.createEtcdCertificatesVolume(cluster)
 
 			etcdDataVolumeClaimTemplate := er.createEtcdDataVolumeClaimTemplate(hostedControlPlane)
@@ -199,71 +462,91 @@ func (er *etcdClusterReconciler) reconcileStatefulSet(
 			container := er.createEtcdContainer(
 				hostedControlPlane, cluster,
 				etcdDataVolumeMount, etcdCertificatesVolumeMount,
-				clientPort, peerPort, metricsPort,
+				serverPort, peerPort, metricsPort,
 			)
-			template := corev1ac.PodTemplateSpec().
-				WithLabels(names.GetControlPlaneLabels(cluster, er.componentLabel)).
-				WithAnnotations(map[string]string{
-					"storage-size": hostedControlPlane.Spec.ETCD.VolumeSize.String(),
-				}).
-				WithSpec(corev1ac.PodSpec().
-					WithTopologySpreadConstraints(
-						operatorutil.CreatePodTopologySpreadConstraints(
-							names.GetControlPlaneSelector(cluster, er.componentLabel),
-						),
-					).
-					WithContainers(container).
-					WithVolumes(etcdDataVolume, etcdCertificatesVolume),
-				)
 
-			template, err := operatorutil.SetChecksumAnnotations(ctx, er.kubernetesClient, cluster.Namespace, template)
-			if err != nil {
-				return fmt.Errorf("failed to set checksum annotations: %w", err)
+			if _, ready, err := er.ReconcileStatefulset(
+				ctx,
+				hostedControlPlane,
+				names.GetEtcdStatefulSetName(cluster),
+				hostedControlPlane.Namespace,
+				reconcilers.PodOptions{
+					Annotations: map[string]string{
+						"storage-sizes": etcdDataVolumeClaimTemplate.Spec.Resources.Requests.Storage().String(),
+					},
+					PriorityClassName: hostedControlPlane.Spec.ETCD.PriorityClassName,
+				},
+				names.GetEtcdServiceName(cluster),
+				appsv1.ParallelPodManagement,
+				appsv1ac.StatefulSetUpdateStrategy().WithRollingUpdate(
+					appsv1ac.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
+				),
+				names.GetControlPlaneLabels(cluster, er.componentLabel),
+				3,
+				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
+					slices.T2(container, reconcilers.ContainerOptions{}),
+				},
+				[]*corev1ac.VolumeApplyConfiguration{etcdDataVolume, etcdCertificatesVolume},
+				[]*corev1ac.PersistentVolumeClaimApplyConfiguration{etcdDataVolumeClaimTemplate},
+				appsv1ac.StatefulSetPersistentVolumeClaimRetentionPolicy().
+					WithWhenDeleted(appsv1.DeletePersistentVolumeClaimRetentionPolicyType),
+			); err != nil {
+				return false, err
+			} else if !ready {
+				return false, nil
 			}
 
-			statefulSetName := names.GetEtcdStatefulSetName(cluster)
-			statefulSet := appsv1ac.StatefulSet(statefulSetName, hostedControlPlane.Namespace).
-				WithLabels(names.GetControlPlaneLabels(cluster, er.componentLabel)).
-				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
-				WithSpec(appsv1ac.StatefulSetSpec().
-					WithServiceName(names.GetEtcdServiceName(cluster)).
-					WithReplicas(3).
-					WithPodManagementPolicy(appsv1.ParallelPodManagement).
-					WithUpdateStrategy(appsv1ac.StatefulSetUpdateStrategy().WithRollingUpdate(
-						appsv1ac.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
-					)).
-					WithSelector(names.GetControlPlaneSelector(cluster, er.componentLabel)).
-					WithTemplate(template).
-					WithVolumeClaimTemplates(etcdDataVolumeClaimTemplate).
-					WithPersistentVolumeClaimRetentionPolicy(appsv1ac.StatefulSetPersistentVolumeClaimRetentionPolicy().
-						WithWhenDeleted(appsv1.DeletePersistentVolumeClaimRetentionPolicyType),
-					),
-				)
-
-			statefulSetObj, err := er.kubernetesClient.AppsV1().StatefulSets(*statefulSet.Namespace).
-				Apply(ctx, statefulSet, operatorutil.ApplyOptions)
-
-			if apierrors.IsInvalid(err) {
-				if err := er.kubernetesClient.AppsV1().StatefulSets(hostedControlPlane.Namespace).Delete(ctx,
-					statefulSetName,
-					metav1.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationOrphan)},
-				); err != nil {
-					return fmt.Errorf("failed to delete existing etcd StatefulSet: %w", err)
-				}
-				return errStatefulSetRecreateRequired
-			}
-
-			if err != nil {
-				return errorsUtil.IfErrErrorf("failed to apply etcd StatefulSet: %w", err)
-			}
-
-			if statefulSetObj.Status.ReadyReplicas != *statefulSetObj.Spec.Replicas {
-				return errStatefulsetNotReady
-			}
-
-			return nil
+			return true, er.etcdIsHealthy(ctx, hostedControlPlane, cluster)
 		},
 	)
+}
+
+func (er *etcdClusterReconciler) etcdIsHealthy(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+) error {
+	alarmResponse, err := callETCDFuncOnAnyMember(
+		ctx,
+		er.KubernetesClient,
+		hostedControlPlane,
+		cluster,
+		er.etcdServerPort,
+		clientv3.Client.AlarmList,
+	)
+	if err != nil {
+		return err
+	}
+	if len(alarmResponse.Alarms) > 0 {
+		// Disarm NOSPACE, as we automatically upscale the storage and the alarm is not relevant anymore.
+		outOfSpaceAlarms := slices.Filter(alarmResponse.Alarms, func(alarm *etcdserverpb.AlarmMember, _ int) bool {
+			return alarm.Alarm == etcdserverpb.AlarmType_NOSPACE
+		})
+		for _, outdatedAlarm := range outOfSpaceAlarms {
+			_, err := callETCDFuncOnAnyMember(
+				ctx,
+				er.KubernetesClient,
+				hostedControlPlane,
+				cluster,
+				er.etcdServerPort,
+				func(client clientv3.Client, ctx context.Context) (*clientv3.AlarmResponse, error) {
+					return client.AlarmDisarm(ctx, (*clientv3.AlarmMember)(outdatedAlarm))
+				},
+			)
+			if err != nil {
+				return fmt.Errorf("failed to disarm etcd alarm for non-existent member: %w", err)
+			}
+		}
+		activeAlarms, _ := slices.Difference(alarmResponse.Alarms, outOfSpaceAlarms)
+		if len(activeAlarms) > 0 {
+			return fmt.Errorf("etcd cluster has active alarms: %w", errors.Join(slices.Map(activeAlarms,
+				func(alarm *etcdserverpb.AlarmMember, _ int) error {
+					return fmt.Errorf("etcd member %d has alarm %s", alarm.MemberID, alarm.Alarm.String())
+				},
+			)...))
+		}
+	}
+	return nil
 }
 
 func (er *etcdClusterReconciler) createVolumeFromTemplate(
@@ -280,7 +563,7 @@ func (er *etcdClusterReconciler) createEtcdDataVolumeClaimTemplate(
 			WithAccessModes(corev1.ReadWriteOnce).
 			WithResources(corev1ac.VolumeResourceRequirements().
 				WithRequests(corev1.ResourceList{
-					corev1.ResourceStorage: hostedControlPlane.Spec.ETCD.VolumeSize,
+					corev1.ResourceStorage: hostedControlPlane.Status.ETCDVolumeSize,
 				}),
 			),
 		)
@@ -332,19 +615,19 @@ func (er *etcdClusterReconciler) createEtcdContainer(
 	cluster *capiv1.Cluster,
 	etcdDataVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	etcdCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	clientPort *corev1ac.ContainerPortApplyConfiguration,
+	serverPort *corev1ac.ContainerPortApplyConfiguration,
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
 	return corev1ac.Container().
 		WithName("etcd").
-		WithImage("registry.k8s.io/etcd:3.5.21-0").
+		WithImage("registry.k8s.io/etcd:3.6.4-0").
 		WithImagePullPolicy(corev1.PullAlways).
 		WithCommand("etcd").
 		WithArgs(er.buildEtcdArgs(
 			hostedControlPlane, cluster,
 			etcdDataVolumeMount, etcdCertificatesVolumeMount,
-			clientPort, peerPort, metricsPort,
+			serverPort, peerPort, metricsPort,
 		)...).
 		WithEnv(
 			corev1ac.EnvVar().
@@ -355,9 +638,6 @@ func (er *etcdClusterReconciler) createEtcdContainer(
 					),
 				),
 			corev1ac.EnvVar().
-				WithName("ETCDCTL_API").
-				WithValue("3"),
-			corev1ac.EnvVar().
 				WithName("ETCDCTL_CACERT").
 				WithValue(path.Join(*etcdCertificatesVolumeMount.MountPath, konstants.CACertName)),
 			corev1ac.EnvVar().
@@ -367,7 +647,7 @@ func (er *etcdClusterReconciler) createEtcdContainer(
 				WithName("ETCDCTL_KEY").
 				WithValue(path.Join(*etcdCertificatesVolumeMount.MountPath, "server.key")),
 		).
-		WithPorts(clientPort, peerPort, metricsPort).
+		WithPorts(serverPort, peerPort, metricsPort).
 		WithStartupProbe(operatorutil.CreateStartupProbe(metricsPort, "/readyz", corev1.URISchemeHTTP)).
 		WithReadinessProbe(operatorutil.CreateReadinessProbe(metricsPort, "/readyz", corev1.URISchemeHTTP)).
 		WithLivenessProbe(operatorutil.CreateLivenessProbe(metricsPort, "/livez", corev1.URISchemeHTTP)).
@@ -379,7 +659,7 @@ func (er *etcdClusterReconciler) buildEtcdArgs(
 	cluster *capiv1.Cluster,
 	etcdDataVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	etcdCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
-	clientPort *corev1ac.ContainerPortApplyConfiguration,
+	serverPort *corev1ac.ContainerPortApplyConfiguration,
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
 ) []string {
@@ -389,19 +669,23 @@ func (er *etcdClusterReconciler) buildEtcdArgs(
 		names.GetEtcdServiceName(cluster), hostedControlPlane.Namespace,
 	)
 
+	// 90% of the volume size
+	storageQuota := hostedControlPlane.Status.ETCDVolumeSize.Value() * 90 / 100
+
 	args := map[string]string{
 		"name":                        "$(POD_NAME)",
 		"data-dir":                    *etcdDataVolumeMount.MountPath,
 		"listen-peer-urls":            fmt.Sprintf("https://0.0.0.0:%d", *peerPort.ContainerPort),
-		"listen-client-urls":          fmt.Sprintf("https://0.0.0.0:%d", *clientPort.ContainerPort),
-		"advertise-client-urls":       fmt.Sprintf("%s:%d", podUrl, *clientPort.ContainerPort),
+		"listen-client-urls":          fmt.Sprintf("https://0.0.0.0:%d", *serverPort.ContainerPort),
+		"advertise-client-urls":       fmt.Sprintf("%s:%d", podUrl, *serverPort.ContainerPort),
 		"initial-cluster-state":       "new",
 		"initial-cluster-token":       "etcd-cluster",
 		"initial-cluster":             er.buildInitialCluster(cluster, peerPort),
 		"initial-advertise-peer-urls": fmt.Sprintf("%s:%d", podUrl, *peerPort.ContainerPort),
 		"listen-metrics-urls":         fmt.Sprintf("http://0.0.0.0:%d", *metricsPort.ContainerPort),
-		"auto-compaction-mode":        "revision",
-		"auto-compaction-retention":   "1000",
+		"auto-compaction-mode":        "periodic",
+		"auto-compaction-retention":   "72h",
+		"snapshot-count":              "10000",
 		"client-cert-auth":            "true",
 		"trusted-ca-file":             path.Join(certificatesDir, konstants.CACertName),
 		"cert-file":                   path.Join(certificatesDir, "server.crt"),
@@ -410,7 +694,7 @@ func (er *etcdClusterReconciler) buildEtcdArgs(
 		"peer-trusted-ca-file":        path.Join(certificatesDir, konstants.CACertName),
 		"peer-cert-file":              path.Join(certificatesDir, "peer.crt"),
 		"peer-key-file":               path.Join(certificatesDir, "peer.key"),
-		"quota-backend-bytes":         "8589934592",
+		"quota-backend-bytes":         strconv.Itoa(int(storageQuota)),
 	}
 
 	return operatorutil.ArgsToSlice(args)
@@ -445,7 +729,7 @@ func (er *etcdClusterReconciler) reconcilePodDisruptionBudget(
 			WithSelector(names.GetControlPlaneSelector(cluster, er.componentLabel)),
 		)
 
-	_, err := er.kubernetesClient.PolicyV1().PodDisruptionBudgets(*pdb.Namespace).
+	_, err := er.KubernetesClient.PolicyV1().PodDisruptionBudgets(*pdb.Namespace).
 		Apply(ctx, pdb, operatorutil.ApplyOptions)
 	if err != nil {
 		return fmt.Errorf("failed to apply etcd PodDisruptionBudget: %w", err)

@@ -53,3 +53,19 @@ func WithSpan1[R any](
 	}
 	return
 }
+
+func WithSpan3[R1 any, R2 any](
+	ctx context.Context,
+	tracerName string,
+	spanName string,
+	block func(context.Context, trace.Span) (R1, R2, error),
+) (r1 R1, r2 R2, err error) {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName)
+	defer span.End()
+	r1, r2, err = block(ctx, span)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	return
+}

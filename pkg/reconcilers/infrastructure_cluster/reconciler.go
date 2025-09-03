@@ -8,7 +8,6 @@ import (
 
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
-	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,7 +23,7 @@ type InfrastructureClusterReconciler interface {
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv1.Cluster,
-	) error
+	) (string, error)
 }
 
 func NewInfrastructureClusterReconciler(
@@ -55,9 +54,9 @@ func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, i.tracer, "SyncControlPlaneEndpoint",
-		func(ctx context.Context, span trace.Span) error {
+) (string, error) {
+	return tracing.WithSpan(ctx, i.tracer, "SyncControlPlaneEndpoint",
+		func(ctx context.Context, span trace.Span) (string, error) {
 			gateway := &gwv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: hostedControlPlane.Spec.Gateway.Namespace,
@@ -65,7 +64,7 @@ func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 				},
 			}
 			if err := i.client.Get(ctx, client.ObjectKeyFromObject(gateway), gateway); err != nil {
-				return fmt.Errorf("failed to get gateway: %w", err)
+				return "", fmt.Errorf("failed to get gateway: %w", err)
 			}
 
 			listener, found := slices.Find(gateway.Spec.Listeners, func(listener gwv1.Listener) bool {
@@ -73,7 +72,7 @@ func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 					strings.HasPrefix(string(*listener.Hostname), "*.")
 			})
 			if !found {
-				return fmt.Errorf(
+				return "", fmt.Errorf(
 					"no listener found in gateway %s/%s: %w",
 					gateway.Namespace, gateway.Name,
 					errGatewayMissingListener,
@@ -94,32 +93,32 @@ func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 			infraCluster.SetNamespace(cluster.Spec.InfrastructureRef.Namespace)
 
 			if err := i.client.Get(ctx, client.ObjectKeyFromObject(infraCluster), infraCluster); err != nil {
-				return fmt.Errorf("failed to get infrastructure cluster: %w", err)
+				return "", fmt.Errorf("failed to get infrastructure cluster: %w", err)
 			}
 
 			patchHelper, err := patch.NewHelper(infraCluster, i.client)
 			if err != nil {
-				return fmt.Errorf("failed to create patch helper: %w", err)
+				return "", fmt.Errorf("failed to create patch helper: %w", err)
 			}
 
 			if err := unstructured.SetNestedMap(infraCluster.Object, map[string]interface{}{
 				"host": endpoint.Host,
 				"port": int64(endpoint.Port),
 			}, "spec", "controlPlaneEndpoint"); err != nil {
-				return fmt.Errorf("failed to set control plane endpoint: %w", err)
+				return "", fmt.Errorf("failed to set control plane endpoint: %w", err)
 			}
 
 			if err = patchHelper.Patch(ctx, infraCluster); err != nil {
-				return fmt.Errorf("failed to patch infrastructure cluster: %w", err)
+				return "", fmt.Errorf("failed to patch infrastructure cluster: %w", err)
 			}
 
 			if cluster.Spec.ControlPlaneEndpoint.IsZero() ||
 				cluster.Spec.ControlPlaneEndpoint.Host != endpoint.Host ||
 				cluster.Spec.ControlPlaneEndpoint.Port != endpoint.Port {
-				return fmt.Errorf("control plane endpoint is not yet set: %w", operatorutil.ErrRequeueRequired)
+				return "control plane endpoint is not yet set", nil
 			}
 
-			return nil
+			return "", nil
 		},
 	)
 }

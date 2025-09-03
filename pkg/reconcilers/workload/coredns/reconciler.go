@@ -3,11 +3,14 @@ package coredns
 import (
 	"context"
 	"fmt"
+	"net"
 	"path"
 
 	"github.com/coredns/corefile-migration/migration/corefile"
+	slices "github.com/samber/lo"
 	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers/alias"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -17,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
-	"k8s.io/client-go/kubernetes"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
@@ -26,13 +28,17 @@ type CoreDNSReconciler interface {
 }
 
 func NewCoreDNSReconciler(
-	kubernetesClient kubernetes.Interface,
+	kubernetesClient *alias.WorkloadClusterClient,
+	serviceDomain string,
+	dnsIP net.IP,
 ) CoreDNSReconciler {
 	return &coreDNSReconciler{
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
 			KubernetesClient: kubernetesClient,
 			Tracer:           tracing.GetTracer("coredns"),
 		},
+		serviceDomain: serviceDomain,
+		dnsIP:         dnsIP,
 		coreDNSLabels: map[string]string{
 			"k8s-app":                       "kube-dns",
 			"kubernetes.io/cluster-service": "true",
@@ -49,6 +55,8 @@ func NewCoreDNSReconciler(
 
 type coreDNSReconciler struct {
 	reconcilers.WorkloadResourceReconciler
+	serviceDomain             string
+	dnsIP                     net.IP
 	coreDNSLabels             map[string]string
 	coreDNSServiceAccountName string
 	coreDNSDNSPortName        string
@@ -157,13 +165,13 @@ func (cr *coreDNSReconciler) reconcileCoreDNSRBAC(ctx context.Context) error {
 	)
 }
 
-func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, _ *capiv1.Cluster) error {
+func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, cluster *capiv1.Cluster) error {
 	return tracing.WithSpan1(ctx, cr.Tracer, "ReconcileCoreDNSConfigMap",
 		func(ctx context.Context, span trace.Span) error {
 			defaultCorefile := &corefile.Corefile{
 				Servers: []*corefile.Server{
 					{
-						DomPorts: []string{".:53"},
+						DomPorts: []string{".:5353"},
 						Plugins: []*corefile.Plugin{
 							{
 								Name: "errors",
@@ -182,7 +190,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, _ *c
 							},
 							{
 								Name: "kubernetes",
-								Args: []string{"cluster.local", "in-addr.arpa", "ip6.arpa"},
+								Args: []string{cr.serviceDomain, "in-addr.arpa", "ip6.arpa"},
 								Options: []*corefile.Option{
 									{
 										Name: "fallthrough",
@@ -204,7 +212,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, _ *c
 								Options: []*corefile.Option{
 									{
 										Name: "max_concurrent",
-										Args: []string{"1000"},
+										Args: []string{"10000"},
 									},
 								},
 							},
@@ -214,11 +222,11 @@ func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context, _ *c
 								Options: []*corefile.Option{
 									{
 										Name: "disable",
-										Args: []string{"success", "cluster.local"},
+										Args: []string{"success", cr.serviceDomain},
 									},
 									{
 										Name: "disable",
-										Args: []string{"denial", "cluster.local"},
+										Args: []string{"denial", cr.serviceDomain},
 									},
 								},
 							},
@@ -284,11 +292,11 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) err
 				WithPorts(
 					corev1ac.ContainerPort().
 						WithName(cr.coreDNSDNSPortName).
-						WithContainerPort(53).
+						WithContainerPort(5353).
 						WithProtocol(corev1.ProtocolUDP),
 					corev1ac.ContainerPort().
 						WithName(cr.coreDNSTCPDNSPortName).
-						WithContainerPort(53).
+						WithContainerPort(5353).
 						WithProtocol(corev1.ProtocolTCP),
 					corev1ac.ContainerPort().
 						WithName(cr.coreDNSMetricsPortName).
@@ -300,31 +308,27 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) err
 				WithVolumeMounts(corednsConfigVolumeMount).
 				WithLivenessProbe(operatorutil.CreateLivenessProbe(healthPort, "/health", corev1.URISchemeHTTP)).
 				WithReadinessProbe(operatorutil.CreateReadinessProbe(readyPort, "/ready", corev1.URISchemeHTTP)).
-				WithStartupProbe(operatorutil.CreateStartupProbe(readyPort, "/ready", corev1.URISchemeHTTP)).
-				WithSecurityContext(corev1ac.SecurityContext().
-					WithAllowPrivilegeEscalation(false).
-					WithCapabilities(corev1ac.Capabilities().
-						WithDrop("ALL").
-						WithAdd("NET_BIND_SERVICE"),
-					).
-					WithReadOnlyRootFilesystem(true).
-					WithRunAsNonRoot(true).
-					WithRunAsUser(1000),
-				)
+				WithStartupProbe(operatorutil.CreateStartupProbe(readyPort, "/ready", corev1.URISchemeHTTP))
 
-			_, err := cr.ReconcileDeployment(
+			_, _, err := cr.ReconcileDeployment(
 				ctx,
 				"coredns",
 				metav1.NamespaceSystem,
 				2,
-				cr.coreDNSServiceAccountName,
-				"system-cluster-critical",
-				cr.coreDNSLabels,
-				[]*corev1ac.TolerationApplyConfiguration{
-					corev1ac.Toleration().
+				reconcilers.PodOptions{
+					ServiceAccountName: cr.coreDNSServiceAccountName,
+					PriorityClassName:  "system-cluster-critical",
+					DNSPolicy:          corev1.DNSDefault,
+					Tolerations: []*corev1ac.TolerationApplyConfiguration{corev1ac.Toleration().
 						WithOperator(corev1.TolerationOpExists),
+					},
 				},
-				[]*corev1ac.ContainerApplyConfiguration{container},
+				cr.coreDNSLabels,
+				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
+					slices.T2(container, reconcilers.ContainerOptions{
+						Capabilities: []corev1.Capability{"NET_BIND_SERVICE"},
+					}),
+				},
 				[]*corev1ac.VolumeApplyConfiguration{coreDNSConfigVolume},
 			)
 
@@ -340,7 +344,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSService(ctx context.Context) error 
 				WithLabels(cr.coreDNSLabels).
 				WithSpec(corev1ac.ServiceSpec().
 					WithSelector(cr.coreDNSLabels).
-					WithClusterIP("10.96.0.10").
+					WithClusterIP(cr.dnsIP.String()).
 					WithPorts(
 						corev1ac.ServicePort().
 							WithName("dns").

@@ -2,7 +2,6 @@ package apiserverresources
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"path"
@@ -31,27 +30,26 @@ import (
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 )
 
-var errServiceNotReady = fmt.Errorf("service is not ready: %w", operatorutil.ErrRequeueRequired)
-
 type ApiServerResourcesReconciler interface {
 	ReconcileApiServerService(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv1.Cluster,
-	) error
+	) (string, error)
 	ReconcileApiServerDeployments(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv1.Cluster,
-	) error
+	) (string, error)
 }
 
 func NewApiServerResourcesReconciler(
 	kubernetesClient kubernetes.Interface,
+	serviceCIDR string,
 	apiServerServicePort int32,
 	apiServerServiceLegacyPortName string,
 	etcdComponentLabel string,
-	etcdClientPort int32,
+	etcdServerPort int32,
 	konnectivityServicePort int32,
 	konnectivityClientKubeconfigName string,
 	konnectivityServerAudience string,
@@ -61,10 +59,11 @@ func NewApiServerResourcesReconciler(
 			Tracer:           tracing.GetTracer("apiServerResources"),
 			KubernetesClient: kubernetesClient,
 		},
+		serviceCIDR:                         serviceCIDR,
 		apiServerServicePort:                apiServerServicePort,
 		apiServerServiceLegacyPortName:      apiServerServiceLegacyPortName,
 		etcdComponentLabel:                  etcdComponentLabel,
-		etcdClientPort:                      etcdClientPort,
+		etcdServerPort:                      etcdServerPort,
 		konnectivityServicePort:             konnectivityServicePort,
 		konnectivityClientKubeconfigName:    konnectivityClientKubeconfigName,
 		konnectivityServerAudience:          konnectivityServerAudience,
@@ -81,10 +80,11 @@ func NewApiServerResourcesReconciler(
 
 type apiServerResourcesReconciler struct {
 	reconcilers.ManagementResourceReconciler
+	serviceCIDR                         string
 	apiServerServicePort                int32
 	apiServerServiceLegacyPortName      string
 	etcdComponentLabel                  string
-	etcdClientPort                      int32
+	etcdServerPort                      int32
 	konnectivityServicePort             int32
 	konnectivityClientKubeconfigName    string
 	konnectivityServerAudience          string
@@ -104,40 +104,39 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerDeployments(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
+) (string, error) {
 	if err := arr.reconcileKonnectivityConfig(ctx, hostedControlPlane, cluster); err != nil {
-		return fmt.Errorf("failed to reconcile konnectivity config: %w", err)
+		return "", fmt.Errorf("failed to reconcile konnectivity config: %w", err)
 	}
-	if err := arr.reconcileAPIServerDeployment(ctx, hostedControlPlane, cluster); err != nil {
-		return fmt.Errorf("failed to reconcile API server deployment: %w", err)
+	if ready, err := arr.reconcileAPIServerDeployment(ctx, hostedControlPlane, cluster); err != nil || !ready {
+		return "Api Server Deployment not ready",
+			errorsUtil.IfErrErrorf("failed to reconcile API server deployment: %w", err)
 	}
 
 	if err := arr.reconcilePodDisruptionBudget(ctx, hostedControlPlane, cluster); err != nil {
-		return fmt.Errorf("failed to reconcile pod disruption budget: %w", err)
+		return "", fmt.Errorf("failed to reconcile pod disruption budget: %w", err)
 	}
 
-	needsRequeue := false
-	if err := arr.reconcileControllerManagerDeployment(ctx, hostedControlPlane, cluster); err != nil {
-		if !errors.Is(err, reconcilers.ErrResourceNotReady) {
-			return fmt.Errorf("failed to reconcile controller manager deployment: %w", err)
-		}
-		needsRequeue = true
+	notReadyReasons := []string{}
+	if ready, err := arr.reconcileControllerManagerDeployment(ctx, hostedControlPlane, cluster); err != nil {
+		return "", fmt.Errorf("failed to reconcile controller manager deployment: %w", err)
+	} else if !ready {
+		notReadyReasons = append(notReadyReasons, "Controller Manager Deployment not ready")
 	}
 
-	if err := arr.reconcileSchedulerDeployment(ctx, hostedControlPlane, cluster); err != nil {
-		if !errors.Is(err, reconcilers.ErrResourceNotReady) {
-			return fmt.Errorf("failed to reconcile scheduler deployment: %w", err)
-		}
-		needsRequeue = true
+	if ready, err := arr.reconcileSchedulerDeployment(ctx, hostedControlPlane, cluster); err != nil {
+		return "", fmt.Errorf("failed to reconcile scheduler deployment: %w", err)
+	} else if !ready {
+		notReadyReasons = append(notReadyReasons, "Scheduler Deployment not ready")
 	}
 
-	if needsRequeue {
-		return operatorutil.ErrRequeueRequired
+	if len(notReadyReasons) > 0 {
+		return strings.Join(notReadyReasons, ","), nil
 	}
 
 	hostedControlPlane.Status.Version = hostedControlPlane.Spec.Version
 
-	return nil
+	return "", nil
 }
 
 //+kubebuilder:rbac:groups=core,resources=configmaps,verbs=create;update;patch
@@ -195,9 +194,9 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, arr.Tracer, "ReconcileAPIServerDeployment",
-		func(ctx context.Context, span trace.Span) error {
+) (bool, error) {
+	return tracing.WithSpan(ctx, arr.Tracer, "ReconcileAPIServerDeployment",
+		func(ctx context.Context, span trace.Span) (bool, error) {
 			apiServerCertificatesVolume := arr.createAPIServerCertificatesVolume(cluster)
 			egressSelectorConfigVolume := arr.createEgressSelectorConfigVolume(cluster)
 			konnectivityUDSVolume := arr.createKonnectivityUDSVolume()
@@ -237,32 +236,38 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				konnectivityUDSMount,
 			)
 			if err != nil {
-				return fmt.Errorf("failed to create konnectivity container: %w", err)
+				return false, fmt.Errorf("failed to create konnectivity container: %w", err)
 			}
 
-			if deployment, err := arr.ReconcileDeployment(
+			if deployment, ready, err := arr.ReconcileDeployment(
 				ctx,
+				hostedControlPlane,
 				cluster,
 				*hostedControlPlane.Spec.Replicas,
+				hostedControlPlane.Spec.Deployment.APIServer.PriorityClassName,
 				arr.componentAPIServer,
 				arr.etcdComponentLabel,
-				[]*corev1ac.ContainerApplyConfiguration{apiServerContainer, konnectivityContainer},
+				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
+					slices.T2(apiServerContainer, reconcilers.ContainerOptions{
+						Capabilities: []corev1.Capability{"NET_BIND_SERVICE"},
+					}),
+					slices.T2(konnectivityContainer, reconcilers.ContainerOptions{}),
+				},
 				volumes,
 			); err != nil {
-				return err
+				return ready, err
 			} else {
 				selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 				if err != nil {
-					return fmt.Errorf("failed to convert label selector: %w", err)
+					return false, fmt.Errorf("failed to convert label selector: %w", err)
 				}
 				hostedControlPlane.Status.Selector = selector.String()
 				hostedControlPlane.Status.Replicas = deployment.Status.Replicas
 				hostedControlPlane.Status.UnavailableReplicas = deployment.Status.UnavailableReplicas
 				hostedControlPlane.Status.ReadyReplicas = deployment.Status.ReadyReplicas
 				hostedControlPlane.Status.UpdatedReplicas = deployment.Status.UpdatedReplicas
+				return ready, nil
 			}
-
-			return nil
 		},
 	)
 }
@@ -310,9 +315,9 @@ func (arr *apiServerResourcesReconciler) reconcileControllerManagerDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, arr.Tracer, "ReconcileControllerManagerDeployment",
-		func(ctx context.Context, span trace.Span) error {
+) (bool, error) {
+	return tracing.WithSpan(ctx, arr.Tracer, "ReconcileControllerManagerDeployment",
+		func(ctx context.Context, span trace.Span) (bool, error) {
 			controllerManagerCertificatesVolume := arr.createControllerManagerCertificatesVolume(cluster)
 			controllerManagerKubeconfigVolume := arr.createControllerManagerKubeconfigVolume(cluster)
 
@@ -323,6 +328,7 @@ func (arr *apiServerResourcesReconciler) reconcileControllerManagerDeployment(
 
 			container := arr.createControllerManagerContainer(
 				hostedControlPlane,
+				cluster,
 				controllerManagerCertificatesVolumeMount,
 				controllerManagerKubeconfigVolume,
 			)
@@ -332,16 +338,20 @@ func (arr *apiServerResourcesReconciler) reconcileControllerManagerDeployment(
 				controllerManagerKubeconfigVolume,
 			}
 
-			_, err := arr.ReconcileDeployment(
+			_, ready, err := arr.ReconcileDeployment(
 				ctx,
+				hostedControlPlane,
 				cluster,
 				*hostedControlPlane.Spec.Deployment.ControllerManager.Replicas,
+				hostedControlPlane.Spec.Deployment.ControllerManager.PriorityClassName,
 				arr.componentControllerManager,
 				arr.componentAPIServer,
-				[]*corev1ac.ContainerApplyConfiguration{container},
+				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
+					slices.T2(container, reconcilers.ContainerOptions{}),
+				},
 				volumes,
 			)
-			return err
+			return ready, err
 		},
 	)
 }
@@ -350,9 +360,9 @@ func (arr *apiServerResourcesReconciler) reconcileSchedulerDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, arr.Tracer, "ReconcileSchedulerDeployment",
-		func(ctx context.Context, span trace.Span) error {
+) (bool, error) {
+	return tracing.WithSpan(ctx, arr.Tracer, "ReconcileSchedulerDeployment",
+		func(ctx context.Context, span trace.Span) (bool, error) {
 			schedulerKubeconfigVolume := arr.createSchedulerKubeconfigVolume(cluster)
 
 			container := arr.createSchedulerContainer(
@@ -364,16 +374,20 @@ func (arr *apiServerResourcesReconciler) reconcileSchedulerDeployment(
 				schedulerKubeconfigVolume,
 			}
 
-			_, err := arr.ReconcileDeployment(
+			_, ready, err := arr.ReconcileDeployment(
 				ctx,
+				hostedControlPlane,
 				cluster,
 				*hostedControlPlane.Spec.Deployment.Scheduler.Replicas,
+				hostedControlPlane.Spec.Deployment.Scheduler.PriorityClassName,
 				arr.componentScheduler,
 				arr.componentAPIServer,
-				[]*corev1ac.ContainerApplyConfiguration{container},
+				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
+					slices.T2(container, reconcilers.ContainerOptions{}),
+				},
 				volumes,
 			)
-			return err
+			return ready, err
 		},
 	)
 }
@@ -384,9 +398,9 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerService(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, arr.Tracer, "ReconcileApiServerService",
-		func(ctx context.Context, span trace.Span) error {
+) (string, error) {
+	return tracing.WithSpan(ctx, arr.Tracer, "ReconcileApiServerService",
+		func(ctx context.Context, span trace.Span) (string, error) {
 			labels := names.GetControlPlaneLabels(cluster, arr.componentAPIServer)
 			apiPort := corev1ac.ServicePort().
 				WithName("api").
@@ -419,16 +433,16 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerService(
 				operatorutil.ApplyOptions,
 			)
 			if err != nil {
-				return errorsUtil.IfErrErrorf("failed to patch service: %w", err)
+				return "", errorsUtil.IfErrErrorf("failed to patch service: %w", err)
 			}
 
 			if len(appliedService.Status.LoadBalancer.Ingress) == 0 {
-				return fmt.Errorf("service load balancer is not ready yet: %w", errServiceNotReady)
+				return "Api Server Service is waiting on its IP", nil
 			}
 
 			hostedControlPlane.Status.LegacyIP = appliedService.Status.LoadBalancer.Ingress[0].IP
 
-			return nil
+			return "", nil
 		},
 	)
 }
@@ -570,7 +584,7 @@ func (arr *apiServerResourcesReconciler) createAPIServerCertificatesVolume(
 					),
 				),
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
-					WithName(names.GetEtcdAPIServerClientSecretName(cluster)).
+					WithName(names.GetEtcdAPIServerClientCertificateSecretName(cluster)).
 					WithItems(
 						corev1ac.KeyToPath().
 							WithKey(corev1.TLSCertKey).
@@ -674,11 +688,11 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 		"service-account-issuer":             "https://kubernetes.default.svc",
 		"service-account-key-file":           path.Join(certificatesDir, konstants.ServiceAccountPublicKeyName),
 		"service-account-signing-key-file":   path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
-		"service-cluster-ip-range":           "10.96.0.0/12",
+		"service-cluster-ip-range":           arr.serviceCIDR,
 		"tls-cert-file":                      path.Join(certificatesDir, konstants.APIServerCertName),
 		"tls-private-key-file":               path.Join(certificatesDir, konstants.APIServerKeyName),
 		"etcd-servers": fmt.Sprintf("https://%s",
-			net.JoinHostPort(names.GetEtcdClientServiceName(cluster), strconv.Itoa(int(arr.etcdClientPort))),
+			net.JoinHostPort(names.GetEtcdClientServiceDNSName(cluster), strconv.Itoa(int(arr.etcdServerPort))),
 		),
 		"etcd-cafile":   path.Join(certificatesDir, konstants.EtcdCACertName),
 		"etcd-certfile": path.Join(certificatesDir, konstants.APIServerEtcdClientCertName),
@@ -733,7 +747,7 @@ func (arr *apiServerResourcesReconciler) createKonnectivityContainer(
 			konnectivityPort, adminPort, healthPort,
 		)...).
 		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
-			hostedControlPlane.Spec.Deployment.Konnectivity.Resources,
+			hostedControlPlane.Spec.Deployment.APIServer.Konnectivity.Resources,
 		)).
 		WithPorts(konnectivityPort, adminPort, healthPort).
 		WithStartupProbe(operatorutil.CreateStartupProbe(healthPort, "/healthz", corev1.URISchemeHTTP)).
@@ -774,7 +788,7 @@ func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 		"mode":         "grpc",
 	}
 
-	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.Konnectivity.Args, args)
+	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.APIServer.Konnectivity.Args, args)
 }
 
 func (arr *apiServerResourcesReconciler) createAPIServerContainer(
@@ -828,12 +842,11 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 }
 
 func (arr *apiServerResourcesReconciler) createProbePort(
-	prefix string,
 	port int,
 ) *corev1ac.ContainerPortApplyConfiguration {
 	containerPort := corev1ac.ContainerPort().
-		WithName(fmt.Sprintf("%s-probe-port", prefix)). // TODO: use konstants.probePort when available
-		WithContainerPort(int32(port)).                 //nolint:gosec // port is expected to be within int32 range
+		WithName("probe-port").         // TODO: use konstants.probePort when available
+		WithContainerPort(int32(port)). //nolint:gosec // port is expected to be within int32 range
 		WithProtocol(corev1.ProtocolTCP)
 	return containerPort
 }
@@ -845,7 +858,7 @@ func (arr *apiServerResourcesReconciler) createSchedulerContainer(
 	schedulerKubeconfigVolumeMount := corev1ac.VolumeMount().
 		WithName(*schedulerKubeconfigVolume.Name).
 		WithMountPath(konstants.KubernetesDir)
-	probePort := arr.createProbePort("s", konstants.KubeSchedulerPort)
+	probePort := arr.createProbePort(konstants.KubeSchedulerPort)
 	return corev1ac.Container().
 		WithName(konstants.KubeScheduler).
 		WithImage(fmt.Sprintf("registry.k8s.io/kube-scheduler:%s", hostedControlPlane.Spec.Version)).
@@ -864,13 +877,14 @@ func (arr *apiServerResourcesReconciler) createSchedulerContainer(
 
 func (arr *apiServerResourcesReconciler) createControllerManagerContainer(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 	controllerManagerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	controllerManagerKubeconfigVolume *corev1ac.VolumeApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
 	controllerManagerKubeconfigVolumeMount := corev1ac.VolumeMount().
 		WithName(*controllerManagerKubeconfigVolume.Name).
 		WithMountPath(konstants.KubernetesDir)
-	probePort := arr.createProbePort("c", konstants.KubeControllerManagerPort)
+	probePort := arr.createProbePort(konstants.KubeControllerManagerPort)
 	return corev1ac.Container().
 		WithName(konstants.KubeControllerManager).
 		WithImage(fmt.Sprintf("registry.k8s.io/kube-controller-manager:%s", hostedControlPlane.Spec.Version)).
@@ -878,6 +892,7 @@ func (arr *apiServerResourcesReconciler) createControllerManagerContainer(
 		WithCommand("kube-controller-manager").
 		WithArgs(arr.buildControllerManagerArgs(
 			hostedControlPlane,
+			cluster,
 			controllerManagerCertificatesVolumeMount,
 			controllerManagerKubeconfigVolumeMount,
 		)...).
@@ -897,12 +912,14 @@ func (arr *apiServerResourcesReconciler) buildSchedulerArgs(
 ) []string {
 	kubeconfigPath := path.Join(*schedulerKubeconfigVolumeMount.MountPath, konstants.SchedulerKubeConfigFileName)
 
+	leaderElect := *hostedControlPlane.Spec.Deployment.Scheduler.Replicas > 1
+
 	args := map[string]string{
 		"authentication-kubeconfig": kubeconfigPath,
 		"authorization-kubeconfig":  kubeconfigPath,
 		"kubeconfig":                kubeconfigPath,
 		"bind-address":              "0.0.0.0",
-		"leader-elect":              "true",
+		"leader-elect":              strconv.FormatBool(leaderElect),
 	}
 
 	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.Scheduler.Args, args)
@@ -910,6 +927,7 @@ func (arr *apiServerResourcesReconciler) buildSchedulerArgs(
 
 func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 	controllerManagerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	controllerManagerKubeconfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 ) []string {
@@ -921,20 +939,19 @@ func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 	// TODO: use map[string]any as soon as https://github.com/kubernetes-sigs/controller-tools/issues/636 is resolved
 	certificatesDir := *controllerManagerCertificatesVolumeMount.MountPath
 	enabledControllers := []string{"*", kubenames.BootstrapSignerController, kubenames.TokenCleanerController}
+	leaderElect := *hostedControlPlane.Spec.Deployment.ControllerManager.Replicas > 1
 	args := map[string]string{
-		"allocate-node-cidrs":              "true",
+		"allocate-node-cidrs":              "false",
 		"authentication-kubeconfig":        kubeconfigPath,
 		"authorization-kubeconfig":         kubeconfigPath,
 		"kubeconfig":                       kubeconfigPath,
 		"bind-address":                     "0.0.0.0",
-		"leader-elect":                     "true",
-		"cluster-name":                     hostedControlPlane.Name,
+		"leader-elect":                     strconv.FormatBool(leaderElect),
+		"cluster-name":                     cluster.Name,
 		"client-ca-file":                   path.Join(certificatesDir, konstants.CACertName),
 		"cluster-signing-cert-file":        path.Join(certificatesDir, konstants.CACertName),
 		"cluster-signing-key-file":         path.Join(certificatesDir, konstants.CAKeyName),
 		"controllers":                      strings.Join(enabledControllers, ","),
-		"service-cluster-ip-range":         "10.96.0.0/16",
-		"cluster-cidr":                     "192.168.0.0/16",
 		"requestheader-client-ca-file":     path.Join(certificatesDir, konstants.FrontProxyCACertName),
 		"root-ca-file":                     path.Join(certificatesDir, konstants.CACertName),
 		"service-account-private-key-file": path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),

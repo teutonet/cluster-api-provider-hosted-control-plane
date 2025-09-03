@@ -13,5 +13,7 @@ func CreatePodTopologySpreadConstraints(
 		WithTopologyKey(corev1.LabelHostname).
 		WithLabelSelector(labelSelector).
 		WithMaxSkew(1).
-		WithWhenUnsatisfiable(corev1.ScheduleAnyway)
+		WithWhenUnsatisfiable(corev1.DoNotSchedule).
+		WithNodeTaintsPolicy(corev1.NodeInclusionPolicyHonor).
+		WithNodeAffinityPolicy(corev1.NodeInclusionPolicyHonor)
 }

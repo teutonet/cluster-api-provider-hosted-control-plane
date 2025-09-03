@@ -6,10 +6,12 @@ import (
 	"path"
 	"strconv"
 
+	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers/alias"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -19,7 +21,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
@@ -29,11 +30,11 @@ type KonnectivityReconciler interface {
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv1.Cluster,
-	) error
+	) (string, error)
 }
 
 func NewKonnectivityReconciler(
-	kubernetesClient kubernetes.Interface,
+	kubernetesClient *alias.WorkloadClusterClient,
 	konnectivityServerAudience string,
 	konnectivityServicePort int32,
 ) KonnectivityReconciler {
@@ -63,12 +64,12 @@ func (kr *konnectivityReconciler) ReconcileKonnectivity(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKonnectivity",
-		func(ctx context.Context, span trace.Span) error {
+) (string, error) {
+	return tracing.WithSpan(ctx, kr.Tracer, "ReconcileKonnectivity",
+		func(ctx context.Context, span trace.Span) (string, error) {
 			phases := []struct {
 				Name      string
-				Reconcile func(context.Context) error
+				Reconcile func(context.Context) (string, error)
 			}{
 				{
 					Name:      "RBAC",
@@ -76,26 +77,28 @@ func (kr *konnectivityReconciler) ReconcileKonnectivity(
 				},
 				{
 					Name: "DaemonSet",
-					Reconcile: func(ctx context.Context) error {
-						return kr.reconcileKonnectivityDaemonSet(ctx, hostedControlPlane, cluster)
+					Reconcile: func(ctx context.Context) (string, error) {
+						return "", kr.reconcileKonnectivityDaemonSet(ctx, hostedControlPlane, cluster)
 					},
 				},
 			}
 
 			for _, phase := range phases {
-				if err := phase.Reconcile(ctx); err != nil {
-					return fmt.Errorf("failed to reconcile konnectivity phase %s: %w", phase.Name, err)
+				if notReadyReason, err := phase.Reconcile(ctx); err != nil {
+					return "", fmt.Errorf("failed to reconcile konnectivity phase %s: %w", phase.Name, err)
+				} else if notReadyReason != "" {
+					return notReadyReason, nil
 				}
 			}
 
-			return nil
+			return "", nil
 		},
 	)
 }
 
-func (kr *konnectivityReconciler) reconcileKonnectivityRBAC(ctx context.Context) error {
-	return tracing.WithSpan1(ctx, kr.Tracer, "reconcileKonnectivityRBAC",
-		func(ctx context.Context, span trace.Span) error {
+func (kr *konnectivityReconciler) reconcileKonnectivityRBAC(ctx context.Context) (string, error) {
+	return tracing.WithSpan(ctx, kr.Tracer, "reconcileKonnectivityRBAC",
+		func(ctx context.Context, span trace.Span) (string, error) {
 			serviceAccount := corev1ac.ServiceAccount(
 				"konnectivity-agent",
 				metav1.NamespaceSystem,
@@ -105,7 +108,7 @@ func (kr *konnectivityReconciler) reconcileKonnectivityRBAC(ctx context.Context)
 				ServiceAccounts(*serviceAccount.Namespace).
 				Apply(ctx, serviceAccount, operatorutil.ApplyOptions)
 			if err != nil {
-				return fmt.Errorf("failed to apply konnectivity agent service account: %w", err)
+				return "", fmt.Errorf("failed to apply konnectivity agent service account: %w", err)
 			}
 
 			clusterRoleBinding := rbacv1ac.ClusterRoleBinding(kr.konnectivityServerAudience).
@@ -128,22 +131,22 @@ func (kr *konnectivityReconciler) reconcileKonnectivityRBAC(ctx context.Context)
 				if apierrors.IsInvalid(err) {
 					if err := kr.KubernetesClient.RbacV1().ClusterRoleBindings().
 						Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{}); err != nil {
-						return fmt.Errorf(
+						return "", fmt.Errorf(
 							"failed to delete invalid konnectivity agent cluster role binding %s: %w",
 							*clusterRoleBinding.Name,
 							err,
 						)
 					}
-					return operatorutil.ErrRequeueRequired
+					return "konnectivity agent cluster role binding needs to be recreated", nil
 				}
-				return fmt.Errorf(
+				return "", fmt.Errorf(
 					"failed to apply konnectivity agent cluster role binding %s: %w",
 					*clusterRoleBinding.Name,
 					err,
 				)
 			}
 
-			return nil
+			return "", nil
 		},
 	)
 }
@@ -223,20 +226,23 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 				WithPorts(healthPort).
 				WithVolumeMounts(serviceAccountTokenVolumeMount)
 
-			_, err = kr.ReconcileDaemonSet(
+			_, _, err = kr.ReconcileDaemonSet(
 				ctx,
 				"konnectivity-agent",
 				metav1.NamespaceSystem,
-				kr.konnectivityServiceAccountName,
-				"system-node-critical",
-				false,
-				names.GetControlPlaneLabels(cluster, "konnectivity"),
-				[]*corev1ac.TolerationApplyConfiguration{
-					corev1ac.Toleration().
-						WithKey("CriticalAddonsOnly").
-						WithOperator(corev1.TolerationOpExists),
+				reconcilers.PodOptions{
+					ServiceAccountName: kr.konnectivityServiceAccountName,
+					PriorityClassName:  "system-node-critical",
+					Tolerations: []*corev1ac.TolerationApplyConfiguration{
+						corev1ac.Toleration().
+							WithKey("CriticalAddonsOnly").
+							WithOperator(corev1.TolerationOpExists),
+					},
 				},
-				[]*corev1ac.ContainerApplyConfiguration{container},
+				names.GetControlPlaneLabels(cluster, "konnectivity"),
+				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
+					slices.T2(container, reconcilers.ContainerOptions{}),
+				},
 				[]*corev1ac.VolumeApplyConfiguration{serviceAccountTokenVolume},
 			)
 

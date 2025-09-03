@@ -3,6 +3,7 @@ package workload
 import (
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers/workload/config"
@@ -22,18 +23,26 @@ type WorkloadClusterReconciler interface {
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv1.Cluster,
-	) error
+	) (string, error)
 }
 
 func NewWorkloadClusterReconciler(
 	kubernetesClient kubernetes.Interface,
 	managementCluster ManagementCluster,
+	serviceDomain string,
+	serviceCIDR string,
+	podCIDR string,
+	dnsIP net.IP,
 	konnectivityServerAudience string,
 	konnectivityServicePort int32,
 ) WorkloadClusterReconciler {
 	return &workloadClusterReconciler{
 		kubernetesClient:                    kubernetesClient,
 		managementCluster:                   managementCluster,
+		serviceDomain:                       serviceDomain,
+		serviceCIDR:                         serviceCIDR,
+		podCIDR:                             podCIDR,
+		dnsIP:                               dnsIP,
 		konnectivityServerAudience:          konnectivityServerAudience,
 		konnectivityServicePort:             konnectivityServicePort,
 		konnectivityServiceAccountName:      "konnectivity-agent",
@@ -45,6 +54,10 @@ func NewWorkloadClusterReconciler(
 type workloadClusterReconciler struct {
 	kubernetesClient                    kubernetes.Interface
 	managementCluster                   ManagementCluster
+	serviceDomain                       string
+	serviceCIDR                         string
+	podCIDR                             string
+	dnsIP                               net.IP
 	konnectivityServerAudience          string
 	konnectivityServicePort             int32
 	konnectivityServiceAccountName      string
@@ -58,11 +71,11 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, wr.tracer, "ReconcileWorkloadSetup",
-		func(ctx context.Context, span trace.Span) error {
+) (string, error) {
+	return tracing.WithSpan(ctx, wr.tracer, "ReconcileWorkloadSetup",
+		func(ctx context.Context, span trace.Span) (string, error) {
 			type WorkloadPhase struct {
-				Reconcile    func(context.Context, *capiv1.Cluster) error
+				Reconcile    func(context.Context, *capiv1.Cluster) (string, error)
 				Disabled     bool
 				Condition    capiv1.ConditionType
 				FailedReason string
@@ -71,7 +84,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 
 			workloadClusterClient, err := wr.managementCluster.GetWorkloadClusterClient(ctx, cluster)
 			if err != nil {
-				return fmt.Errorf("failed to get workload cluster client: %w", err)
+				return "", fmt.Errorf("failed to get workload cluster client: %w", err)
 			}
 
 			rbacReconciler := rbac.NewRBACReconciler(
@@ -79,15 +92,22 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 			)
 
 			configReconciler := config.NewConfigReconciler(
-				wr.kubernetesClient,
+				workloadClusterClient,
+				wr.serviceDomain,
+				wr.serviceCIDR,
+				wr.podCIDR,
+				wr.dnsIP,
 			)
 
 			kubeProxyReconciler := kubeproxy.NewKubeProxyReconciler(
 				workloadClusterClient,
+				wr.podCIDR,
 			)
 
 			coreDNSReconciler := coredns.NewCoreDNSReconciler(
 				workloadClusterClient,
+				wr.serviceDomain,
+				wr.dnsIP,
 			)
 
 			konnectivityReconciler := konnectivity.NewKonnectivityReconciler(
@@ -99,7 +119,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 			workloadPhases := []WorkloadPhase{
 				{
 					Name: "RBAC",
-					Reconcile: func(ctx context.Context, _ *capiv1.Cluster) error {
+					Reconcile: func(ctx context.Context, _ *capiv1.Cluster) (string, error) {
 						return rbacReconciler.ReconcileRBAC(ctx)
 					},
 					Condition:    v1alpha1.WorkloadRBACReadyCondition,
@@ -107,8 +127,8 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				},
 				{
 					Name: "cluster-info",
-					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						return configReconciler.ReconcileClusterInfoConfigMap(
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) (string, error) {
+						return "", configReconciler.ReconcileClusterInfoConfigMap(
 							ctx,
 							wr.kubernetesClient,
 							cluster,
@@ -119,16 +139,16 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				},
 				{
 					Name: "kubeadm-config",
-					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						return configReconciler.ReconcileKubeadmConfig(ctx, hostedControlPlane, cluster)
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) (string, error) {
+						return "", configReconciler.ReconcileKubeadmConfig(ctx, hostedControlPlane, cluster)
 					},
 					Condition:    v1alpha1.WorkloadKubeadmConfigReadyCondition,
 					FailedReason: v1alpha1.WorkloadKubeadmConfigFailedReason,
 				},
 				{
 					Name: "kubelet-config",
-					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						return configReconciler.ReconcileKubeletConfig(ctx, hostedControlPlane, cluster)
+					Reconcile: func(ctx context.Context, _ *capiv1.Cluster) (string, error) {
+						return "", configReconciler.ReconcileKubeletConfig(ctx)
 					},
 					Condition:    v1alpha1.WorkloadKubeletConfigReadyCondition,
 					FailedReason: v1alpha1.WorkloadKubeletConfigFailedReason,
@@ -136,21 +156,23 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				{
 					Name:     "kube-proxy",
 					Disabled: hostedControlPlane.Spec.KubeProxy.Disabled,
-					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
-						return kubeProxyReconciler.ReconcileKubeProxy(ctx, cluster, hostedControlPlane)
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) (string, error) {
+						return "", kubeProxyReconciler.ReconcileKubeProxy(ctx, cluster, hostedControlPlane)
 					},
 					Condition:    v1alpha1.WorkloadKubeProxyReadyCondition,
 					FailedReason: v1alpha1.WorkloadKubeProxyFailedReason,
 				},
 				{
-					Name:         "coredns",
-					Reconcile:    coreDNSReconciler.ReconcileCoreDNS,
+					Name: "coredns",
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) (string, error) {
+						return "", coreDNSReconciler.ReconcileCoreDNS(ctx, cluster)
+					},
 					Condition:    v1alpha1.WorkloadCoreDNSReadyCondition,
 					FailedReason: v1alpha1.WorkloadCoreDNSFailedReason,
 				},
 				{
 					Name: "konnectivity",
-					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) error {
+					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) (string, error) {
 						return konnectivityReconciler.ReconcileKonnectivity(ctx, hostedControlPlane, cluster)
 					},
 					Condition:    v1alpha1.WorkloadKonnectivityReadyCondition,
@@ -160,15 +182,24 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 
 			for _, phase := range workloadPhases {
 				if !phase.Disabled {
-					if err := phase.Reconcile(ctx, cluster); err != nil {
+					if notReadyReason, err := phase.Reconcile(ctx, cluster); err != nil {
 						conditions.MarkFalse(
 							hostedControlPlane,
 							phase.Condition,
 							phase.FailedReason,
 							capiv1.ConditionSeverityError,
-							"Reconciling phase %s failed: %v", phase.Name, err,
+							"Reconciling workload phase %s failed: %v", phase.Name, err,
 						)
-						return err
+						return "", err
+					} else if notReadyReason != "" {
+						conditions.MarkFalse(
+							hostedControlPlane,
+							phase.Condition,
+							notReadyReason,
+							capiv1.ConditionSeverityInfo,
+							"Reconciling workload phase %s not ready: %s", phase.Name, notReadyReason,
+						)
+						return notReadyReason, nil
 					} else {
 						conditions.MarkTrue(hostedControlPlane, phase.Condition)
 					}
@@ -177,7 +208,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 
 			hostedControlPlane.Status.Initialized = true
 
-			return nil
+			return "", nil
 		},
 	)
 }

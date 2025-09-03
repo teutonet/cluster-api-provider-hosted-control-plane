@@ -3,11 +3,15 @@ package etc
 
 import (
 	"fmt"
+	"log/slog"
 
 	env "github.com/caarlos0/env/v6"
 )
 
-type LogFormat string
+type (
+	LogFormat string
+	LogLevel  string
+)
 
 var (
 	JSON LogFormat = "json"
@@ -15,12 +19,11 @@ var (
 )
 
 type Config struct {
-	LogDevMode              bool      `env:"LOG_DEV_MODE"              envDefault:"false"`
-	LeaderElection          bool      `env:"LEADER_ELECTION"           envDefault:"true"`
-	WebhookCertDir          string    `env:"WEBHOOK_CERT_DIR"`
-	ServiceName             string    `env:"SERVICE_NAME"              envDefault:"hcp-controller"`
-	MaxConcurrentReconciles int       `env:"MAX_CONCURRENT_RECONCILES" envDefault:"10"`
-	LogFormat               LogFormat `env:"LOG_FORMAT"                envDefault:"json"`
+	LeaderElection          bool       `env:"LEADER_ELECTION"           envDefault:"true"`
+	WebhookCertDir          string     `env:"WEBHOOK_CERT_DIR"`
+	MaxConcurrentReconciles int        `env:"MAX_CONCURRENT_RECONCILES" envDefault:"10"`
+	LogFormat               LogFormat  `env:"LOG_FORMAT"                envDefault:"json"`
+	LogLevel                slog.Level `env:"LOG_LEVEL"                 envDefault:"INFO"`
 }
 
 func GetOperatorConfig() (Config, error) {

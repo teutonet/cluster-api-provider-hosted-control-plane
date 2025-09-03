@@ -3,7 +3,9 @@ package certificates
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
+	"strings"
 	"time"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
@@ -15,7 +17,6 @@ import (
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
-	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -29,22 +30,24 @@ type CertificateReconciler interface {
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv1.Cluster,
-	) error
+	) (string, error)
 	ReconcileCertificates(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv1.Cluster,
-	) error
+	) (string, error)
 }
 
 func NewCertificateReconciler(
 	certManagerClient cmclient.Interface,
+	kubernetesServiceIP net.IP,
 	caCertificateDuration time.Duration,
 	certificateDuration time.Duration,
 	konnectivityServerAudience string,
 ) CertificateReconciler {
 	return &certificateReconciler{
 		certManagerClient:          certManagerClient,
+		kubernetesServiceIP:        kubernetesServiceIP,
 		caCertificateDuration:      caCertificateDuration,
 		certificateDuration:        certificateDuration,
 		certificateRenewBefore:     int32(90),
@@ -55,6 +58,7 @@ func NewCertificateReconciler(
 
 type certificateReconciler struct {
 	certManagerClient          cmclient.Interface
+	kubernetesServiceIP        net.IP
 	caCertificateDuration      time.Duration
 	certificateDuration        time.Duration
 	certificateRenewBefore     int32
@@ -63,11 +67,6 @@ type certificateReconciler struct {
 }
 
 var _ CertificateReconciler = &certificateReconciler{}
-
-var (
-	errCANotReady          = fmt.Errorf("CA not ready: %w", operatorutil.ErrRequeueRequired)
-	errCertificateNotReady = fmt.Errorf("certificate not ready: %w", operatorutil.ErrRequeueRequired)
-)
 
 type certificateSpec struct {
 	name string
@@ -81,17 +80,17 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, cr.tracer, "ReconcileCACertificates",
-		func(ctx context.Context, span trace.Span) error {
+) (string, error) {
+	return tracing.WithSpan(ctx, cr.tracer, "ReconcileCACertificates",
+		func(ctx context.Context, span trace.Span) (string, error) {
 			createCertificateSpec := func(
-				issuer *certmanagerv1ac.IssuerApplyConfiguration,
+				issuer *certmanagerv1.Issuer,
 				commonName string,
 				secretName string,
 				additionalUsages ...certmanagerv1.KeyUsage,
 			) *certmanagerv1ac.CertificateSpecApplyConfiguration {
 				return cr.createCertificateSpec(
-					*issuer.Name,
+					issuer.Name,
 					commonName,
 					secretName,
 					true,
@@ -99,7 +98,7 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 				)
 			}
 
-			rootIssuer := certmanagerv1ac.Issuer(names.GetRootIssuerName(cluster), hostedControlPlane.Namespace).
+			rootIssuerAC := certmanagerv1ac.Issuer(names.GetRootIssuerName(cluster), hostedControlPlane.Namespace).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
@@ -107,99 +106,114 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 				)
 
 			issuerClient := cr.certManagerClient.CertmanagerV1().Issuers(hostedControlPlane.Namespace)
-			_, err := issuerClient.Apply(ctx, rootIssuer, operatorutil.ApplyOptions)
+			rootIssuer, err := issuerClient.Apply(ctx, rootIssuerAC, operatorutil.ApplyOptions)
 			if err != nil {
-				return fmt.Errorf("failed to patch self-signed issuer: %w", err)
+				return "", fmt.Errorf("failed to patch self-signed issuer: %w", err)
+			}
+			if !cr.isIssuerReady(rootIssuer) {
+				return "root issuer not ready", nil
 			}
 
-			cert, err := cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
+			kubernetesCACertificate, ready, err := cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
 				names.GetCACertificateName(cluster),
 				createCertificateSpec(
 					rootIssuer,
-					names.GetCASecretName(cluster),
 					"kubernetes",
+					names.GetCASecretName(cluster),
 				),
 			)
 			if err != nil {
-				return fmt.Errorf("failed to reconcile CA certificate: %w", err)
+				return "", fmt.Errorf("failed to reconcile CA certificate: %w", err)
 			}
-			if !cr.isCertificateReady(cert) {
-				return errCANotReady
+			if !ready {
+				return "kubernetes CA certificate not ready", nil
 			}
 
-			caIssuer := certmanagerv1ac.Issuer(names.GetCAIssuerName(cluster), hostedControlPlane.Namespace).
+			kubernetesCAIssuerAC := certmanagerv1ac.Issuer(names.GetCAIssuerName(cluster),
+				hostedControlPlane.Namespace).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
-						WithSecretName(names.GetCASecretName(cluster)),
+						WithSecretName(kubernetesCACertificate.Spec.SecretName),
 					),
 				)
 
-			_, err = issuerClient.Apply(ctx, caIssuer, operatorutil.ApplyOptions)
+			kubernetesCAIssuer, err := issuerClient.Apply(ctx, kubernetesCAIssuerAC, operatorutil.ApplyOptions)
 			if err != nil {
-				return fmt.Errorf("failed to patch CA issuer: %w", err)
+				return "", fmt.Errorf("failed to patch CA issuer: %w", err)
+			}
+			if !cr.isIssuerReady(kubernetesCAIssuer) {
+				return "kubernetes CA issuer not ready", nil
 			}
 
-			cert, err = cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
+			notReadyReasons := []string{}
+
+			frontProxyCACertificate, ready, err := cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
 				names.GetFrontProxyCAName(cluster),
 				createCertificateSpec(
-					caIssuer,
-					names.GetFrontProxyCASecretName(cluster),
+					kubernetesCAIssuer,
 					"front-proxy-ca",
+					names.GetFrontProxyCASecretName(cluster),
 				),
 			)
 			if err != nil {
-				return fmt.Errorf("failed to reconcile front-proxy CA certificate: %w", err)
+				return "", fmt.Errorf("failed to reconcile front-proxy CA certificate: %w", err)
 			}
-			if !cr.isCertificateReady(cert) {
-				return errCANotReady
+			if !ready {
+				notReadyReasons = append(notReadyReasons, "front-proxy CA certificate not ready")
 			}
 
-			frontProxyCAIssuer := certmanagerv1ac.Issuer(
+			frontProxyCAIssuerAC := certmanagerv1ac.Issuer(
 				names.GetFrontProxyCAName(cluster), hostedControlPlane.Namespace,
 			).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
-						WithSecretName(names.GetFrontProxyCASecretName(cluster)),
+						WithSecretName(frontProxyCACertificate.Spec.SecretName),
 					),
 				)
 
-			_, err = issuerClient.Apply(ctx, frontProxyCAIssuer, operatorutil.ApplyOptions)
-			if err != nil {
-				return fmt.Errorf("failed to patch front-proxy CA issuer: %w", err)
+			if frontProxyCAIssuer, err := issuerClient.Apply(ctx, frontProxyCAIssuerAC, operatorutil.ApplyOptions); err != nil {
+				return "", fmt.Errorf("failed to patch front-proxy CA issuer: %w", err)
+			} else if !cr.isIssuerReady(frontProxyCAIssuer) {
+				notReadyReasons = append(notReadyReasons, "front-proxy CA issuer not ready")
 			}
 
-			cert, err = cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
+			etcdCACertificate, ready, err := cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
 				names.GetEtcdCAName(cluster),
 				createCertificateSpec(
-					caIssuer,
-					names.GetEtcdCASecretName(cluster),
+					kubernetesCAIssuer,
 					"etcd-ca",
+					names.GetEtcdCASecretName(cluster),
 				),
 			)
 			if err != nil {
-				return fmt.Errorf("failed to reconcile etcd CA certificate: %w", err)
+				return "", fmt.Errorf("failed to reconcile etcd CA certificate: %w", err)
 			}
-			if !cr.isCertificateReady(cert) {
-				return errCANotReady
+			if !ready {
+				notReadyReasons = append(notReadyReasons, "etcd CA certificate not ready")
 			}
 
-			etcdCAIssuer := certmanagerv1ac.Issuer(
+			etcdCAIssuerAC := certmanagerv1ac.Issuer(
 				names.GetEtcdCAName(cluster), hostedControlPlane.Namespace,
 			).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(certmanagerv1ac.IssuerSpec().
 					WithCA(certmanagerv1ac.CAIssuer().
-						WithSecretName(names.GetEtcdCASecretName(cluster)),
+						WithSecretName(etcdCACertificate.Spec.SecretName),
 					),
 				)
 
-			_, err = issuerClient.Apply(ctx, etcdCAIssuer, operatorutil.ApplyOptions)
-			return errorsUtil.IfErrErrorf("failed to patch etcd CA issuer: %w", err)
+			if etcdCAIssuer, err := issuerClient.Apply(ctx, etcdCAIssuerAC, operatorutil.ApplyOptions); err != nil {
+				return "", fmt.Errorf("failed to patch etcd CA issuer: %w", err)
+			} else if !cr.isIssuerReady(etcdCAIssuer) {
+				notReadyReasons = append(notReadyReasons, "etcd CA issuer not ready")
+			}
+
+			return strings.Join(notReadyReasons, ","), nil
 		},
 	)
 }
@@ -260,7 +274,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 	etcdDNSNames = append(etcdDNSNames, slices.Keys(dnsNames)...)
 	etcdDNSNames = append(etcdDNSNames, slices.Values(dnsNames)...)
 	etcdDNSNames = append(etcdDNSNames, names.GetEtcdServiceName(cluster))
-	etcdDNSNames = append(etcdDNSNames, names.GetEtcdClientServiceName(cluster))
+	etcdDNSNames = append(etcdDNSNames, names.GetEtcdClientServiceDNSName(cluster))
 
 	sort.Strings(etcdDNSNames)
 
@@ -281,7 +295,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				names.GetKonnectivityServerHost(cluster),
 				names.GetServiceName(cluster),
 				names.GetInternalServiceHost(cluster),
-			).WithIPAddresses(hostedControlPlane.Status.LegacyIP, "10.96.0.1", "127.0.0.1"),
+			).WithIPAddresses(hostedControlPlane.Status.LegacyIP, cr.kubernetesServiceIP.String(), "127.0.0.1"),
 		},
 		{
 			name: names.GetAPIServerKubeletClientCertificateName(cluster),
@@ -385,7 +399,16 @@ func (cr *certificateReconciler) createCertificateSpecs(
 			spec: createCertificateSpec(
 				names.GetEtcdCAName(cluster),
 				"apiserver-etcd-client",
-				names.GetEtcdAPIServerClientSecretName(cluster),
+				names.GetEtcdAPIServerClientCertificateSecretName(cluster),
+				certmanagerv1.UsageClientAuth,
+			),
+		},
+		{
+			name: names.GetEtcdControllerClientCertificateName(cluster),
+			spec: createCertificateSpec(
+				names.GetEtcdCAName(cluster),
+				"controller-etcd-client",
+				names.GetEtcdControllerClientCertificateSecretName(cluster),
 				certmanagerv1.UsageClientAuth,
 			),
 		},
@@ -396,25 +419,25 @@ func (cr *certificateReconciler) ReconcileCertificates(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, cr.tracer, "ReconcileCertificates",
-		func(ctx context.Context, span trace.Span) error {
-			needsRequeue := false
-			for _, cert := range cr.createCertificateSpecs(hostedControlPlane, cluster) {
-				if certObj, err := cr.reconcileCertificate(ctx,
+) (string, error) {
+	return tracing.WithSpan(ctx, cr.tracer, "ReconcileCertificates",
+		func(ctx context.Context, span trace.Span) (string, error) {
+			notReadyReasons := []string{}
+			for _, certificateAC := range cr.createCertificateSpecs(hostedControlPlane, cluster) {
+				if _, ready, err := cr.reconcileCertificate(ctx,
 					hostedControlPlane, cluster,
-					cert.name, cert.spec,
+					certificateAC.name, certificateAC.spec,
 				); err != nil {
-					return fmt.Errorf("failed to reconcile certificate: %w", err)
-				} else if !cr.isCertificateReady(certObj) {
-					needsRequeue = true
+					return "", fmt.Errorf("failed to reconcile certificate %s: %w", certificateAC.name, err)
+				} else if !ready {
+					notReadyReasons = append(notReadyReasons, fmt.Sprintf("certificate %s not ready", certificateAC.name))
 				}
 			}
 
-			if needsRequeue {
-				return errCertificateNotReady
+			if len(notReadyReasons) > 0 {
+				return strings.Join(notReadyReasons, ","), nil
 			}
-			return nil
+			return "", nil
 		},
 	)
 }
@@ -427,16 +450,16 @@ func (cr *certificateReconciler) reconcileCertificate(
 	cluster *capiv1.Cluster,
 	name string,
 	spec *certmanagerv1ac.CertificateSpecApplyConfiguration,
-) (*certmanagerv1.Certificate, error) {
-	return tracing.WithSpan(ctx, cr.tracer, "ReconcileCertificate",
-		func(ctx context.Context, span trace.Span) (*certmanagerv1.Certificate, error) {
+) (*certmanagerv1.Certificate, bool, error) {
+	return tracing.WithSpan3(ctx, cr.tracer, "ReconcileCertificate",
+		func(ctx context.Context, span trace.Span) (*certmanagerv1.Certificate, bool, error) {
 			span.SetAttributes(
 				attribute.String("CertificateName", name),
 				attribute.String("CommonName", *spec.CommonName),
 				attribute.String("CertificateSecretName", *spec.SecretName),
 			)
 
-			certificate := certmanagerv1ac.Certificate(name, hostedControlPlane.Namespace).
+			certificateAC := certmanagerv1ac.Certificate(name, hostedControlPlane.Namespace).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithSpec(spec.WithRevisionHistoryLimit(1).
@@ -445,12 +468,13 @@ func (cr *certificateReconciler) reconcileCertificate(
 					),
 				)
 
-			result, err := cr.certManagerClient.CertmanagerV1().Certificates(*certificate.Namespace).
-				Apply(ctx, certificate, operatorutil.ApplyOptions)
+			certificate, err := cr.certManagerClient.CertmanagerV1().Certificates(*certificateAC.Namespace).
+				Apply(ctx, certificateAC, operatorutil.ApplyOptions)
 			if err != nil {
-				return nil, fmt.Errorf("failed to patch certificate: %w", err)
+				return nil, false, fmt.Errorf("failed to patch certificate %s: %w", *certificateAC.Name, err)
 			}
-			return result, nil
+
+			return certificate, cr.isCertificateReady(certificate), nil
 		},
 	)
 }
@@ -460,6 +484,15 @@ func (cr *certificateReconciler) isCertificateReady(
 ) bool {
 	return slices.ContainsBy(certificate.Status.Conditions, func(condition certmanagerv1.CertificateCondition) bool {
 		return condition.Type == certmanagerv1.CertificateConditionReady &&
+			condition.Status == certmanagermetav1.ConditionTrue
+	})
+}
+
+func (cr *certificateReconciler) isIssuerReady(
+	issuer *certmanagerv1.Issuer,
+) bool {
+	return slices.ContainsBy(issuer.Status.Conditions, func(condition certmanagerv1.IssuerCondition) bool {
+		return condition.Type == certmanagerv1.IssuerConditionReady &&
 			condition.Status == certmanagermetav1.ConditionTrue
 	})
 }

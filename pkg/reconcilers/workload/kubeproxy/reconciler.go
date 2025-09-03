@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"path"
 
+	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers"
+	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers/alias"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -16,7 +18,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 	componentbaseconfigalpha1 "k8s.io/component-base/config/v1alpha1"
@@ -38,13 +39,15 @@ type KubeProxyReconciler interface {
 }
 
 func NewKubeProxyReconciler(
-	kubernetesClient kubernetes.Interface,
+	kubernetesClient *alias.WorkloadClusterClient,
+	podCIDR string,
 ) KubeProxyReconciler {
 	return &kubeProxyReconciler{
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
 			KubernetesClient: kubernetesClient,
 			Tracer:           tracing.GetTracer("kubeproxy"),
 		},
+		podCIDR: podCIDR,
 		kubeProxyLabels: map[string]string{
 			"k8s-app":                       konstants.KubeProxy,
 			"kubernetes.io/cluster-service": "true",
@@ -55,6 +58,7 @@ func NewKubeProxyReconciler(
 
 type kubeProxyReconciler struct {
 	reconcilers.WorkloadResourceReconciler
+	podCIDR                  string
 	kubeProxyLabels          map[string]string
 	kubeProxyConfigMountPath string
 }
@@ -200,7 +204,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(ctx context.Context, 
 				ClientConnection: componentbaseconfigalpha1.ClientConnectionConfiguration{
 					Kubeconfig: path.Join(kr.kubeProxyConfigMountPath, kubeconfigFileName),
 				},
-				ClusterCIDR:        "192.168.0.0/16",
+				ClusterCIDR:        kr.podCIDR,
 				MetricsBindAddress: "0.0.0.0:10249",
 			}
 
@@ -273,9 +277,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 
 			container := corev1ac.Container().
 				WithName(konstants.KubeProxy).
-				WithImage(
-					fmt.Sprintf("k8s.gcr.io/kube-proxy:%s", hostedControlPlane.Spec.Version),
-				).
+				WithImage(fmt.Sprintf("k8s.gcr.io/kube-proxy:%s", hostedControlPlane.Spec.Version)).
 				WithCommand("/usr/local/bin/kube-proxy").
 				WithArgs(kr.buildArgs(kubeProxyConfigVolumeMount)...).
 				WithEnv(corev1ac.EnvVar().
@@ -285,25 +287,35 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 							WithFieldPath("spec.nodeName"),
 						),
 					),
+					corev1ac.EnvVar().WithName("NODE_IP").
+						WithValueFrom(corev1ac.EnvVarSource().
+							WithFieldRef(corev1ac.ObjectFieldSelector().
+								WithFieldPath("status.hostIP"),
+							),
+						),
 				).
-				WithVolumeMounts(kubeProxyConfigVolumeMount, xtablesLockVolumeMount, modulesVolumeMount).
-				WithSecurityContext(corev1ac.SecurityContext().
-					WithPrivileged(true),
-				)
+				WithVolumeMounts(kubeProxyConfigVolumeMount, xtablesLockVolumeMount, modulesVolumeMount)
 
-			_, err := kr.ReconcileDaemonSet(
+			_, _, err := kr.ReconcileDaemonSet(
 				ctx,
 				konstants.KubeProxy,
 				metav1.NamespaceSystem,
-				proxy.KubeProxyServiceAccountName,
-				"system-node-critical",
-				true,
-				kr.kubeProxyLabels,
-				[]*corev1ac.TolerationApplyConfiguration{
-					corev1ac.Toleration().
+				reconcilers.PodOptions{
+					ServiceAccountName: proxy.KubeProxyServiceAccountName,
+					PriorityClassName:  "system-node-critical",
+					HostNetwork:        true,
+					DNSPolicy:          corev1.DNSDefault,
+					Tolerations: []*corev1ac.TolerationApplyConfiguration{corev1ac.Toleration().
 						WithOperator(corev1.TolerationOpExists),
+					},
 				},
-				[]*corev1ac.ContainerApplyConfiguration{container},
+				kr.kubeProxyLabels,
+				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
+					slices.T2(container, reconcilers.ContainerOptions{
+						Root:                    true,
+						ReadWriteRootFilesystem: true,
+					}),
+				},
 				[]*corev1ac.VolumeApplyConfiguration{kubeProxyConfigVolume, xtablesLockVolume, modulesVolume},
 			)
 
@@ -314,8 +326,10 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 
 func (kr *kubeProxyReconciler) buildArgs(kubeProxyConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration) []string {
 	args := map[string]string{
-		"config":            path.Join(*kubeProxyConfigVolumeMount.MountPath, konstants.KubeProxyConfigMapKey),
-		"hostname-override": "$(NODE_NAME)",
+		"config":             path.Join(*kubeProxyConfigVolumeMount.MountPath, konstants.KubeProxyConfigMapKey),
+		"hostname-override":  "$(NODE_NAME)",
+		"nodeport-addresses": "primary",
+		"bind-address":       "$(NODE_IP)",
 	}
 	return operatorutil.ArgsToSlice(args)
 }
