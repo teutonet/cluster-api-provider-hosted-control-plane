@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
@@ -80,6 +81,8 @@ func NewHostedControlPlaneReconciler(
 		etcdServerPort:                   int32(2379),
 		etcdServerStorageBuffer:          resource.MustParse("500Mi"),
 		etcdServerStorageIncrement:       resource.MustParse("1Gi"),
+		konnectivityNamespace:            metav1.NamespaceSystem,
+		konnectivityServiceAccount:       "konnectivity-agent",
 		konnectivityClientKubeconfigName: "konnectivity-client",
 		controllerKubeconfigName:         "controller",
 		konnectivityServerAudience:       "system:konnectivity-server",
@@ -104,6 +107,8 @@ type hostedControlPlaneReconciler struct {
 	etcdServerPort                   int32
 	etcdServerStorageBuffer          resource.Quantity
 	etcdServerStorageIncrement       resource.Quantity
+	konnectivityNamespace            string
+	konnectivityServiceAccount       string
 	konnectivityClientKubeconfigName string
 	controllerKubeconfigName         string
 	konnectivityServerAudience       string
@@ -311,9 +316,9 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return tracing.WithSpan(ctx, r.tracer, "Reconcile",
 		func(ctx context.Context, span trace.Span) (ctrl.Result, error) {
 			span.SetAttributes(
-				attribute.String("ReconcileID", string(controller.ReconcileIDFromContext(ctx))),
-				attribute.String("Namespace", req.Namespace),
-				attribute.String("Name", req.Name),
+				attribute.String("reconcile.id", string(controller.ReconcileIDFromContext(ctx))),
+				attribute.String("namespace", req.Namespace),
+				attribute.String("name", req.Name),
 			)
 
 			hostedControlPlane := &v1alpha1.HostedControlPlane{}
@@ -345,8 +350,8 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 			}
 
 			span.SetAttributes(
-				attribute.String("ClusterNamespace", cluster.Namespace),
-				attribute.String("ClusterName", cluster.Name),
+				attribute.String("cluster.namespace", cluster.Namespace),
+				attribute.String("cluster.name", cluster.Name),
 			)
 
 			if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.client, cluster, hostedControlPlane); err != nil ||
@@ -400,11 +405,19 @@ func (r *hostedControlPlaneReconciler) patch(
 	)
 }
 
-func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *patch.Helper,
-	hostedControlPlane *v1alpha1.HostedControlPlane, cluster *capiv1.Cluster,
+//nolint:funlen // this function is not really complex
+func (r *hostedControlPlaneReconciler) reconcileNormal(
+	ctx context.Context,
+	_ *patch.Helper,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 ) (ctrl.Result, error) {
 	return tracing.WithSpan(ctx, r.tracer, "ReconcileNormal",
 		func(ctx context.Context, span trace.Span) (_ ctrl.Result, reterr error) {
+			span.SetAttributes(
+				attribute.String("hostedcontrolplane.version", hostedControlPlane.Spec.Version),
+				attribute.Int("hostedcontrolplane.replicas", int(*hostedControlPlane.Spec.Replicas)),
+			)
 			if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.client,
 				hostedControlPlane, r.finalizer,
 			); err != nil || finalizerAdded {
@@ -437,7 +450,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 
 			var dnsIP net.IP
 			var kubernetesServiceIP net.IP
-			if serviceCIDRIP, _, err := net.ParseCIDR(serviceCIDR); err != nil {
+			if serviceCIDRIP, _, err := net.ParseCIDR(strings.Split(serviceCIDR, ",")[0]); err != nil {
 				conditions.MarkFalse(
 					hostedControlPlane,
 					v1alpha1.WorkloadClusterResourcesReadyCondition,
@@ -488,6 +501,8 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				r.apiServerServiceLegacyPortName,
 				r.etcdComponentLabel,
 				r.etcdServerPort,
+				r.konnectivityNamespace,
+				r.konnectivityServiceAccount,
 				r.konnectivityServicePort,
 				r.konnectivityClientKubeconfigName,
 				r.konnectivityServerAudience,
@@ -504,10 +519,14 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 			workloadClusterReconciler := workload.NewWorkloadClusterReconciler(
 				r.kubernetesClient,
 				r.managementCluster,
+				r.caCertificatesDuration,
+				r.certificatesDuration,
 				serviceDomain,
 				serviceCIDR,
 				podCIDR,
 				dnsIP,
+				r.konnectivityNamespace,
+				r.konnectivityServiceAccount,
 				r.konnectivityServerAudience,
 				r.apiServerServicePort,
 			)
@@ -539,7 +558,11 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(ctx context.Context, _ *p
 				},
 				{
 					Name: "kubeconfig",
-					Reconcile: func(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane, cluster *capiv1.Cluster) (string, error) {
+					Reconcile: func(
+						ctx context.Context,
+						hostedControlPlane *v1alpha1.HostedControlPlane,
+						cluster *capiv1.Cluster,
+					) (string, error) {
 						return "", kubeconfigReconciler.ReconcileKubeconfigs(ctx, hostedControlPlane, cluster)
 					},
 					Condition:    v1alpha1.KubeconfigReadyCondition,

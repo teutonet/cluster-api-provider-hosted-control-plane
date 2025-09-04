@@ -64,10 +64,10 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (err 
 	if err != nil {
 		return fmt.Errorf("failed to get Kubernetes client config: %w", err)
 	}
-	tracingWraper := func(rt http.RoundTripper) http.RoundTripper {
+	tracingWrapper := func(rt http.RoundTripper) http.RoundTripper {
 		return otelhttp.NewTransport(rt)
 	}
-	config.Wrap(tracingWraper)
+	config.Wrap(tracingWrapper)
 
 	options.LeaderElection = operatorConfig.LeaderElection
 	options.LeaderElectionID = api.GroupName
@@ -86,7 +86,7 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (err 
 
 	if err := setupControllers(ctx, mgr,
 		operatorConfig.MaxConcurrentReconciles,
-		tracingWraper,
+		tracingWrapper,
 	); err != nil {
 		return err
 	}

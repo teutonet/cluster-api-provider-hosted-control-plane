@@ -9,6 +9,7 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/api/v1alpha1"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -57,6 +58,10 @@ func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 ) (string, error) {
 	return tracing.WithSpan(ctx, i.tracer, "SyncControlPlaneEndpoint",
 		func(ctx context.Context, span trace.Span) (string, error) {
+			span.SetAttributes(
+				attribute.String("gateway.namespace", hostedControlPlane.Spec.Gateway.Namespace),
+				attribute.String("gateway.name", hostedControlPlane.Spec.Gateway.Name),
+			)
 			gateway := &gwv1.Gateway{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: hostedControlPlane.Spec.Gateway.Namespace,
@@ -73,7 +78,7 @@ func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 			})
 			if !found {
 				return "", fmt.Errorf(
-					"no listener found in gateway %s/%s: %w",
+					"no tls listener with wildcard hostname found in gateway %s/%s: %w",
 					gateway.Namespace, gateway.Name,
 					errGatewayMissingListener,
 				)

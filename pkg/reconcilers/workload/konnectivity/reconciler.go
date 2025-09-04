@@ -12,7 +12,6 @@ import (
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers/alias"
-	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
@@ -35,6 +34,8 @@ type KonnectivityReconciler interface {
 
 func NewKonnectivityReconciler(
 	kubernetesClient *alias.WorkloadClusterClient,
+	konnectivityNamespace string,
+	konnectivityServiceAccount string,
 	konnectivityServerAudience string,
 	konnectivityServicePort int32,
 ) KonnectivityReconciler {
@@ -45,13 +46,15 @@ func NewKonnectivityReconciler(
 		},
 		konnectivityServerAudience:          konnectivityServerAudience,
 		konnectivityServicePort:             konnectivityServicePort,
-		konnectivityServiceAccountName:      "konnectivity-agent",
+		konnectivityNamespace:               konnectivityNamespace,
+		konnectivityServiceAccountName:      konnectivityServiceAccount,
 		konnectivityServiceAccountTokenName: "konnectivity-agent-token",
 	}
 }
 
 type konnectivityReconciler struct {
 	reconcilers.WorkloadResourceReconciler
+	konnectivityNamespace               string
 	konnectivityServerAudience          string
 	konnectivityServicePort             int32
 	konnectivityServiceAccountName      string
@@ -78,7 +81,7 @@ func (kr *konnectivityReconciler) ReconcileKonnectivity(
 				{
 					Name: "DaemonSet",
 					Reconcile: func(ctx context.Context) (string, error) {
-						return "", kr.reconcileKonnectivityDaemonSet(ctx, hostedControlPlane, cluster)
+						return kr.reconcileKonnectivityDaemonSet(ctx, hostedControlPlane, cluster)
 					},
 				},
 			}
@@ -100,8 +103,8 @@ func (kr *konnectivityReconciler) reconcileKonnectivityRBAC(ctx context.Context)
 	return tracing.WithSpan(ctx, kr.Tracer, "reconcileKonnectivityRBAC",
 		func(ctx context.Context, span trace.Span) (string, error) {
 			serviceAccount := corev1ac.ServiceAccount(
-				"konnectivity-agent",
-				metav1.NamespaceSystem,
+				kr.konnectivityServiceAccountName,
+				kr.konnectivityNamespace,
 			)
 
 			_, err := kr.KubernetesClient.CoreV1().
@@ -155,9 +158,9 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
-) error {
-	return tracing.WithSpan1(ctx, kr.Tracer, "reconcileKonnectivityDaemonSet",
-		func(ctx context.Context, span trace.Span) error {
+) (string, error) {
+	return tracing.WithSpan(ctx, kr.Tracer, "reconcileKonnectivityDaemonSet",
+		func(ctx context.Context, span trace.Span) (string, error) {
 			serviceAccountTokenVolume := corev1ac.Volume().
 				WithName(kr.konnectivityServiceAccountName).
 				WithProjected(corev1ac.ProjectedVolumeSource().
@@ -182,7 +185,7 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 
 			minorVersion, err := operatorutil.GetMinorVersion(hostedControlPlane)
 			if err != nil {
-				return fmt.Errorf("failed to get minor version of hosted control plane: %w", err)
+				return "", fmt.Errorf("failed to get minor version of hosted control plane: %w", err)
 			}
 
 			container := corev1ac.Container().
@@ -208,28 +211,16 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 				WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
 					hostedControlPlane.Spec.KonnectivityClient.Resources,
 				)).
-				WithStartupProbe(operatorutil.CreateStartupProbe(
-					healthPort,
-					"/readyz",
-					corev1.URISchemeHTTP,
-				)).
-				WithReadinessProbe(operatorutil.CreateReadinessProbe(
-					healthPort,
-					"/readyz",
-					corev1.URISchemeHTTP,
-				)).
-				WithLivenessProbe(operatorutil.CreateLivenessProbe(
-					healthPort,
-					"/healthz",
-					corev1.URISchemeHTTP,
-				)).
+				WithStartupProbe(operatorutil.CreateStartupProbe(healthPort, "/readyz", corev1.URISchemeHTTP)).
+				WithReadinessProbe(operatorutil.CreateReadinessProbe(healthPort, "/readyz", corev1.URISchemeHTTP)).
+				WithLivenessProbe(operatorutil.CreateLivenessProbe(healthPort, "/healthz", corev1.URISchemeHTTP)).
 				WithPorts(healthPort).
 				WithVolumeMounts(serviceAccountTokenVolumeMount)
 
-			_, _, err = kr.ReconcileDaemonSet(
+			_, ready, err := kr.ReconcileDaemonSet(
 				ctx,
 				"konnectivity-agent",
-				metav1.NamespaceSystem,
+				kr.konnectivityNamespace,
 				reconcilers.PodOptions{
 					ServiceAccountName: kr.konnectivityServiceAccountName,
 					PriorityClassName:  "system-node-critical",
@@ -245,8 +236,14 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 				},
 				[]*corev1ac.VolumeApplyConfiguration{serviceAccountTokenVolume},
 			)
+			if err != nil {
+				return "", fmt.Errorf("failed to reconcile konnectivity agent daemonset: %w", err)
+			}
+			if !ready {
+				return "konnectivity agent daemonSet not ready", nil
+			}
 
-			return errorsUtil.IfErrErrorf("failed to apply konnectivity agent daemonset: %w", err)
+			return "", nil
 		},
 	)
 }

@@ -195,6 +195,8 @@ linters:
           alias: semver
         - pkg: github.com/caarlos0/env/v6
           alias: env
+        - pkg: go.etcd.io/etcd/client/v3
+          alias: clientv3
 
         # OpenTelemetry
         - pkg: go.opentelemetry.io/otel/semconv/v1.34.0

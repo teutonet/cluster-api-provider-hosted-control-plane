@@ -9,6 +9,7 @@ import (
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -49,6 +50,12 @@ func (m *management) GetWorkloadClusterClient(
 ) (*kubernetes.Clientset, error) {
 	return tracing.WithSpan(ctx, "managementCluster", "GetWorkloadClusterClient",
 		func(ctx context.Context, span trace.Span) (*kubernetes.Clientset, error) {
+			span.SetAttributes(
+				attribute.String(
+					"kubeconfig.secret.name",
+					names.GetKubeconfigSecretName(cluster, m.controllerKubeconfigName),
+				),
+			)
 			kubeConfigSecret, err := m.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
 				Get(ctx, names.GetKubeconfigSecretName(cluster, m.controllerKubeconfigName), metav1.GetOptions{})
 			if err != nil {

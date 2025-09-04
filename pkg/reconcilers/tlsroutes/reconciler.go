@@ -9,7 +9,6 @@ import (
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/errors"
 	"github.com/teutonet/cluster-api-control-plane-provider-hcp/pkg/util/tracing"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
@@ -107,8 +106,8 @@ func (trr *tlsRoutesReconciler) createTLSRoute(
 		WithSpec(v1alpha2.TLSRouteSpec().
 			WithHostnames(gwv1alpha2.Hostname(host)).
 			WithParentRefs(gwv1ac.ParentReference().
-				WithName("capi").
-				WithNamespace(gwv1.Namespace(cluster.Namespace)),
+				WithName(gwv1.ObjectName(hostedControlPlane.Spec.Gateway.Name)).
+				WithNamespace(gwv1.Namespace(hostedControlPlane.Spec.Gateway.Namespace)),
 			).
 			WithRules(v1alpha2.TLSRouteRule().
 				WithBackendRefs(gwv1ac.BackendRef().
@@ -126,11 +125,6 @@ func (trr *tlsRoutesReconciler) applyAndCheckTLSRoute(
 ) (bool, error) {
 	return tracing.WithSpan(ctx, trr.tracer, "ApplyAndCheckTLSRoute",
 		func(ctx context.Context, span trace.Span) (bool, error) {
-			span.SetAttributes(
-				attribute.String("TLSRouteName", *tlsRoute.Name),
-				attribute.String("TLSRouteNamespace", *tlsRoute.Namespace),
-			)
-
 			appliedTLSRoute, err := trr.gatewayClient.GatewayV1alpha2().TLSRoutes(*tlsRoute.Namespace).
 				Apply(ctx, tlsRoute, operatorutil.ApplyOptions)
 			if err != nil {
