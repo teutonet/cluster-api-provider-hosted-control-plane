@@ -264,6 +264,11 @@ func (in *HostedControlPlaneStatus) DeepCopyInto(out *HostedControlPlaneStatus) 
 	}
 	out.ETCDVolumeSize = in.ETCDVolumeSize.DeepCopy()
 	out.ETCDVolumeUsage = in.ETCDVolumeUsage.DeepCopy()
+	if in.ExternalManagedControlPlane != nil {
+		in, out := &in.ExternalManagedControlPlane, &out.ExternalManagedControlPlane
+		*out = new(bool)
+		**out = **in
+	}
 	if in.V1Beta2 != nil {
 		in, out := &in.V1Beta2, &out.V1Beta2
 		*out = new(HostedControlPlaneV1Beta2Status)

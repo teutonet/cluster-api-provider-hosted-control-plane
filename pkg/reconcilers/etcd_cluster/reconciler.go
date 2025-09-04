@@ -32,6 +32,7 @@ import (
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/record"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
@@ -48,6 +49,7 @@ type EtcdClusterReconciler interface {
 
 func NewEtcdClusterReconciler(
 	kubernetesClient kubernetes.Interface,
+	recorder record.EventRecorder,
 	etcdServerPort int32,
 	etcdServerStorageBuffer resource.Quantity,
 	etcdServerStorageIncrement resource.Quantity,
@@ -58,6 +60,7 @@ func NewEtcdClusterReconciler(
 			Tracer:           tracing.GetTracer("EtcdCluster"),
 			KubernetesClient: kubernetesClient,
 		},
+		recorder:                   recorder,
 		etcdServerPort:             etcdServerPort,
 		etcdServerStorageBuffer:    etcdServerStorageBuffer,
 		etcdServerStorageIncrement: etcdServerStorageIncrement,
@@ -67,6 +70,7 @@ func NewEtcdClusterReconciler(
 
 type etcdClusterReconciler struct {
 	reconcilers.ManagementResourceReconciler
+	recorder                   record.EventRecorder
 	etcdServerPort             int32
 	etcdServerStorageBuffer    resource.Quantity
 	etcdServerStorageIncrement resource.Quantity
@@ -190,6 +194,15 @@ func (er *etcdClusterReconciler) reconcilePVCSizes(
 							err,
 						)
 					}
+					er.recorder.Eventf(
+						hostedControlPlane,
+						corev1.EventTypeNormal,
+						"EtcdVolumeResize",
+						"Resized etcd volume %s/%s from %s to %s",
+						pvc.Namespace, pvc.Name,
+						pvc.Spec.Resources.Requests.Storage().String(),
+						hostedControlPlane.Status.ETCDVolumeSize.String(),
+					)
 				}
 			}
 
@@ -205,6 +218,14 @@ func (er *etcdClusterReconciler) getETCDVolumeSize(hostedControlPlane *v1alpha1.
 		if value.Cmp(er.etcdServerStorageBuffer) == -1 {
 			newValue := hostedControlPlane.Status.ETCDVolumeSize.DeepCopy()
 			newValue.Add(er.etcdServerStorageIncrement)
+			er.recorder.Eventf(
+				hostedControlPlane,
+				corev1.EventTypeNormal,
+				"EtcdVolumeAutoResize",
+				"Auto-resized etcd volume from %s to %s",
+				hostedControlPlane.Status.ETCDVolumeSize.String(),
+				newValue.String(),
+			)
 			return newValue
 		}
 		return hostedControlPlane.Status.ETCDVolumeSize
@@ -556,6 +577,14 @@ func (er *etcdClusterReconciler) etcdIsHealthy(
 					cluster,
 					er.etcdServerPort,
 					func(client clientv3.Client, ctx context.Context) (*clientv3.AlarmResponse, error) {
+						er.recorder.Eventf(
+							hostedControlPlane,
+							corev1.EventTypeNormal,
+							"EtcdAlarmDisarm",
+							"Disarmed etcd alarm %s for member %d",
+							outdatedAlarm.Alarm.String(),
+							outdatedAlarm.MemberID,
+						)
 						return client.AlarmDisarm(ctx, (*clientv3.AlarmMember)(outdatedAlarm))
 					},
 				)

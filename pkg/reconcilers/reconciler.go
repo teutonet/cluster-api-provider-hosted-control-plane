@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"regexp"
 
 	slices "github.com/samber/lo"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
@@ -28,6 +29,9 @@ var (
 	)
 	errServiceHasBothClusterIPAndIsHeadless = errors.New(
 		"service cannot be headless and have a clusterIP set",
+	)
+	specUpdateForbiddenErrorMessageRegex = regexp.MustCompile(
+		"Forbidden: updates to \\S+ spec for fields other than .* are forbidden",
 	)
 )
 
@@ -102,27 +106,34 @@ func reconcileWorkload[RA any, RSA any, R any](
 	}
 
 	appliedResource, err := client.Apply(ctx, resourceApplyConfiguration, operatorutil.ApplyOptions)
+	//nolint:nestif // need to handle special case of statefulset update forbidden error
 	if err != nil {
-		if apierrors.IsInvalid(err) {
-			if err := client.Delete(
-				ctx,
-				name,
-				metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
-			); err != nil {
-				return nil, false, fmt.Errorf(
-					"failed to delete existing %s %s: %w", kind, name, err,
-				)
+		if status, ok := err.(apierrors.APIStatus); apierrors.IsInvalid(err) && (ok || errors.As(err, &status)) {
+			if slices.EveryBy(status.Status().Details.Causes, func(cause metav1.StatusCause) bool {
+				return cause.Type == metav1.CauseTypeForbidden &&
+					cause.Field == "spec" &&
+					specUpdateForbiddenErrorMessageRegex.MatchString(cause.Message)
+			}) {
+				if err := client.Delete(
+					ctx,
+					name,
+					metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
+				); err != nil {
+					return nil, false, fmt.Errorf(
+						"failed to delete existing %s %s: %w", kind, name, err,
+					)
+				}
+				return nil, false, nil
 			}
-			return nil, false, nil
 		}
 
 		return nil, false, errorsUtil.IfErrErrorf(
-			"failed to patch %s %s: %w", kind, name, err,
+			"failed to apply %s %s: %w", kind, name, err,
 		)
 	}
 
 	if !readinessCheck(appliedResource) {
-		return nil, false, nil
+		return appliedResource, false, nil
 	}
 
 	return appliedResource, true, nil
@@ -148,7 +159,7 @@ func reconcileDeployment(
 		namespace,
 		name,
 		labels,
-		metav1.DeletePropagationForeground,
+		metav1.DeletePropagationBackground,
 		appsv1ac.Deployment,
 		appsv1ac.DeploymentSpec,
 		(*appsv1ac.DeploymentApplyConfiguration).WithSpec,
@@ -176,29 +187,19 @@ func reconcileDeployment(
 		return nil, false, nil
 	}
 
-	if replicas > 1 {
-		if err := reconcilePodDisruptionBudget(
-			ctx,
-			kubernetesClient,
-			namespace,
-			name,
-			ownerReference,
-			labels,
-			1,
-			0,
-		); err != nil {
-			return nil, false, fmt.Errorf("failed to reconcile pod disruption budget for deployment %s/%s: %w",
-				namespace, name, err,
-			)
-		}
-	} else {
-		err := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace).
-			Delete(ctx, name, metav1.DeleteOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return nil, false, fmt.Errorf("failed to delete pod disruption budget for deployment %s/%s: %w",
-				namespace, name, err,
-			)
-		}
+	if err := reconcilePodDisruptionBudget(
+		ctx,
+		kubernetesClient,
+		namespace,
+		name,
+		ownerReference,
+		labels,
+		slices.Ternary(replicas > 2, int32(1), int32(0)),
+		0,
+	); err != nil {
+		return nil, false, fmt.Errorf("failed to reconcile pod disruption budget for deployment %s/%s: %w",
+			namespace, name, err,
+		)
 	}
 
 	return deployment, true, nil
@@ -216,6 +217,13 @@ func reconcilePodDisruptionBudget(
 	minAvailable int32,
 	maxUnavailable int32,
 ) error {
+	if minAvailable == 0 && maxUnavailable == 0 {
+		if err := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace).
+			Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete pod disruption budget %s/%s: %w", namespace, name, err)
+		}
+		return nil
+	}
 	if minAvailable > 0 && maxUnavailable > 0 {
 		return fmt.Errorf("%s/%s: %w",
 			namespace, name, errPodDisruptionBudgetHasBothMinAvailableAndMaxUnavailable,
@@ -232,16 +240,22 @@ func reconcilePodDisruptionBudget(
 		spec = spec.WithMaxUnavailable(intstr.FromInt32(maxUnavailable))
 	}
 
+	podDisruptionBudgetApplyConfiguration := policyv1ac.PodDisruptionBudget(name, namespace).
+		WithLabels(labels).
+		WithSpec(spec)
+
+	if ownerReference != nil {
+		podDisruptionBudgetApplyConfiguration = podDisruptionBudgetApplyConfiguration.
+			WithOwnerReferences(ownerReference)
+	}
+
 	_, err := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace).
 		Apply(
 			ctx,
-			policyv1ac.PodDisruptionBudget(name, namespace).
-				WithLabels(labels).
-				WithOwnerReferences(ownerReference).
-				WithSpec(spec),
+			podDisruptionBudgetApplyConfiguration,
 			operatorutil.ApplyOptions,
 		)
-	return fmt.Errorf("failed to apply pod disruption budget %s/%s: %w", namespace, name, err)
+	return errorsUtil.IfErrErrorf("failed to apply pod disruption budget %s/%s: %w", namespace, name, err)
 }
 
 //+kubebuilder:rbac:groups="",resources=services,verbs=create;patch;delete
@@ -276,13 +290,19 @@ func reconcileService(
 		spec = spec.WithClusterIP(serviceIP.String())
 	}
 
+	serviceApplyConfiguration := corev1ac.Service(name, namespace).
+		WithLabels(labels).
+		WithSpec(spec)
+
+	if ownerReference != nil {
+		serviceApplyConfiguration = serviceApplyConfiguration.
+			WithOwnerReferences(ownerReference)
+	}
+
 	service, err := kubernetesClient.CoreV1().Services(namespace).
 		Apply(
 			ctx,
-			corev1ac.Service(name, namespace).
-				WithLabels(labels).
-				WithOwnerReferences(ownerReference).
-				WithSpec(spec),
+			serviceApplyConfiguration,
 			operatorutil.ApplyOptions,
 		)
 	if err != nil {
@@ -313,17 +333,23 @@ func reconcileSecret(
 	labels map[string]string,
 	data map[string][]byte,
 ) error {
+	secretApplyConfiguration := corev1ac.Secret(name, namespace).
+		WithLabels(labels).
+		WithType(corev1.SecretTypeOpaque).
+		WithData(data)
+
+	if ownerReference != nil {
+		secretApplyConfiguration = secretApplyConfiguration.
+			WithOwnerReferences(ownerReference)
+	}
+
 	_, err := kubernetesClient.CoreV1().Secrets(namespace).
 		Apply(
 			ctx,
-			corev1ac.Secret(name, namespace).
-				WithLabels(labels).
-				WithType(corev1.SecretTypeOpaque).
-				WithOwnerReferences(ownerReference).
-				WithData(data),
+			secretApplyConfiguration,
 			operatorutil.ApplyOptions,
 		)
-	return fmt.Errorf("failed to apply secret %s/%s: %w", namespace, name, err)
+	return errorsUtil.IfErrErrorf("failed to apply secret %s/%s: %w", namespace, name, err)
 }
 
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=create;patch;delete
@@ -337,16 +363,22 @@ func reconcileConfigmap(
 	labels map[string]string,
 	data map[string]string,
 ) error {
+	configMapApplyConfiguration := corev1ac.ConfigMap(name, namespace).
+		WithLabels(labels).
+		WithData(data)
+
+	if ownerReference != nil {
+		configMapApplyConfiguration = configMapApplyConfiguration.
+			WithOwnerReferences(ownerReference)
+	}
+
 	_, err := kubernetesClient.CoreV1().ConfigMaps(namespace).
 		Apply(
 			ctx,
-			corev1ac.ConfigMap(name, namespace).
-				WithLabels(labels).
-				WithOwnerReferences(ownerReference).
-				WithData(data),
+			configMapApplyConfiguration,
 			operatorutil.ApplyOptions,
 		)
-	return fmt.Errorf("failed to apply configmap %s/%s: %w", namespace, name, err)
+	return errorsUtil.IfErrErrorf("failed to apply configmap %s/%s: %w", namespace, name, err)
 }
 
 func isDeploymentReady(deployment *appsv1.Deployment) bool {
@@ -382,7 +414,7 @@ func createDeploymentMutator(
 	}
 }
 
-//+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=create;patch;delete
+//+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=create;get;patch;delete
 
 func reconcileStatefulset(
 	ctx context.Context,
@@ -399,14 +431,52 @@ func reconcileStatefulset(
 	volumeClaimTemplates []*corev1ac.PersistentVolumeClaimApplyConfiguration,
 	volumeClaimRetentionPolicy *appsv1ac.StatefulSetPersistentVolumeClaimRetentionPolicyApplyConfiguration,
 ) (*appsv1.StatefulSet, bool, error) {
+	statefulSetInterface := kubernetesClient.AppsV1().StatefulSets(namespace)
+	existingStatefulSetExists := true
+	existingStatefulSet, err := statefulSetInterface.
+		Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		existingStatefulSetExists = false
+	} else if err != nil {
+		return nil, false, fmt.Errorf("failed to get existing statefulset %s/%s: %w", namespace, name, err)
+	}
+
+	selectorLabels := labels
+
+	if existingStatefulSetExists {
+		existingPodLabels := existingStatefulSet.Spec.Template.Labels
+		existingSelector := existingStatefulSet.Spec.Selector.MatchLabels
+		mergedLabels := slices.Assign(labels, existingPodLabels)
+
+		if slices.Every(slices.ToPairs(existingPodLabels), slices.ToPairs(labels)) {
+			selectorLabels = labels
+		} else if slices.Every(slices.ToPairs(mergedLabels), slices.ToPairs(existingSelector)) {
+			selectorLabels = existingSelector
+			labels = mergedLabels
+		} else if len(labels) == len(existingPodLabels) {
+			return nil, false, fmt.Errorf(
+				"statefulset %s/%s: cannot change pod template label values",
+				namespace, name,
+			)
+		}
+
+		if !slices.ElementsMatch(
+			slices.ToPairs(existingSelector),
+			slices.ToPairs(selectorLabels),
+		) && !isStatefulsetReady(existingStatefulSet) {
+			// wait until the existing statefulset is ready before changing the selector
+			return nil, false, nil
+		}
+	}
+
 	statefulSet, ready, err := reconcileWorkload(
 		ctx,
 		kubernetesClient,
-		kubernetesClient.AppsV1().StatefulSets(namespace),
+		statefulSetInterface,
 		"StatefulSet",
 		namespace,
 		name,
-		labels,
+		selectorLabels,
 		metav1.DeletePropagationOrphan,
 		appsv1ac.StatefulSet,
 		appsv1ac.StatefulSetSpec,
@@ -431,6 +501,16 @@ func reconcileStatefulset(
 		func(statefulset *appsv1ac.StatefulSetApplyConfiguration) *appsv1ac.StatefulSetApplyConfiguration {
 			return statefulset.WithOwnerReferences(ownerReference)
 		},
+		func(statefulset *appsv1ac.StatefulSetApplyConfiguration) *appsv1ac.StatefulSetApplyConfiguration {
+			return statefulset.
+				WithSpec(statefulset.Spec.
+					WithTemplate(statefulset.Spec.Template.
+						WithLabels(
+							labels,
+						),
+					),
+				)
+		},
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to reconcile statefulset %s/%s: %w", namespace, name, err)
@@ -439,29 +519,19 @@ func reconcileStatefulset(
 		return nil, false, nil
 	}
 
-	if replicas > 1 {
-		if err := reconcilePodDisruptionBudget(
-			ctx,
-			kubernetesClient,
-			namespace,
-			name,
-			ownerReference,
-			labels,
-			0,
-			1,
-		); err != nil {
-			return nil, false, fmt.Errorf("failed to reconcile pod disruption budget for statefulset %s/%s: %w",
-				namespace, name, err,
-			)
-		}
-	} else {
-		err := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace).
-			Delete(ctx, name, metav1.DeleteOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return nil, false, fmt.Errorf("failed to delete pod disruption budget for statefulset %s/%s: %w",
-				namespace, name, err,
-			)
-		}
+	if err := reconcilePodDisruptionBudget(
+		ctx,
+		kubernetesClient,
+		namespace,
+		name,
+		ownerReference,
+		labels,
+		0,
+		slices.Ternary(replicas > 1, int32(1), int32(0)),
+	); err != nil {
+		return nil, false, fmt.Errorf("failed to reconcile pod disruption budget for statefulset %s/%s: %w",
+			namespace, name, err,
+		)
 	}
 
 	return statefulSet, ready, err
@@ -478,7 +548,7 @@ func isStatefulsetReady(statefulset *appsv1.StatefulSet) bool {
 		statefulset.Status.UpdatedReplicas,
 		statefulset.Status.ObservedGeneration,
 		statefulset.Generation,
-	)
+	) && statefulset.Status.CurrentRevision == statefulset.Status.UpdateRevision
 }
 
 func arePodsReady(

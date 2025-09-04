@@ -178,6 +178,8 @@ type HostedControlPlaneStatus struct {
 	Ready bool `json:"ready"`
 	//+kubebuilder:validation:Optional
 	Version string `json:"version,omitempty"`
+	// +kubebuilder:default=true
+	ExternalManagedControlPlane *bool `json:"externalManagedControlPlane"`
 
 	// Compatibility with upstream CAPI v1beta2 fields
 	//+kubebuilder:validation:Optional
