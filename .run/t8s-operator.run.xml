@@ -1,0 +1,29 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="t8s-operator" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="t8s-engine" />
+    <working_directory value="$PROJECT_DIR$" />
+    <envs>
+      <env name="LEADER_ELECTION" value="false" />
+      <env name="MAX_CONCURRENT_RECONCILES" value="1" />
+      <env name="OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" value="http://localhost:4317" />
+      <env name="WEBHOOK_CERT_DIR" value="/tmp/operator/tmp/k8s-webhook-server/serving-certs" />
+      <env name="KUBECONFIG" value="" />
+    </envs>
+    <EXTENSION ID="net.ashald.envfile">
+      <option name="IS_ENABLED" value="true" />
+      <option name="IS_SUBST" value="false" />
+      <option name="IS_PATH_MACRO_SUPPORTED" value="false" />
+      <option name="IS_IGNORE_MISSING_FILES" value="false" />
+      <option name="IS_ENABLE_EXPERIMENTAL_INTEGRATIONS" value="false" />
+      <ENTRIES>
+        <ENTRY IS_ENABLED="true" PARSER="runconfig" IS_EXECUTABLE="false" />
+        <ENTRY IS_ENABLED="true" PARSER="yaml" IS_EXECUTABLE="false" PATH="/tmp/operator-env.json" />
+      </ENTRIES>
+    </EXTENSION>
+    <kind value="PACKAGE" />
+    <package value="github.com/teutonet/cluster-api-control-plane-provder-hcp/cmd/t8s-operator" />
+    <directory value="$PROJECT_DIR$" />
+    <filePath value="$PROJECT_DIR$/main.go" />
+    <method v="2" />
+  </configuration>
+</component>
