@@ -20,6 +20,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"go.etcd.io/etcd/api/v3/version"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -678,7 +679,7 @@ func (er *etcdClusterReconciler) createEtcdContainer(
 ) *corev1ac.ContainerApplyConfiguration {
 	return corev1ac.Container().
 		WithName("etcd").
-		WithImage("registry.k8s.io/etcd:3.6.4-0").
+		WithImage(fmt.Sprintf("registry.k8s.io/etcd:%s-0", version.Version)).
 		WithImagePullPolicy(corev1.PullAlways).
 		WithCommand("etcd").
 		WithArgs(er.buildEtcdArgs(
