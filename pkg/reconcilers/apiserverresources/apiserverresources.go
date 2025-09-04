@@ -13,7 +13,6 @@ import (
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
-	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
@@ -21,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
 	"k8s.io/client-go/kubernetes"
 	kubenames "k8s.io/kubernetes/cmd/kube-controller-manager/names"
 	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
@@ -50,6 +48,8 @@ func NewApiServerResourcesReconciler(
 	apiServerServiceLegacyPortName string,
 	etcdComponentLabel string,
 	etcdServerPort int32,
+	konnectivityNamespace string,
+	konnectivityServiceAccount string,
 	konnectivityServicePort int32,
 	konnectivityClientKubeconfigName string,
 	konnectivityServerAudience string,
@@ -64,10 +64,13 @@ func NewApiServerResourcesReconciler(
 		apiServerServiceLegacyPortName:      apiServerServiceLegacyPortName,
 		etcdComponentLabel:                  etcdComponentLabel,
 		etcdServerPort:                      etcdServerPort,
+		konnectivityNamespace:               konnectivityNamespace,
+		konnectivityServiceAccount:          konnectivityServiceAccount,
 		konnectivityServicePort:             konnectivityServicePort,
 		konnectivityClientKubeconfigName:    konnectivityClientKubeconfigName,
 		konnectivityServerAudience:          konnectivityServerAudience,
 		egressSelectorConfigMountPath:       "/etc/kubernetes/egress/configurations",
+		egressSelectorUDSSocketName:         "konnectivity-agent.sock",
 		egressSelectorConfigurationFileName: "egress-selector-configuration.yaml",
 		componentAPIServer:                  "api-server",
 		componentControllerManager:          "controller-manager",
@@ -85,10 +88,13 @@ type apiServerResourcesReconciler struct {
 	apiServerServiceLegacyPortName      string
 	etcdComponentLabel                  string
 	etcdServerPort                      int32
+	konnectivityNamespace               string
+	konnectivityServiceAccount          string
 	konnectivityServicePort             int32
 	konnectivityClientKubeconfigName    string
 	konnectivityServerAudience          string
 	egressSelectorConfigMountPath       string
+	egressSelectorUDSSocketName         string
 	egressSelectorConfigurationFileName string
 	componentAPIServer                  string
 	componentControllerManager          string
@@ -105,38 +111,39 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerDeployments(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) (string, error) {
-	if err := arr.reconcileKonnectivityConfig(ctx, hostedControlPlane, cluster); err != nil {
-		return "", fmt.Errorf("failed to reconcile konnectivity config: %w", err)
-	}
-	if ready, err := arr.reconcileAPIServerDeployment(ctx, hostedControlPlane, cluster); err != nil || !ready {
-		return "Api Server Deployment not ready",
-			errorsUtil.IfErrErrorf("failed to reconcile API server deployment: %w", err)
-	}
+	return tracing.WithSpan(ctx, arr.Tracer, "ReconcileApiServerDeployments",
+		func(ctx context.Context, span trace.Span) (string, error) {
+			if err := arr.reconcileKonnectivityConfig(ctx, hostedControlPlane, cluster); err != nil {
+				return "", fmt.Errorf("failed to reconcile konnectivity config: %w", err)
+			}
+			if ready, err := arr.reconcileAPIServerDeployment(ctx, hostedControlPlane, cluster); err != nil {
+				return "", fmt.Errorf("failed to reconcile API server deployment: %w", err)
+			} else if !ready {
+				return "Api Server Deployment not ready", nil
+			}
 
-	if err := arr.reconcilePodDisruptionBudget(ctx, hostedControlPlane, cluster); err != nil {
-		return "", fmt.Errorf("failed to reconcile pod disruption budget: %w", err)
-	}
+			var notReadyReasons []string
+			if ready, err := arr.reconcileControllerManagerDeployment(ctx, hostedControlPlane, cluster); err != nil {
+				return "", fmt.Errorf("failed to reconcile controller manager deployment: %w", err)
+			} else if !ready {
+				notReadyReasons = append(notReadyReasons, "Controller Manager Deployment not ready")
+			}
 
-	notReadyReasons := []string{}
-	if ready, err := arr.reconcileControllerManagerDeployment(ctx, hostedControlPlane, cluster); err != nil {
-		return "", fmt.Errorf("failed to reconcile controller manager deployment: %w", err)
-	} else if !ready {
-		notReadyReasons = append(notReadyReasons, "Controller Manager Deployment not ready")
-	}
+			if ready, err := arr.reconcileSchedulerDeployment(ctx, hostedControlPlane, cluster); err != nil {
+				return "", fmt.Errorf("failed to reconcile scheduler deployment: %w", err)
+			} else if !ready {
+				notReadyReasons = append(notReadyReasons, "Scheduler Deployment not ready")
+			}
 
-	if ready, err := arr.reconcileSchedulerDeployment(ctx, hostedControlPlane, cluster); err != nil {
-		return "", fmt.Errorf("failed to reconcile scheduler deployment: %w", err)
-	} else if !ready {
-		notReadyReasons = append(notReadyReasons, "Scheduler Deployment not ready")
-	}
+			if len(notReadyReasons) > 0 {
+				return strings.Join(notReadyReasons, ","), nil
+			}
 
-	if len(notReadyReasons) > 0 {
-		return strings.Join(notReadyReasons, ","), nil
-	}
+			hostedControlPlane.Status.Version = hostedControlPlane.Spec.Version
 
-	hostedControlPlane.Status.Version = hostedControlPlane.Spec.Version
-
-	return "", nil
+			return "", nil
+		},
+	)
 }
 
 //+kubebuilder:rbac:groups=core,resources=configmaps,verbs=create;update;patch
@@ -160,7 +167,10 @@ func (arr *apiServerResourcesReconciler) reconcileKonnectivityConfig(
 							ProxyProtocol: v1beta1.ProtocolGRPC,
 							Transport: &v1beta1.Transport{
 								UDS: &v1beta1.UDSTransport{
-									UDSName: "/run/konnectivity/konnectivity-server.sock",
+									UDSName: path.Join(
+										arr.egressSelectorConfigMountPath,
+										arr.egressSelectorUDSSocketName,
+									),
 								},
 							},
 						},
@@ -173,19 +183,17 @@ func (arr *apiServerResourcesReconciler) reconcileKonnectivityConfig(
 				return fmt.Errorf("failed to marshal egress selector configuration: %w", err)
 			}
 
-			configMap := corev1ac.ConfigMap(
+			return arr.ReconcileConfigmap(
+				ctx,
+				hostedControlPlane,
+				cluster,
+				"konnectivity",
+				arr.konnectivityNamespace,
 				names.GetKonnectivityConfigMapName(cluster),
-				hostedControlPlane.Namespace,
-			).
-				WithLabels(names.GetControlPlaneLabels(cluster, "")).
-				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
-				WithData(map[string]string{
+				map[string]string{
 					arr.egressSelectorConfigurationFileName: buf.String(),
-				})
-
-			_, err = arr.KubernetesClient.CoreV1().ConfigMaps(*configMap.Namespace).
-				Apply(ctx, configMap, operatorutil.ApplyOptions)
-			return errorsUtil.IfErrErrorf("failed to patch konnectivity configmap: %w", err)
+				},
+			)
 		},
 	)
 }
@@ -255,7 +263,7 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				},
 				volumes,
 			); err != nil {
-				return ready, err
+				return false, err
 			} else {
 				selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 				if err != nil {
@@ -401,7 +409,6 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerService(
 ) (string, error) {
 	return tracing.WithSpan(ctx, arr.Tracer, "ReconcileApiServerService",
 		func(ctx context.Context, span trace.Span) (string, error) {
-			labels := names.GetControlPlaneLabels(cluster, arr.componentAPIServer)
 			apiPort := corev1ac.ServicePort().
 				WithName("api").
 				WithPort(arr.apiServerServicePort).
@@ -412,35 +419,31 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerService(
 				WithPort(6443).
 				WithTargetPort(*apiPort.TargetPort).
 				WithProtocol(*apiPort.Protocol)
-			service := corev1ac.Service(names.GetServiceName(cluster), hostedControlPlane.Namespace).
-				WithLabels(labels).
-				WithSpec(corev1ac.ServiceSpec().
-					WithType(corev1.ServiceTypeLoadBalancer).
-					WithSelector(labels).
-					WithPorts(
-						apiPort,
-						legacyAPIPort,
-						corev1ac.ServicePort().
-							WithName("konnectivity").
-							WithPort(arr.konnectivityServicePort).
-							WithTargetPort(arr.konnectivityContainerPortName).
-							WithProtocol(corev1.ProtocolTCP),
-					),
-				).
-				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane))
-			appliedService, err := arr.KubernetesClient.CoreV1().Services(*service.Namespace).Apply(ctx,
-				service,
-				operatorutil.ApplyOptions,
-			)
-			if err != nil {
-				return "", errorsUtil.IfErrErrorf("failed to patch service: %w", err)
-			}
-
-			if len(appliedService.Status.LoadBalancer.Ingress) == 0 {
+			if service, ready, err := arr.ReconcileService(
+				ctx,
+				hostedControlPlane,
+				cluster,
+				hostedControlPlane.Namespace,
+				names.GetServiceName(cluster),
+				corev1.ServiceTypeLoadBalancer,
+				false,
+				arr.componentAPIServer,
+				[]*corev1ac.ServicePortApplyConfiguration{
+					apiPort,
+					legacyAPIPort,
+					corev1ac.ServicePort().
+						WithName("konnectivity").
+						WithPort(arr.konnectivityServicePort).
+						WithTargetPort(arr.konnectivityContainerPortName).
+						WithProtocol(corev1.ProtocolTCP),
+				},
+			); err != nil {
+				return "", err
+			} else if !ready {
 				return "Api Server Service is waiting on its IP", nil
+			} else {
+				hostedControlPlane.Status.LegacyIP = service.Status.LoadBalancer.Ingress[0].IP
 			}
-
-			hostedControlPlane.Status.LegacyIP = appliedService.Status.LoadBalancer.Ingress[0].IP
 
 			return "", nil
 		},
@@ -770,8 +773,8 @@ func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 	healthPort *corev1ac.ContainerPortApplyConfiguration,
 ) []string {
 	args := map[string]string{
-		"agent-namespace":         "kube-system",
-		"agent-service-account":   "konnectivity-agent",
+		"agent-namespace":         arr.konnectivityNamespace,
+		"agent-service-account":   arr.konnectivityServiceAccount,
 		"authentication-audience": arr.konnectivityServerAudience,
 		"cluster-cert":            path.Join(*konnectivityCertificatesVolumeMount.MountPath, corev1.TLSCertKey),
 		"cluster-key":             path.Join(*konnectivityCertificatesVolumeMount.MountPath, corev1.TLSPrivateKeyKey),
@@ -784,7 +787,7 @@ func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 		"agent-port":   strconv.Itoa(int(*konnectivityPort.ContainerPort)),
 		"health-port":  strconv.Itoa(int(*healthPort.ContainerPort)),
 		"server-port":  "0",
-		"uds-name":     path.Join(*konnectivityUDSVolumeMount.MountPath, "konnectivity-server.sock"),
+		"uds-name":     path.Join(*konnectivityUDSVolumeMount.MountPath, arr.egressSelectorUDSSocketName),
 		"mode":         "grpc",
 	}
 
@@ -959,29 +962,4 @@ func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 	}
 
 	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.Deployment.ControllerManager.Args, args)
-}
-
-//+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=create;patch
-
-func (arr *apiServerResourcesReconciler) reconcilePodDisruptionBudget(
-	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
-) error {
-	pdbName := fmt.Sprintf("%s-%s", cluster.Name, arr.componentAPIServer)
-	pdb := policyv1ac.PodDisruptionBudget(pdbName, hostedControlPlane.Namespace).
-		WithLabels(names.GetControlPlaneLabels(cluster, arr.componentAPIServer)).
-		WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
-		WithSpec(policyv1ac.PodDisruptionBudgetSpec().
-			WithMinAvailable(intstr.FromInt32(1)).
-			WithSelector(names.GetControlPlaneSelector(cluster, arr.componentAPIServer)),
-		)
-
-	_, err := arr.KubernetesClient.PolicyV1().PodDisruptionBudgets(*pdb.Namespace).
-		Apply(ctx, pdb, operatorutil.ApplyOptions)
-	if err != nil {
-		return fmt.Errorf("failed to apply API server PodDisruptionBudget: %w", err)
-	}
-
-	return nil
 }

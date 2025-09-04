@@ -137,34 +137,32 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 	}
 
 	if !newHostedControlPlane.Spec.ETCD.AutoGrow {
-		if oldHostedControlPlane.Spec.ETCD.AutoGrow {
-			if newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(oldHostedControlPlane.Status.ETCDVolumeSize) == -1 {
-				return warnings, apierrors.NewInvalid(
-					w.groupKind,
-					newHostedControlPlane.Name,
-					field.ErrorList{field.Invalid(
-						w.specPath.Child("etcd").Child("volumeSize"),
-						newHostedControlPlane.Spec.ETCD.VolumeSize,
-						fmt.Sprintf(
-							"volume size cannot be decreased from %v to %v",
-							oldHostedControlPlane.Status.ETCDVolumeSize,
-							newHostedControlPlane.Spec.ETCD.VolumeSize,
-						),
-					)},
-				)
-			}
-		} else {
-			if newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(oldHostedControlPlane.Spec.ETCD.VolumeSize) == -1 {
-				return warnings, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{field.Invalid(
+		if oldHostedControlPlane.Spec.ETCD.AutoGrow &&
+			newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(
+				oldHostedControlPlane.Status.ETCDVolumeSize) == -1 {
+			return warnings, apierrors.NewInvalid(
+				w.groupKind,
+				newHostedControlPlane.Name,
+				field.ErrorList{field.Invalid(
 					w.specPath.Child("etcd").Child("volumeSize"),
 					newHostedControlPlane.Spec.ETCD.VolumeSize,
 					fmt.Sprintf(
 						"volume size cannot be decreased from %v to %v",
-						oldHostedControlPlane.Spec.ETCD.VolumeSize,
+						oldHostedControlPlane.Status.ETCDVolumeSize,
 						newHostedControlPlane.Spec.ETCD.VolumeSize,
 					),
-				)})
-			}
+				)},
+			)
+		} else if newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(oldHostedControlPlane.Spec.ETCD.VolumeSize) == -1 {
+			return warnings, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{field.Invalid(
+				w.specPath.Child("etcd").Child("volumeSize"),
+				newHostedControlPlane.Spec.ETCD.VolumeSize,
+				fmt.Sprintf(
+					"volume size cannot be decreased from %v to %v",
+					oldHostedControlPlane.Spec.ETCD.VolumeSize,
+					newHostedControlPlane.Spec.ETCD.VolumeSize,
+				),
+			)})
 		}
 	}
 

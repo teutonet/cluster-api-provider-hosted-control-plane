@@ -6,9 +6,11 @@ import (
 
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
+	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
+	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -23,7 +25,101 @@ type ManagementResourceReconciler struct {
 	KubernetesClient kubernetes.Interface
 }
 
-//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=create;patch;delete
+func (mr *ManagementResourceReconciler) ReconcileService(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+	namespace string,
+	name string,
+	serviceType corev1.ServiceType,
+	headless bool,
+	component string,
+	ports []*corev1ac.ServicePortApplyConfiguration,
+) (*corev1.Service, bool, error) {
+	return tracing.WithSpan3(ctx, mr.Tracer, "ReconcileService",
+		func(ctx context.Context, span trace.Span) (*corev1.Service, bool, error) {
+			span.SetAttributes(
+				attribute.String("service.namespace", namespace),
+				attribute.String("service.name", name),
+			)
+			return reconcileService(
+				ctx,
+				mr.KubernetesClient,
+				namespace,
+				name,
+				operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
+				names.GetControlPlaneLabels(cluster, component),
+				serviceType,
+				nil,
+				headless,
+				ports,
+			)
+		},
+	)
+}
+
+func (mr *ManagementResourceReconciler) ReconcileSecret(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+	namespace string,
+	name string,
+	data map[string][]byte,
+) error {
+	return tracing.WithSpan1(ctx, mr.Tracer, "ReconcileSecret",
+		func(ctx context.Context, span trace.Span) error {
+			span.SetAttributes(
+				attribute.String("secret.namespace", namespace),
+				attribute.String("secret.name", name),
+			)
+			return errorsUtil.IfErrErrorf("failed to apply secret %s/%s into management cluster: %w",
+				namespace,
+				name,
+				reconcileSecret(
+					ctx,
+					mr.KubernetesClient,
+					namespace,
+					name,
+					operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
+					names.GetControlPlaneLabels(cluster, ""),
+					data,
+				),
+			)
+		},
+	)
+}
+
+func (mr *ManagementResourceReconciler) ReconcileConfigmap(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+	component string,
+	namespace string,
+	name string,
+	data map[string]string,
+) error {
+	return tracing.WithSpan1(ctx, mr.Tracer, "ReconcileConfigmap",
+		func(ctx context.Context, span trace.Span) error {
+			span.SetAttributes(
+				attribute.String("configmap.namespace", namespace),
+				attribute.String("configmap.name", name),
+			)
+			return errorsUtil.IfErrErrorf("failed to apply configmap %s/%s into management cluster: %w",
+				namespace,
+				name,
+				reconcileConfigmap(
+					ctx,
+					mr.KubernetesClient,
+					namespace,
+					name,
+					operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
+					names.GetControlPlaneLabels(cluster, component),
+					data,
+				),
+			)
+		},
+	)
+}
 
 func (mr *ManagementResourceReconciler) ReconcileDeployment(
 	ctx context.Context,
@@ -38,6 +134,14 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 ) (*appsv1.Deployment, bool, error) {
 	return tracing.WithSpan3(ctx, mr.Tracer, "ReconcileDeployment",
 		func(ctx context.Context, span trace.Span) (*appsv1.Deployment, bool, error) {
+			span.SetAttributes(
+				attribute.Int("deployment.replicas", int(replicas)),
+				attribute.String("deployment.component", component),
+				attribute.String("deployment.targetComponent", targetComponent),
+				attribute.String("deployment.priorityClass", priorityClassName),
+				attribute.Int("deployment.containers.count", len(containers)),
+				attribute.Int("deployment.volumes.count", len(volumes)),
+			)
 			podOptions := PodOptions{
 				PriorityClassName: priorityClassName,
 			}
@@ -58,7 +162,7 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 				mr.KubernetesClient,
 				cluster.Namespace,
 				fmt.Sprintf("%s-%s", cluster.Name, component),
-				util.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
+				operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
 				names.GetControlPlaneLabels(cluster, component),
 				replicas,
 				createPodTemplateSpec(podOptions, containers, volumes),
@@ -70,13 +174,14 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 	name string,
 	namespace string,
 	podOptions PodOptions,
 	serviceName string,
 	podManagementPolicy appsv1.PodManagementPolicyType,
 	updateStrategy *appsv1ac.StatefulSetUpdateStrategyApplyConfiguration,
-	labels map[string]string,
+	component string,
 	replicas int32,
 	containers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	volumes []*corev1ac.VolumeApplyConfiguration,
@@ -85,16 +190,23 @@ func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 ) (*appsv1.StatefulSet, bool, error) {
 	return tracing.WithSpan3(ctx, mr.Tracer, "ReconcileStatefulset",
 		func(ctx context.Context, span trace.Span) (*appsv1.StatefulSet, bool, error) {
+			span.SetAttributes(
+				attribute.String("statefulset.namespace", namespace),
+				attribute.String("statefulset.name", name),
+				attribute.Int("statefulset.replicas", int(replicas)),
+				attribute.Int("statefulset.containers.count", len(containers)),
+				attribute.Int("statefulset.volumes.count", len(volumes)),
+			)
 			return reconcileStatefulset(
 				ctx,
 				mr.KubernetesClient,
 				namespace,
 				name,
-				util.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
+				operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
 				serviceName,
 				podManagementPolicy,
 				updateStrategy,
-				labels,
+				names.GetControlPlaneLabels(cluster, component),
 				replicas,
 				createPodTemplateSpec(
 					podOptions,

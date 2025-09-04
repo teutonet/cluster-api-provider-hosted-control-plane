@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	slices "github.com/samber/lo"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -108,11 +109,11 @@ func SetChecksumAnnotations(
 	namespace string,
 	template *corev1ac.PodTemplateSpecApplyConfiguration,
 ) (*corev1ac.PodTemplateSpecApplyConfiguration, error) {
-	usedSecretName := extractSecretNames(template.Spec.Volumes)
-	if len(usedSecretName) > 0 {
+	usedSecretNames := extractSecretNames(template.Spec.Volumes)
+	if len(usedSecretNames) > 0 {
 		if secretChecksum, err := CalculateSecretChecksum(ctx, client,
 			namespace,
-			usedSecretName,
+			usedSecretNames,
 		); err != nil {
 			return nil, fmt.Errorf("failed to calculate secret checksum: %w", err)
 		} else if secretChecksum != "" {
@@ -149,6 +150,12 @@ func CalculateSecretChecksum(
 ) (string, error) {
 	return tracing.WithSpan(ctx, "checksum", "CalculateSecretChecksum",
 		func(ctx context.Context, span trace.Span) (string, error) {
+			span.SetAttributes(
+				attribute.String("checksum.namespace", namespace),
+				attribute.Int("checksum.secrets.count", len(secretNames)),
+				attribute.String("checksum.type", "secrets"),
+				attribute.StringSlice("checksum.secret.names", secretNames),
+			)
 			secretMaps := make([]map[string]any, 0, len(secretNames))
 			for _, secretName := range secretNames {
 				secret, err := kubernetesClient.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
@@ -178,6 +185,12 @@ func CalculateConfigMapChecksum(
 ) (string, error) {
 	return tracing.WithSpan(ctx, "checksum", "CalculateConfigMapChecksum",
 		func(ctx context.Context, span trace.Span) (string, error) {
+			span.SetAttributes(
+				attribute.String("checksum.namespace", namespace),
+				attribute.Int("checksum.configmaps.count", len(configMapNames)),
+				attribute.String("checksum.type", "configmaps"),
+				attribute.StringSlice("checksum.configmap.names", configMapNames),
+			)
 			configMapMaps := make([]map[string]any, 0, len(configMapNames))
 			for _, configMapName := range configMapNames {
 				configMap, err := kubernetesClient.CoreV1().

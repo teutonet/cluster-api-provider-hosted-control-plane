@@ -14,7 +14,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/authentication/user"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
-	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/phases/bootstraptoken/clusterinfo"
 	"k8s.io/kubernetes/cmd/kubeadm/app/phases/uploadconfig"
@@ -26,16 +25,31 @@ type RBACReconciler interface {
 
 func NewRBACReconciler(
 	kubernetesClient *alias.WorkloadClusterClient,
+	kubeadmKubeletConfigMapNamespace string,
+	kubeadmConfigConfigMapName string,
+	kubeletConfigMapName string,
+	clusterInfoConfigMapNamespace string,
+	clusterInfoConfigMapName string,
 ) RBACReconciler {
 	return &rbacReconciler{
-		kubernetesClient: kubernetesClient,
-		tracer:           tracing.GetTracer("rbac"),
+		kubernetesClient:                 kubernetesClient,
+		tracer:                           tracing.GetTracer("rbac"),
+		kubeadmKubeletConfigMapNamespace: kubeadmKubeletConfigMapNamespace,
+		kubeadmConfigConfigMapName:       kubeadmConfigConfigMapName,
+		kubeletConfigMapName:             kubeletConfigMapName,
+		clusterInfoConfigMapNamespace:    clusterInfoConfigMapNamespace,
+		clusterInfoConfigMapName:         clusterInfoConfigMapName,
 	}
 }
 
 type rbacReconciler struct {
-	kubernetesClient *alias.WorkloadClusterClient
-	tracer           string
+	kubernetesClient                 *alias.WorkloadClusterClient
+	tracer                           string
+	kubeadmConfigConfigMapName       string
+	kubeletConfigMapName             string
+	kubeadmKubeletConfigMapNamespace string
+	clusterInfoConfigMapNamespace    string
+	clusterInfoConfigMapName         string
 }
 
 var _ RBACReconciler = &rbacReconciler{}
@@ -89,7 +103,7 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 			}
 
 			for _, phase := range phases {
-				notReadyReasons := []string{}
+				var notReadyReasons []string
 				resources, err := phase.Generate()
 				if err != nil {
 					return "", fmt.Errorf("failed to generate %s: %w", phase.Name, err)
@@ -98,17 +112,20 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 					_, err := rr.kubernetesClient.RbacV1().ClusterRoles().
 						Apply(ctx, clusterRole, operatorutil.ApplyOptions)
 					if err != nil {
-						if apierrors.IsInvalid(err) {
-							if err := rr.kubernetesClient.RbacV1().ClusterRoles().
-								Delete(ctx, *clusterRole.Name, metav1.DeleteOptions{}); err != nil {
-								return "", fmt.Errorf(
-									"failed to delete invalid cluster role %s: %w",
-									*clusterRole.Name, err,
-								)
-							}
-							notReadyReasons = append(notReadyReasons, fmt.Sprintf("cluster role %s needs to be recreated", *clusterRole.Name))
+						if !apierrors.IsInvalid(err) {
+							return "", fmt.Errorf("failed to apply cluster role %s: %w", *clusterRole.Name, err)
 						}
-						return "", fmt.Errorf("failed to apply cluster role %s: %w", *clusterRole.Name, err)
+						if err := rr.kubernetesClient.RbacV1().ClusterRoles().
+							Delete(ctx, *clusterRole.Name, metav1.DeleteOptions{}); err != nil {
+							return "", fmt.Errorf(
+								"failed to delete invalid cluster role %s: %w",
+								*clusterRole.Name, err,
+							)
+						}
+						notReadyReasons = append(
+							notReadyReasons,
+							fmt.Sprintf("cluster role %s needs to be recreated", *clusterRole.Name),
+						)
 					}
 				}
 
@@ -116,18 +133,22 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 					_, err := rr.kubernetesClient.RbacV1().ClusterRoleBindings().
 						Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
 					if err != nil {
-						if apierrors.IsInvalid(err) {
-							if err := rr.kubernetesClient.RbacV1().ClusterRoleBindings().
-								Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{}); err != nil {
-								return "", fmt.Errorf(
-									"failed to delete invalid cluster role binding %s: %w",
-									*clusterRoleBinding.Name, err,
-								)
-							}
-							notReadyReasons = append(notReadyReasons, fmt.Sprintf("cluster role binding %s needs to be recreated", *clusterRoleBinding.Name))
+						if !apierrors.IsInvalid(err) {
+							return "", fmt.Errorf(
+								"failed to apply cluster role binding %s: %w", *clusterRoleBinding.Name, err,
+							)
 						}
-						return "", fmt.Errorf("failed to apply cluster role binding %s: %w", *clusterRoleBinding.Name,
-							err)
+						if err := rr.kubernetesClient.RbacV1().ClusterRoleBindings().
+							Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{}); err != nil {
+							return "", fmt.Errorf(
+								"failed to delete invalid cluster role binding %s: %w",
+								*clusterRoleBinding.Name, err,
+							)
+						}
+						notReadyReasons = append(
+							notReadyReasons,
+							fmt.Sprintf("cluster role binding %s needs to be recreated", *clusterRoleBinding.Name),
+						)
 					}
 				}
 
@@ -135,19 +156,26 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 					_, err := rr.kubernetesClient.RbacV1().Roles(*role.Namespace).
 						Apply(ctx, role, operatorutil.ApplyOptions)
 					if err != nil {
-						if apierrors.IsInvalid(err) {
-							if err := rr.kubernetesClient.RbacV1().Roles(*role.Namespace).
-								Delete(ctx, *role.Name, metav1.DeleteOptions{}); err != nil {
-								return "", fmt.Errorf(
-									"failed to delete invalid role %s in namespace %s: %w",
-									*role.Name, *role.Namespace, err,
-								)
-							}
-							notReadyReasons = append(notReadyReasons, fmt.Sprintf("role %s in namespace %s needs to be recreated", *role.Name, *role.Namespace))
+						if !apierrors.IsInvalid(err) {
+							return "", fmt.Errorf(
+								"failed to apply role %s in namespace %s: %w",
+								*role.Name, *role.Namespace, err,
+							)
 						}
-						return "", fmt.Errorf(
-							"failed to apply role %s in namespace %s: %w",
-							*role.Name, *role.Namespace, err,
+						if err := rr.kubernetesClient.RbacV1().Roles(*role.Namespace).
+							Delete(ctx, *role.Name, metav1.DeleteOptions{}); err != nil {
+							return "", fmt.Errorf(
+								"failed to delete invalid role %s in namespace %s: %w",
+								*role.Name, *role.Namespace, err,
+							)
+						}
+						notReadyReasons = append(
+							notReadyReasons,
+							fmt.Sprintf(
+								"role %s in namespace %s needs to be recreated",
+								*role.Name,
+								*role.Namespace,
+							),
 						)
 					}
 				}
@@ -156,19 +184,26 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 					_, err := rr.kubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
 						Apply(ctx, roleBinding, operatorutil.ApplyOptions)
 					if err != nil {
-						if apierrors.IsInvalid(err) {
-							if err := rr.kubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
-								Delete(ctx, *roleBinding.Name, metav1.DeleteOptions{}); err != nil {
-								return "", fmt.Errorf(
-									"failed to delete invalid role binding %s in namespace %s: %w",
-									*roleBinding.Name, *roleBinding.Namespace, err,
-								)
-							}
-							notReadyReasons = append(notReadyReasons, fmt.Sprintf("role binding %s in namespace %s needs to be recreated", *roleBinding.Name, *roleBinding.Namespace))
+						if !apierrors.IsInvalid(err) {
+							return "", fmt.Errorf(
+								"failed to apply role binding %s in namespace %s: %w",
+								*roleBinding.Name, *roleBinding.Namespace, err,
+							)
 						}
-						return "", fmt.Errorf(
-							"failed to apply role binding %s in namespace %s: %w",
-							*roleBinding.Name, *roleBinding.Namespace, err,
+						if err := rr.kubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
+							Delete(ctx, *roleBinding.Name, metav1.DeleteOptions{}); err != nil {
+							return "", fmt.Errorf(
+								"failed to delete invalid role binding %s in namespace %s: %w",
+								*roleBinding.Name, *roleBinding.Namespace, err,
+							)
+						}
+						notReadyReasons = append(
+							notReadyReasons,
+							fmt.Sprintf(
+								"role binding %s in namespace %s needs to be recreated",
+								*roleBinding.Name,
+								*roleBinding.Namespace,
+							),
 						)
 					}
 				}
@@ -241,16 +276,16 @@ func (rr *rbacReconciler) generateClusterAdminBindingRBAC() (*RBACResources, err
 }
 
 func (rr *rbacReconciler) generateClusterInfoRBAC() (*RBACResources, error) {
-	role := rbacv1ac.Role(clusterinfo.BootstrapSignerClusterRoleName, metav1.NamespacePublic).
+	role := rbacv1ac.Role(clusterinfo.BootstrapSignerClusterRoleName, rr.clusterInfoConfigMapNamespace).
 		WithRules(
 			rbacv1ac.PolicyRule().
 				WithAPIGroups("").
 				WithVerbs("get").
 				WithResources("configmaps").
-				WithResourceNames(bootstrapapi.ConfigMapClusterInfo),
+				WithResourceNames(rr.clusterInfoConfigMapName),
 		)
 
-	roleBinding := rbacv1ac.RoleBinding(clusterinfo.BootstrapSignerClusterRoleName, metav1.NamespacePublic).
+	roleBinding := rbacv1ac.RoleBinding(clusterinfo.BootstrapSignerClusterRoleName, rr.clusterInfoConfigMapNamespace).
 		WithRoleRef(
 			rbacv1ac.RoleRef().
 				WithAPIGroup(rbacv1.GroupName).
@@ -306,38 +341,34 @@ func (rr *rbacReconciler) generateConfigMapRBAC(
 
 func (rr *rbacReconciler) generateKubeletConfigRBAC() (*RBACResources, error) {
 	return rr.generateConfigMapRBAC(
-		konstants.KubeletBaseConfigurationConfigMap,
+		rr.kubeletConfigMapName,
 		konstants.KubeletBaseConfigMapRole,
 	)
 }
 
 func (rr *rbacReconciler) generateKubeletKubeadmConfigRBAC() (*RBACResources, error) {
 	return rr.generateConfigMapRBAC(
-		konstants.KubeadmConfigConfigMap,
+		rr.kubeadmConfigConfigMapName,
 		uploadconfig.NodesKubeadmConfigClusterRoleName,
 	)
 }
 
 func (rr *rbacReconciler) generateNodeBootstrapGetNodesRBAC() (*RBACResources, error) {
-	clusterRole := rbacv1ac.ClusterRole(konstants.GetNodesClusterRoleName).
-		WithRules(
-			rbacv1ac.PolicyRule().
-				WithAPIGroups("").
-				WithResources("nodes").
-				WithVerbs("get"),
-		)
+	clusterRole := rbacv1ac.ClusterRole(konstants.GetNodesClusterRoleName).WithRules(
+		rbacv1ac.PolicyRule().
+			WithAPIGroups("").
+			WithResources("nodes").
+			WithVerbs("get"),
+	)
 
-	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.GetNodesClusterRoleName).
-		WithRoleRef(
-			rbacv1ac.RoleRef().
-				WithAPIGroup(rbacv1.GroupName).
-				WithKind(*clusterRole.Kind).
-				WithName(*clusterRole.Name),
-		).
-		WithSubjects(
-			rbacv1ac.Subject().
-				WithKind(rbacv1.GroupKind).
-				WithName(konstants.NodeBootstrapTokenAuthGroup),
+	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.GetNodesClusterRoleName).WithRoleRef(rbacv1ac.RoleRef().
+		WithAPIGroup(rbacv1.GroupName).
+		WithKind(*clusterRole.Kind).
+		WithName(*clusterRole.Name),
+	).
+		WithSubjects(rbacv1ac.Subject().
+			WithKind(rbacv1.GroupKind).
+			WithName(konstants.NodeBootstrapTokenAuthGroup),
 		)
 
 	return &RBACResources{

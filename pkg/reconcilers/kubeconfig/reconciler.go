@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
@@ -38,20 +37,21 @@ func NewKubeconfigReconciler(
 	controllerKubeconfigName string,
 ) KubeconfigReconciler {
 	return &kubeconfigReconciler{
-		kubernetesClient:                 kubernetesClient,
+		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
+			KubernetesClient: kubernetesClient,
+			Tracer:           tracing.GetTracer("kubeconfig"),
+		},
 		apiServerServicePort:             apiServerServicePort,
 		konnectivityClientKubeconfigName: konnectivityClientKubeconfigName,
 		controllerKubeconfigName:         controllerKubeconfigName,
-		tracer:                           tracing.GetTracer("kubeconfig"),
 	}
 }
 
 type kubeconfigReconciler struct {
-	kubernetesClient                 kubernetes.Interface
+	reconcilers.ManagementResourceReconciler
 	apiServerServicePort             int32
 	konnectivityClientKubeconfigName string
 	controllerKubeconfigName         string
-	tracer                           string
 }
 
 var _ KubeconfigReconciler = &kubeconfigReconciler{}
@@ -69,15 +69,23 @@ func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, kr.tracer, "ReconcileKubeconfigs",
+	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeconfigs",
 		func(ctx context.Context, span trace.Span) error {
+			span.SetAttributes(
+				attribute.String("konnectivity.client.kubeconfig.name", kr.konnectivityClientKubeconfigName),
+				attribute.String("controller.kubeconfig.name", kr.controllerKubeconfigName),
+			)
 			localEndpoint := capiv1.APIEndpoint{
 				Host: "localhost",
 				Port: 6443,
 			}
 			controlPlaneName := hostedControlPlane.Name
-			internalServiceEndpoint := capiv1.APIEndpoint{
+			clusterInternalServiceEndpoint := capiv1.APIEndpoint{
 				Host: names.GetInternalServiceHost(cluster),
+				Port: kr.apiServerServicePort,
+			}
+			internalServiceEndpoint := capiv1.APIEndpoint{
+				Host: names.GetServiceName(cluster),
 				Port: kr.apiServerServicePort,
 			}
 			kubeconfigs := []kubeconfigConfig{
@@ -110,7 +118,7 @@ func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 					Name:                  kr.controllerKubeconfigName,
 					CertificateSecretName: names.GetControllerKubeconfigCertificateSecretName(cluster),
 					ClusterName:           controlPlaneName,
-					ApiServerEndpoint:     internalServiceEndpoint,
+					ApiServerEndpoint:     clusterInternalServiceEndpoint,
 				},
 			}
 
@@ -136,11 +144,11 @@ func (kr *kubeconfigReconciler) reconcileKubeconfig(
 	cluster *capiv1.Cluster,
 	kubeconfigConfig kubeconfigConfig,
 ) error {
-	return tracing.WithSpan1(ctx, kr.tracer, "ReconcileKubeconfig",
+	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeconfig",
 		func(ctx context.Context, span trace.Span) error {
 			span.SetAttributes(
-				attribute.String("KubeconfigName", kubeconfigConfig.Name),
-				attribute.String("CertificateSecretName", kubeconfigConfig.CertificateSecretName),
+				attribute.String("kubeconfig.name", kubeconfigConfig.Name),
+				attribute.String("kubeconfig.certificate.secretName", kubeconfigConfig.CertificateSecretName),
 			)
 
 			kubeconfig, err := kr.generateKubeconfig(ctx,
@@ -156,16 +164,16 @@ func (kr *kubeconfigReconciler) reconcileKubeconfig(
 			if err != nil {
 				return errorsUtil.IfErrErrorf("failed to marshal kubeconfig: %w", err)
 			}
-			kubeconfigSecret := corev1ac.Secret(kubeconfigConfig.SecretName, cluster.Namespace).
-				WithLabels(names.GetControlPlaneLabels(cluster, "")).
-				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
-				WithData(map[string][]byte{
+			return kr.ReconcileSecret(
+				ctx,
+				hostedControlPlane,
+				cluster,
+				cluster.Namespace,
+				kubeconfigConfig.SecretName,
+				map[string][]byte{
 					capisecretutil.KubeconfigDataName: kubeconfigBytes,
-				})
-
-			_, err = kr.kubernetesClient.CoreV1().Secrets(*kubeconfigSecret.Namespace).
-				Apply(ctx, kubeconfigSecret, operatorutil.ApplyOptions)
-			return errorsUtil.IfErrErrorf("failed to patch kubeconfig secret: %w", err)
+				},
+			)
 		},
 	)
 }
@@ -179,18 +187,23 @@ func (kr *kubeconfigReconciler) generateKubeconfig(
 	userName string,
 	kubeconfiCertificateSecretName string,
 ) (*api.Config, error) {
-	return tracing.WithSpan(ctx, kr.tracer, "GenerateKubeconfig",
+	return tracing.WithSpan(ctx, kr.Tracer, "GenerateKubeconfig",
 		func(ctx context.Context, span trace.Span) (*api.Config, error) {
+			span.SetAttributes(
+				attribute.String("kubeconfig.user", userName),
+				attribute.String("kubeconfig.certificate.secret", kubeconfiCertificateSecretName),
+				attribute.String("kubeconfig.api.endpoint", apiEndpoint.String()),
+			)
 			clusterName := cluster.Name
 			contextName := fmt.Sprintf("%s@%s", userName, clusterName)
 
-			certSecret, err := kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
+			certSecret, err := kr.KubernetesClient.CoreV1().Secrets(cluster.Namespace).
 				Get(ctx, kubeconfiCertificateSecretName, metav1.GetOptions{})
 			if err != nil {
 				return nil, fmt.Errorf("failed to get certificate secret: %w", err)
 			}
 
-			caSecret, err := kr.kubernetesClient.CoreV1().Secrets(cluster.Namespace).
+			caSecret, err := kr.KubernetesClient.CoreV1().Secrets(cluster.Namespace).
 				Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
 			if err != nil {
 				return nil, fmt.Errorf("failed to get CA secret: %w", err)

@@ -2,7 +2,9 @@ package reconcilers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 
 	slices "github.com/samber/lo"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
@@ -15,8 +17,18 @@ import (
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
+	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
+)
+
+var (
+	errPodDisruptionBudgetHasBothMinAvailableAndMaxUnavailable = errors.New(
+		"pod disruption budget cannot have both minAvailable and maxUnavailable set",
+	)
+	errServiceHasBothClusterIPAndIsHeadless = errors.New(
+		"service cannot be headless and have a clusterIP set",
+	)
 )
 
 type PodOptions struct {
@@ -40,7 +52,7 @@ type reconcileClient[applyConfiguration any, result any] interface {
 	Delete(ctx context.Context, name string, options metav1.DeleteOptions) error
 }
 
-func reconcile[RA any, RSA any, R any](
+func reconcileWorkload[RA any, RSA any, R any](
 	ctx context.Context,
 	kubernetesClient kubernetes.Interface,
 	client reconcileClient[RA, R],
@@ -48,6 +60,7 @@ func reconcile[RA any, RSA any, R any](
 	namespace string,
 	name string,
 	labels map[string]string,
+	propagationPolicy metav1.DeletionPropagation,
 	createResourceApplyConfiguration func(name string, namespace string) *RA,
 	createResourceSpecApplyConfiguration func() *RSA,
 	setSpec func(resourceApplyConfiguration *RA, resourceSpecApplyConfiguration *RSA) *RA,
@@ -94,7 +107,7 @@ func reconcile[RA any, RSA any, R any](
 			if err := client.Delete(
 				ctx,
 				name,
-				metav1.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationForeground)}, // TODO: make this configurable
+				metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
 			); err != nil {
 				return nil, false, fmt.Errorf(
 					"failed to delete existing %s %s: %w", kind, name, err,
@@ -115,6 +128,8 @@ func reconcile[RA any, RSA any, R any](
 	return appliedResource, true, nil
 }
 
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=create;patch;delete
+
 func reconcileDeployment(
 	ctx context.Context,
 	kubernetesClient kubernetes.Interface,
@@ -125,7 +140,7 @@ func reconcileDeployment(
 	replicas int32,
 	podTemplateSpec *corev1ac.PodTemplateSpecApplyConfiguration,
 ) (*appsv1.Deployment, bool, error) {
-	return reconcile(
+	deployment, ready, err := reconcileWorkload(
 		ctx,
 		kubernetesClient,
 		kubernetesClient.AppsV1().Deployments(namespace),
@@ -133,6 +148,7 @@ func reconcileDeployment(
 		namespace,
 		name,
 		labels,
+		metav1.DeletePropagationForeground,
 		appsv1ac.Deployment,
 		appsv1ac.DeploymentSpec,
 		(*appsv1ac.DeploymentApplyConfiguration).WithSpec,
@@ -153,6 +169,184 @@ func reconcileDeployment(
 			return deployment
 		},
 	)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to reconcile deployment %s/%s: %w", namespace, name, err)
+	}
+	if !ready {
+		return nil, false, nil
+	}
+
+	if replicas > 1 {
+		if err := reconcilePodDisruptionBudget(
+			ctx,
+			kubernetesClient,
+			namespace,
+			name,
+			ownerReference,
+			labels,
+			1,
+			0,
+		); err != nil {
+			return nil, false, fmt.Errorf("failed to reconcile pod disruption budget for deployment %s/%s: %w",
+				namespace, name, err,
+			)
+		}
+	} else {
+		err := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace).
+			Delete(ctx, name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return nil, false, fmt.Errorf("failed to delete pod disruption budget for deployment %s/%s: %w",
+				namespace, name, err,
+			)
+		}
+	}
+
+	return deployment, true, nil
+}
+
+//+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=create;patch;delete
+
+func reconcilePodDisruptionBudget(
+	ctx context.Context,
+	kubernetesClient kubernetes.Interface,
+	namespace string,
+	name string,
+	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
+	labels map[string]string,
+	minAvailable int32,
+	maxUnavailable int32,
+) error {
+	if minAvailable > 0 && maxUnavailable > 0 {
+		return fmt.Errorf("%s/%s: %w",
+			namespace, name, errPodDisruptionBudgetHasBothMinAvailableAndMaxUnavailable,
+		)
+	}
+
+	spec := policyv1ac.PodDisruptionBudgetSpec().
+		WithSelector(metav1ac.LabelSelector().WithMatchLabels(labels))
+
+	switch {
+	case minAvailable > 0:
+		spec = spec.WithMinAvailable(intstr.FromInt32(minAvailable))
+	case maxUnavailable > 0:
+		spec = spec.WithMaxUnavailable(intstr.FromInt32(maxUnavailable))
+	}
+
+	_, err := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace).
+		Apply(
+			ctx,
+			policyv1ac.PodDisruptionBudget(name, namespace).
+				WithLabels(labels).
+				WithOwnerReferences(ownerReference).
+				WithSpec(spec),
+			operatorutil.ApplyOptions,
+		)
+	return fmt.Errorf("failed to apply pod disruption budget %s/%s: %w", namespace, name, err)
+}
+
+//+kubebuilder:rbac:groups="",resources=services,verbs=create;patch;delete
+
+func reconcileService(
+	ctx context.Context,
+	kubernetesClient kubernetes.Interface,
+	namespace string,
+	name string,
+	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
+	labels map[string]string,
+	serviceType corev1.ServiceType,
+	serviceIP net.IP,
+	headless bool,
+	ports []*corev1ac.ServicePortApplyConfiguration,
+) (*corev1.Service, bool, error) {
+	spec := corev1ac.ServiceSpec().
+		WithType(serviceType).
+		WithSelector(labels).
+		WithPorts(ports...)
+
+	if headless && serviceIP != nil {
+		return nil, false, fmt.Errorf("%s/%s: %w",
+			namespace, name, errServiceHasBothClusterIPAndIsHeadless,
+		)
+	}
+
+	switch {
+	case headless:
+		spec = spec.WithClusterIP(corev1.ClusterIPNone).WithPublishNotReadyAddresses(true)
+	case serviceIP != nil:
+		spec = spec.WithClusterIP(serviceIP.String())
+	}
+
+	service, err := kubernetesClient.CoreV1().Services(namespace).
+		Apply(
+			ctx,
+			corev1ac.Service(name, namespace).
+				WithLabels(labels).
+				WithOwnerReferences(ownerReference).
+				WithSpec(spec),
+			operatorutil.ApplyOptions,
+		)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to apply service %s/%s: %w", namespace, name, err)
+	}
+
+	ready := false
+	switch serviceType {
+	case corev1.ServiceTypeLoadBalancer:
+		ready = len(service.Status.LoadBalancer.Ingress) > 0
+	case corev1.ServiceTypeClusterIP:
+		ready = service.Spec.ClusterIP != ""
+	case corev1.ServiceTypeNodePort, corev1.ServiceTypeExternalName:
+		ready = true
+	}
+
+	return service, ready, nil
+}
+
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=create;patch;delete
+
+func reconcileSecret(
+	ctx context.Context,
+	kubernetesClient kubernetes.Interface,
+	namespace string,
+	name string,
+	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
+	labels map[string]string,
+	data map[string][]byte,
+) error {
+	_, err := kubernetesClient.CoreV1().Secrets(namespace).
+		Apply(
+			ctx,
+			corev1ac.Secret(name, namespace).
+				WithLabels(labels).
+				WithType(corev1.SecretTypeOpaque).
+				WithOwnerReferences(ownerReference).
+				WithData(data),
+			operatorutil.ApplyOptions,
+		)
+	return fmt.Errorf("failed to apply secret %s/%s: %w", namespace, name, err)
+}
+
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=create;patch;delete
+
+func reconcileConfigmap(
+	ctx context.Context,
+	kubernetesClient kubernetes.Interface,
+	namespace string,
+	name string,
+	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
+	labels map[string]string,
+	data map[string]string,
+) error {
+	_, err := kubernetesClient.CoreV1().ConfigMaps(namespace).
+		Apply(
+			ctx,
+			corev1ac.ConfigMap(name, namespace).
+				WithLabels(labels).
+				WithOwnerReferences(ownerReference).
+				WithData(data),
+			operatorutil.ApplyOptions,
+		)
+	return fmt.Errorf("failed to apply configmap %s/%s: %w", namespace, name, err)
 }
 
 func isDeploymentReady(deployment *appsv1.Deployment) bool {
@@ -161,7 +355,7 @@ func isDeploymentReady(deployment *appsv1.Deployment) bool {
 	}
 
 	return arePodsReady(
-		deployment.Spec.Replicas,
+		*deployment.Spec.Replicas,
 		deployment.Status.ReadyReplicas,
 		deployment.Status.AvailableReplicas,
 		deployment.Status.UpdatedReplicas,
@@ -188,6 +382,8 @@ func createDeploymentMutator(
 	}
 }
 
+//+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=create;patch;delete
+
 func reconcileStatefulset(
 	ctx context.Context,
 	kubernetesClient kubernetes.Interface,
@@ -203,7 +399,7 @@ func reconcileStatefulset(
 	volumeClaimTemplates []*corev1ac.PersistentVolumeClaimApplyConfiguration,
 	volumeClaimRetentionPolicy *appsv1ac.StatefulSetPersistentVolumeClaimRetentionPolicyApplyConfiguration,
 ) (*appsv1.StatefulSet, bool, error) {
-	return reconcile(
+	statefulSet, ready, err := reconcileWorkload(
 		ctx,
 		kubernetesClient,
 		kubernetesClient.AppsV1().StatefulSets(namespace),
@@ -211,6 +407,7 @@ func reconcileStatefulset(
 		namespace,
 		name,
 		labels,
+		metav1.DeletePropagationOrphan,
 		appsv1ac.StatefulSet,
 		appsv1ac.StatefulSetSpec,
 		(*appsv1ac.StatefulSetApplyConfiguration).WithSpec,
@@ -235,6 +432,39 @@ func reconcileStatefulset(
 			return statefulset.WithOwnerReferences(ownerReference)
 		},
 	)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to reconcile statefulset %s/%s: %w", namespace, name, err)
+	}
+	if !ready {
+		return nil, false, nil
+	}
+
+	if replicas > 1 {
+		if err := reconcilePodDisruptionBudget(
+			ctx,
+			kubernetesClient,
+			namespace,
+			name,
+			ownerReference,
+			labels,
+			0,
+			1,
+		); err != nil {
+			return nil, false, fmt.Errorf("failed to reconcile pod disruption budget for statefulset %s/%s: %w",
+				namespace, name, err,
+			)
+		}
+	} else {
+		err := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace).
+			Delete(ctx, name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return nil, false, fmt.Errorf("failed to delete pod disruption budget for statefulset %s/%s: %w",
+				namespace, name, err,
+			)
+		}
+	}
+
+	return statefulSet, ready, err
 }
 
 func isStatefulsetReady(statefulset *appsv1.StatefulSet) bool {
@@ -242,7 +472,7 @@ func isStatefulsetReady(statefulset *appsv1.StatefulSet) bool {
 		return false
 	}
 	return arePodsReady(
-		statefulset.Spec.Replicas,
+		*statefulset.Spec.Replicas,
 		statefulset.Status.ReadyReplicas,
 		statefulset.Status.AvailableReplicas,
 		statefulset.Status.UpdatedReplicas,
@@ -252,26 +482,17 @@ func isStatefulsetReady(statefulset *appsv1.StatefulSet) bool {
 }
 
 func arePodsReady(
-	replicas *int32,
+	replicas int32,
 	readyReplicas int32,
 	availableReplicas int32,
 	updatedReplicas int32,
 	observedGeneration int64,
 	generation int64,
 ) bool {
-	if replicas != nil && readyReplicas < *replicas {
-		return false
-	}
-
-	if replicas != nil && availableReplicas < *replicas {
-		return false
-	}
-
-	if replicas != nil && updatedReplicas < *replicas {
-		return false
-	}
-
-	if observedGeneration < generation {
+	if readyReplicas < replicas ||
+		availableReplicas < replicas ||
+		updatedReplicas < replicas ||
+		observedGeneration < generation {
 		return false
 	}
 	return true
@@ -304,14 +525,6 @@ func createPodTemplateSpec(
 	containers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	volumes []*corev1ac.VolumeApplyConfiguration,
 ) *corev1ac.PodTemplateSpecApplyConfiguration {
-	fsGroup := int64(1000)
-	if slices.SomeBy(containers,
-		func(containerSetting slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions]) bool {
-			return containerSetting.B.Root
-		},
-	) {
-		fsGroup = 0
-	}
 	spec := corev1ac.PodSpec().
 		WithAutomountServiceAccountToken(options.ServiceAccountName != "").
 		WithServiceAccountName(options.ServiceAccountName).
@@ -326,7 +539,7 @@ func createPodTemplateSpec(
 				containerSetting slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 				_ int,
 			) *corev1ac.ContainerApplyConfiguration {
-				container, options := containerSetting.A, containerSetting.B
+				container, options := containerSetting.Unpack()
 				user := int64(1000)
 				if options.Root {
 					user = 0
@@ -339,18 +552,18 @@ func createPodTemplateSpec(
 						WithRunAsUser(user).
 						WithRunAsGroup(user).
 						WithRunAsNonRoot(!options.Root).
-						WithCapabilities(
-							corev1ac.Capabilities().
-								WithDrop("ALL").
-								WithAdd(options.Capabilities...),
-						))
+						WithCapabilities(corev1ac.Capabilities().
+							WithDrop("ALL").
+							WithAdd(options.Capabilities...),
+						),
+					)
 			})...,
 		).
 		WithSecurityContext(corev1ac.PodSecurityContext().
 			WithRunAsUser(1000).
 			WithRunAsGroup(1000).
 			WithRunAsNonRoot(true).
-			WithFSGroup(fsGroup),
+			WithFSGroup(1000),
 		).
 		WithVolumes(volumes...)
 

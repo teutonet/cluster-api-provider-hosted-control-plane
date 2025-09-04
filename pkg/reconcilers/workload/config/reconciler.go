@@ -4,17 +4,18 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
@@ -46,28 +47,53 @@ type ConfigReconciler interface {
 
 func NewConfigReconciler(
 	kubernetesClient *alias.WorkloadClusterClient,
+	caCertificateDuration time.Duration,
+	certificateDuration time.Duration,
 	serviceDomain string,
 	serviceCIDR string,
 	podCIDR string,
 	dnsIP net.IP,
+	kubeadmConfigConfigMapName string,
+	kubeadmConfigConfigMapNamespace string,
+	clusterInfoConfigMapName string,
+	clusterInfoConfigMapNamespace string,
+	kubeletConfigMapName string,
+	kubeletConfigMapNamespace string,
 ) ConfigReconciler {
 	return &configReconciler{
-		kubernetesClient: kubernetesClient,
-		serviceDomain:    serviceDomain,
-		serviceCIDR:      serviceCIDR,
-		podCIDR:          podCIDR,
-		dnsIP:            dnsIP,
-		tracer:           tracing.GetTracer("config"),
+		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
+			KubernetesClient: kubernetesClient,
+			Tracer:           tracing.GetTracer("config"),
+		},
+		caCertificateDuration:           caCertificateDuration,
+		certificateDuration:             certificateDuration,
+		serviceDomain:                   serviceDomain,
+		serviceCIDR:                     serviceCIDR,
+		podCIDR:                         podCIDR,
+		dnsIP:                           dnsIP,
+		kubeadmConfigConfigMapName:      kubeadmConfigConfigMapName,
+		kubeadmConfigConfigMapNamespace: kubeadmConfigConfigMapNamespace,
+		clusterInfoConfigMapName:        clusterInfoConfigMapName,
+		clusterInfoConfigMapNamespace:   clusterInfoConfigMapNamespace,
+		kubeletConfigMapName:            kubeletConfigMapName,
+		kubeletConfigMapNamespace:       kubeletConfigMapNamespace,
 	}
 }
 
 type configReconciler struct {
-	kubernetesClient *alias.WorkloadClusterClient
-	serviceDomain    string
-	serviceCIDR      string
-	podCIDR          string
-	dnsIP            net.IP
-	tracer           string
+	reconcilers.WorkloadResourceReconciler
+	caCertificateDuration           time.Duration
+	certificateDuration             time.Duration
+	serviceDomain                   string
+	serviceCIDR                     string
+	podCIDR                         string
+	dnsIP                           net.IP
+	kubeadmConfigConfigMapName      string
+	kubeadmConfigConfigMapNamespace string
+	clusterInfoConfigMapName        string
+	clusterInfoConfigMapNamespace   string
+	kubeletConfigMapName            string
+	kubeletConfigMapNamespace       string
 }
 
 var _ ConfigReconciler = &configReconciler{}
@@ -77,7 +103,7 @@ func (cr *configReconciler) ReconcileClusterInfoConfigMap(
 	managementClient kubernetes.Interface,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, cr.tracer, "ReconcileClusterInfoConfigMap",
+	return tracing.WithSpan1(ctx, cr.Tracer, "ReconcileClusterInfoConfigMap",
 		func(ctx context.Context, span trace.Span) error {
 			caSecret, err := managementClient.CoreV1().Secrets(cluster.Namespace).
 				Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
@@ -97,15 +123,15 @@ func (cr *configReconciler) ReconcileClusterInfoConfigMap(
 				return errorsUtil.IfErrErrorf("failed to marshal kubeconfig: %w", err)
 			}
 
-			configMap := corev1ac.ConfigMap(bootstrapapi.ConfigMapClusterInfo, metav1.NamespacePublic).
-				WithData(map[string]string{
+			return cr.ReconcileConfigmap(
+				ctx,
+				cr.clusterInfoConfigMapNamespace,
+				cr.clusterInfoConfigMapName,
+				nil,
+				map[string]string{
 					bootstrapapi.KubeConfigKey: string(kubeconfigBytes),
-				})
-
-			_, err = cr.kubernetesClient.CoreV1().
-				ConfigMaps(*configMap.Namespace).
-				Apply(ctx, configMap, operatorutil.ApplyOptions)
-			return errorsUtil.IfErrErrorf("failed to apply cluster info configmap: %w", err)
+				},
+			)
 		},
 	)
 }
@@ -115,7 +141,7 @@ func (cr *configReconciler) ReconcileKubeadmConfig(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, cr.tracer, "reconcileKubeadmConfig",
+	return tracing.WithSpan1(ctx, cr.Tracer, "reconcileKubeadmConfig",
 		func(ctx context.Context, span trace.Span) error {
 			initConfiguration, err := config.DefaultedStaticInitConfiguration()
 			if err != nil {
@@ -127,6 +153,8 @@ func (cr *configReconciler) ReconcileKubeadmConfig(
 				PodSubnet:     cr.podCIDR,
 				ServiceSubnet: cr.serviceCIDR,
 			}
+			conf.CACertificateValidityPeriod = &metav1.Duration{Duration: cr.caCertificateDuration}
+			conf.CertificateValidityPeriod = &metav1.Duration{Duration: cr.certificateDuration}
 			conf.KubernetesVersion = hostedControlPlane.Spec.Version
 			conf.ControlPlaneEndpoint = cluster.Spec.ControlPlaneEndpoint.String()
 			conf.ClusterName = cluster.Name
@@ -135,17 +163,16 @@ func (cr *configReconciler) ReconcileKubeadmConfig(
 			if err != nil {
 				return fmt.Errorf("failed to marshal cluster configuration: %w", err)
 			}
-			configMap := corev1ac.ConfigMap(konstants.KubeadmConfigConfigMap, metav1.NamespaceSystem).
-				WithData(
-					map[string]string{
-						konstants.ClusterConfigurationKind: string(clusterConfiguration),
-					},
-				)
 
-			_, err = cr.kubernetesClient.CoreV1().
-				ConfigMaps(*configMap.Namespace).
-				Apply(ctx, configMap, operatorutil.ApplyOptions)
-			return errorsUtil.IfErrErrorf("failed to apply kubeadm config configmap: %w", err)
+			return cr.ReconcileConfigmap(
+				ctx,
+				cr.kubeadmConfigConfigMapNamespace,
+				cr.kubeadmConfigConfigMapName,
+				nil,
+				map[string]string{
+					konstants.ClusterConfigurationKind: string(clusterConfiguration),
+				},
+			)
 		},
 	)
 }
@@ -153,7 +180,7 @@ func (cr *configReconciler) ReconcileKubeadmConfig(
 func (cr *configReconciler) ReconcileKubeletConfig(
 	ctx context.Context,
 ) error {
-	return tracing.WithSpan1(ctx, cr.tracer, "reconcileKubeletConfig",
+	return tracing.WithSpan1(ctx, cr.Tracer, "reconcileKubeletConfig",
 		func(ctx context.Context, span trace.Span) error {
 			var kubeletConfiguration kubelettypes.KubeletConfiguration
 
@@ -175,17 +202,15 @@ func (cr *configReconciler) ReconcileKubeletConfig(
 				return fmt.Errorf("failed to marshal kubelet configuration: %w", err)
 			}
 
-			configMap := corev1ac.ConfigMap(konstants.KubeletBaseConfigurationConfigMap, metav1.NamespaceSystem).
-				WithData(
-					map[string]string{
-						konstants.KubeletBaseConfigurationConfigMapKey: content.String(),
-					},
-				)
-
-			_, err = cr.kubernetesClient.CoreV1().
-				ConfigMaps(*configMap.Namespace).
-				Apply(ctx, configMap, operatorutil.ApplyOptions)
-			return errorsUtil.IfErrErrorf("failed to apply kubelet config configmap: %w", err)
+			return cr.ReconcileConfigmap(
+				ctx,
+				cr.kubeletConfigMapNamespace,
+				cr.kubeletConfigMapName,
+				nil,
+				map[string]string{
+					konstants.KubeletBaseConfigurationConfigMapKey: content.String(),
+				},
+			)
 		},
 	)
 }

@@ -64,8 +64,6 @@ type HostedControlPlaneInlineSpec struct {
 	Deployment HostedControlPlaneDeployment `json:"deployment,omitempty"`
 	//+kubebuilder:validation:Required
 	Gateway GatewayReference `json:"gateway"`
-	//+kubebuilder:default:10.0.0.0/16
-	ClusterCIDR string `json:"clusterCIDR,omitempty"`
 
 	//+kubebuilder:validation:Optional
 	KonnectivityClient HostedControlPlaneContainer `json:"konnectivityClient,omitempty"`
