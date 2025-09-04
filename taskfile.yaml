@@ -1,0 +1,252 @@
+version: "3"
+
+env:
+  GOBIN:
+    sh: |
+      if [[ -z "$(go env GOBIN)" ]]; then
+        echo "$(go env GOPATH)/bin"
+      else
+        echo "$(go env GOBIN)"
+      fi
+
+run: when_changed
+set:
+  - e
+  - pipefail
+
+vars:
+  tools:
+    map:
+      controller-gen:
+        url: sigs.k8s.io/controller-tools/cmd/controller-gen
+        version: 0.18.0
+      conversion-gen:
+        url: k8s.io/code-generator/cmd/conversion-gen
+        version: 0.33.2
+      golangci-lint:
+        url: github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+        version: 2.2.1
+      ginkgo:
+        url: github.com/onsi/ginkgo/v2/ginkgo
+        version: 2.23.4
+      gofumpt:
+        url: mvdan.cc/gofumpt
+        version: 0.8.0
+      golines:
+        url: github.com/segmentio/golines
+        version: 0.12.2
+      helm:
+        url: helm.sh/helm/v3/cmd/helm
+        version: 3.18.4
+  controllerGenCmd: 'go run {{ (index .tools "controller-gen").url }}@v{{ (index .tools "controller-gen").version }}'
+  conversionGenCmd: 'go run {{ (index .tools "conversion-gen").url }}@v{{ (index .tools "conversion-gen").version }}'
+  golangciLintCmd: 'go run {{ (index .tools "golangci-lint").url }}@v{{ (index .tools "golangci-lint").version }}'
+  gingkoCmd: 'go run {{ (index .tools "ginkgo").url }}@v{{ (index .tools "ginkgo").version }}'
+  gofumptCmd: 'go run {{ (index .tools "gofumpt").url }}@v{{ (index .tools "gofumpt").version }}'
+  golinesCmd: 'go run {{ (index .tools "golines").url }}@v{{ (index .tools "golines").version }}'
+  helmCmd: 'go run {{ (index .tools "helm").url }}@v{{ (index .tools "helm").version }}'
+  buildDir: build
+  artifactsDir: _artifacts
+  #  TODO: until https://github.com/go-task/task/issues/178 is done
+  version:
+    sh: git describe --tags | awk -F - 'NF==3 {printf("%s-%04d-%s", $1, $2, $3)} NF!=3 {print $1}'
+
+tasks:
+  default:
+    cmd:
+      task: build
+  manifests:
+    deps:
+      - manifest-rbac
+      - manifest-crds
+      - manifest-webhooks
+  generate:
+    cmds:
+      - task: generate-deepcopy
+      - task: generate-conversion
+  fmt:
+    deps:
+      - clean-files
+      - generate
+    sources:
+      - ./**/*.go
+    cmds:
+      - "{{ .gofumptCmd }} -w api cmd pkg"
+      - "{{ .golinesCmd }} --ignore-generated --ignored-dirs=.go -m 120 -w ."
+  lint:
+    vars:
+      fix: '{{ .fix | default "true" }}'
+    deps:
+      - artifacts-dir
+      - fmt
+    sources:
+      - ./**/*.go
+      - ./.golangci.yaml
+    cmd: "{{ .golangciLintCmd }} run --fix={{ .fix }}"
+    generates:
+      - "{{ .artifactsDir }}/golangci-lint.json"
+  test:
+    deps:
+      - artifacts-dir
+      - manifests
+      - generate
+      - fmt
+    sources:
+      - ./**/*.go
+      - go.sum
+    cmd: go test ./... -coverprofile {{ .artifactsDir }}/cover.out
+    generates:
+      - "{{ .artifactsDir }}/cover.out"
+  ci:
+    cmds:
+      - task: lint
+        vars:
+          fix: "false"
+      - task: test
+  check-diff:
+    deps:
+      - manifests
+      - generate
+      - fmt
+    cmd: git diff --exit-code
+  clean:
+    cmds:
+      - if realpath -qe "{{ .buildDir }}" >/dev/null; then rm -rf {{ .buildDir }}; fi
+      - if realpath -qe "{{ .artifactsDir }}" >/dev/null; then rm -rf {{ .artifactsDir }}; fi
+    status:
+      - test ! -d {{ .buildDir }}
+      - test ! -d {{ .artifactsDir }}
+
+  build:
+    deps:
+      - build-dir
+      - manifests
+      - generate
+    sources:
+      - ./**/*.go
+      - go.sum
+    vars:
+      GOOS: linux
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - go build -ldflags=-X=main.version={{ .version }}, -o ./build/manager cmd/t8s-operator/main.go
+      - strip ./build/manager
+    generates:
+      - build/manager
+  get-version:
+    cmd: echo {{ .version }}
+  dev:
+    cmd:
+      task: telepresence
+      vars:
+        kubeConfig: /run/user/1000/gopass/k8s/teuto/t8se-mgmt-dev/kube-config-oidc
+  generate-deepcopy:
+    desc: Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+    sources:
+      - api/**/*.go
+      - exclude: api/**/zz_generated.deepcopy.go
+      - exclude: api/**/zz_generated.conversion.go
+    cmds:
+      - '{{ .controllerGenCmd }} object paths="./api/..."'
+    generates:
+      - api/**/zz_generated.deepcopy.go
+  generate-conversion:
+    desc: Generate code containing Conversion method implementations.
+    sources:
+      - api/**/*.go
+      - exclude: api/**/zz_generated.conversion.go
+      - exclude: api/**/zz_generated.deepcopy.go
+    vars:
+      APIS:
+        sh: grep -Pl '// \+k8s:conversion-gen=(?!false)' api/*/doc.go 2>/dev/null | xargs -r dirname | xargs -r basename
+    cmds:
+      - for:
+          var: APIS
+        cmd: "{{ .conversionGenCmd }} --output-file=zz_generated.conversion.go --go-header-file=/dev/null ./api/{{ .ITEM }}"
+    generates:
+      - api/**/zz_generated.conversion.go
+
+  clean-files:
+    internal: true
+    cmd: find -type f -size 0 -name '*.go' -delete
+    status:
+      - find -type f -size 0 -name '*.go' -exec false {} + -quit
+  build-dir:
+    internal: true
+    cmd: mkdir -p {{ .buildDir }}
+    status:
+      - test -d {{ .buildDir }}
+  artifacts-dir:
+    internal: true
+    cmd: mkdir -p {{ .artifactsDir }}
+    status:
+      - test -d {{ .artifactsDir }}
+  telepresence:
+    internal: true
+    interactive: true
+    preconditions:
+      - command -v kubectl
+      - command -v telepresence
+      - sh: telepresence version | grep -q v2
+      - command -v flux
+      - sh: "[[ -L /var/run/secrets ]]"
+        msg: "symlink missing: sudo ln -s /tmp/operator/var/run/secrets /var/run/secrets"
+      - sh: "grep ^user_allow_other /etc/fuse.conf"
+        msg: |
+          add user_allow_other to config file
+          visudo /etc/fuse.conf
+    requires:
+      vars:
+        - kubeConfig
+    env:
+      KUBECONFIG: "{{ .kubeConfig }}"
+      NAMESPACE: t8se-system
+      DEPLOYMENT_NAME: t8s-engine-operator
+    # always run the cleanup stuff
+    ignore_error: true
+    cmds:
+      - telepresence helm install -n $NAMESPACE --set agent.securityContext.runAsNonRoot=false --set agent.mountPolicies./tmp=RemoteReadOnly
+      - defer: telepresence helm uninstall -n $NAMESPACE
+      - telepresence connect --manager-namespace=$NAMESPACE --namespace $NAMESPACE --also-proxy 212.15.209.254/32,212.15.216.1/32
+      - defer: sudo pkill telepresence
+      - defer: telepresence quit -s
+      - telepresence replace $DEPLOYMENT_NAME --port=9443:webhooks --mount /tmp/operator --env-json /tmp/operator-env.json -- sleep infinity
+  manifest-rbac:
+    internal: true
+    desc: Generate RBAC manifests.
+    sources:
+      - api/**/*.go
+      - exclude: api/**/zz_generated.deepcopy.go
+      - exclude: api/**/zz_generated.conversion.go
+      - pkg/**/*.go
+    cmds:
+      - "{{ .controllerGenCmd }} rbac:roleName=manager-role paths=./api/... paths=./pkg/... output:rbac:artifacts:config={{ .buildDir }}/rbac"
+    generates:
+      - "{{ .buildDir }}/rbac/**.yaml"
+  manifest-webhooks:
+    internal: true
+    desc: Generate WebhookConfiguration manifests.
+    sources:
+      - api/**/*.go
+      - exclude: api/**/zz_generated.deepcopy.go
+      - exclude: api/**/zz_generated.conversion.go
+      - pkg/**/*.go
+    cmds:
+      - "{{ .controllerGenCmd }} webhook paths=./api/... paths=./pkg/... output:webhook:artifacts:config={{ .buildDir }}/webhooks"
+    generates:
+      - "{{ .buildDir }}/webhooks/**.yaml"
+  manifest-crds:
+    internal: true
+    desc: Generate CustomResourceDefinition manifests
+    sources:
+      - api/**/*.go
+      - exclude: api/**/zz_generated.deepcopy.go
+      - exclude: api/**/zz_generated.conversion.go
+      - pkg/**/*.go
+    cmds:
+      - "{{ .controllerGenCmd }} crd paths=./api/... paths=./pkg/... output:crd:artifacts:config={{ .buildDir }}/crds"
+    generates:
+      - "{{ .buildDir }}/crds/**.yaml"
