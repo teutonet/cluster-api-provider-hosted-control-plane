@@ -323,7 +323,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) (st
 				ctx,
 				cr.coreDNSResourceName,
 				cr.coreDNSNamespace,
-				slices.Ternary(nodes.Size() > 1, int32(2), int32(1)),
+				slices.Ternary(len(nodes.Items) > 1, int32(2), int32(1)),
 				reconcilers.PodOptions{
 					ServiceAccountName: cr.coreDNSServiceAccountName,
 					PriorityClassName:  "system-cluster-critical",

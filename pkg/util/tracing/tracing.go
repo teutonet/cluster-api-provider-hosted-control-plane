@@ -29,6 +29,14 @@ func WithSpan[R any](
 ) (r R, err error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName)
 	defer span.End()
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = rec.(error)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			panic(rec)
+		}
+	}()
 	r, err = block(ctx, span)
 	if err != nil {
 		span.RecordError(err)

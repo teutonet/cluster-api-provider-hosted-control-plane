@@ -382,7 +382,8 @@ func (r *hostedControlPlaneReconciler) patch(
 		func(ctx context.Context, span trace.Span) error {
 			applicableConditions := slices.FilterMap(hostedControlPlane.Status.Conditions,
 				func(condition capiv1.Condition, _ int) (capiv1.ConditionType, bool) {
-					if condition.Type != capiv1.ReadyCondition {
+					if condition.Type != capiv1.ReadyCondition &&
+						!strings.HasPrefix(string(condition.Type), "Workload") {
 						return condition.Type, true
 					} else {
 						return "", false
@@ -489,6 +490,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 			)
 			etcdClusterReconciler := etcd_cluster.NewEtcdClusterReconciler(
 				r.kubernetesClient,
+				r.recorder,
 				r.etcdServerPort,
 				r.etcdServerStorageBuffer,
 				r.etcdServerStorageIncrement,

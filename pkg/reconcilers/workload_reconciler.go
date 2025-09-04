@@ -143,7 +143,7 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 				namespace,
 				name,
 				labels,
-				metav1.DeletePropagationForeground,
+				metav1.DeletePropagationBackground,
 				appsv1ac.DaemonSet,
 				appsv1ac.DaemonSetSpec,
 				(*appsv1ac.DaemonSetApplyConfiguration).WithSpec,

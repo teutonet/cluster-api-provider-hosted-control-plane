@@ -70,7 +70,8 @@ func NewApiServerResourcesReconciler(
 		konnectivityClientKubeconfigName:    konnectivityClientKubeconfigName,
 		konnectivityServerAudience:          konnectivityServerAudience,
 		egressSelectorConfigMountPath:       "/etc/kubernetes/egress/configurations",
-		egressSelectorUDSSocketName:         "konnectivity-agent.sock",
+		konnectivityUDSMountPath:            "/run/konnectivity",
+		konnectivityUDSSocketName:           "konnectivity-agent.sock",
 		egressSelectorConfigurationFileName: "egress-selector-configuration.yaml",
 		componentAPIServer:                  "api-server",
 		componentControllerManager:          "controller-manager",
@@ -93,8 +94,9 @@ type apiServerResourcesReconciler struct {
 	konnectivityServicePort             int32
 	konnectivityClientKubeconfigName    string
 	konnectivityServerAudience          string
+	konnectivityUDSMountPath            string
+	konnectivityUDSSocketName           string
 	egressSelectorConfigMountPath       string
-	egressSelectorUDSSocketName         string
 	egressSelectorConfigurationFileName string
 	componentAPIServer                  string
 	componentControllerManager          string
@@ -168,8 +170,8 @@ func (arr *apiServerResourcesReconciler) reconcileKonnectivityConfig(
 							Transport: &v1beta1.Transport{
 								UDS: &v1beta1.UDSTransport{
 									UDSName: path.Join(
-										arr.egressSelectorConfigMountPath,
-										arr.egressSelectorUDSSocketName,
+										arr.konnectivityUDSMountPath,
+										arr.konnectivityUDSSocketName,
 									),
 								},
 							},
@@ -188,7 +190,7 @@ func (arr *apiServerResourcesReconciler) reconcileKonnectivityConfig(
 				hostedControlPlane,
 				cluster,
 				"konnectivity",
-				arr.konnectivityNamespace,
+				hostedControlPlane.Namespace,
 				names.GetKonnectivityConfigMapName(cluster),
 				map[string]string{
 					arr.egressSelectorConfigurationFileName: buf.String(),
@@ -213,7 +215,7 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 
 			konnectivityUDSMount := corev1ac.VolumeMount().
 				WithName(*konnectivityUDSVolume.Name).
-				WithMountPath("/run/konnectivity")
+				WithMountPath(arr.konnectivityUDSMountPath)
 
 			volumes := []*corev1ac.VolumeApplyConfiguration{
 				apiServerCertificatesVolume,
@@ -264,6 +266,8 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				volumes,
 			); err != nil {
 				return false, err
+			} else if !ready {
+				return false, nil
 			} else {
 				selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
 				if err != nil {
@@ -787,7 +791,7 @@ func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 		"agent-port":   strconv.Itoa(int(*konnectivityPort.ContainerPort)),
 		"health-port":  strconv.Itoa(int(*healthPort.ContainerPort)),
 		"server-port":  "0",
-		"uds-name":     path.Join(*konnectivityUDSVolumeMount.MountPath, arr.egressSelectorUDSSocketName),
+		"uds-name":     path.Join(*konnectivityUDSVolumeMount.MountPath, arr.konnectivityUDSSocketName),
 		"mode":         "grpc",
 	}
 
