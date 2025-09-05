@@ -76,6 +76,7 @@ func NewHostedControlPlaneReconciler(
 		managementCluster:                workload.NewManagementCluster(kubernetesClient, tracingWrapper, "controller"),
 		caCertificatesDuration:           31 * 24 * time.Hour,
 		certificatesDuration:             24 * time.Hour,
+		apiServerComponentLabel:          "api-server",
 		apiServerServicePort:             int32(443),
 		etcdComponentLabel:               "etcd",
 		etcdServerPort:                   int32(2379),
@@ -102,6 +103,7 @@ type hostedControlPlaneReconciler struct {
 	managementCluster                workload.ManagementCluster
 	caCertificatesDuration           time.Duration
 	certificatesDuration             time.Duration
+	apiServerComponentLabel          string
 	apiServerServicePort             int32
 	etcdComponentLabel               string
 	etcdServerPort                   int32
@@ -495,10 +497,12 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.etcdServerStorageBuffer,
 				r.etcdServerStorageIncrement,
 				r.etcdComponentLabel,
+				r.apiServerComponentLabel,
 			)
 			apiServerResourcesReconciler := apiserverresources.NewApiServerResourcesReconciler(
 				r.kubernetesClient,
 				serviceCIDR,
+				r.apiServerComponentLabel,
 				r.apiServerServicePort,
 				r.apiServerServiceLegacyPortName,
 				r.etcdComponentLabel,

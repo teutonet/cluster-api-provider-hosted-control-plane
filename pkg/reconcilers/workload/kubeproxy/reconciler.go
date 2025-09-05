@@ -319,6 +319,8 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 					},
 				},
 				kr.kubeProxyLabels,
+				nil,
+				nil,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(container, reconcilers.ContainerOptions{
 						Root:                    true,

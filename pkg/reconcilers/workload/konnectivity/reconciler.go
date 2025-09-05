@@ -231,6 +231,8 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 					},
 				},
 				names.GetControlPlaneLabels(cluster, "konnectivity"),
+				nil,
+				nil,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(container, reconcilers.ContainerOptions{}),
 				},

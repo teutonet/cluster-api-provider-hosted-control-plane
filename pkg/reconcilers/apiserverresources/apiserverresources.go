@@ -44,6 +44,7 @@ type ApiServerResourcesReconciler interface {
 func NewApiServerResourcesReconciler(
 	kubernetesClient kubernetes.Interface,
 	serviceCIDR string,
+	apiServerComponentLabel string,
 	apiServerServicePort int32,
 	apiServerServiceLegacyPortName string,
 	etcdComponentLabel string,
@@ -73,7 +74,7 @@ func NewApiServerResourcesReconciler(
 		konnectivityUDSMountPath:            "/run/konnectivity",
 		konnectivityUDSSocketName:           "konnectivity-agent.sock",
 		egressSelectorConfigurationFileName: "egress-selector-configuration.yaml",
-		componentAPIServer:                  "api-server",
+		componentAPIServer:                  apiServerComponentLabel,
 		componentControllerManager:          "controller-manager",
 		componentScheduler:                  "scheduler",
 		apiContainerPortName:                intstr.FromString("api"),
@@ -256,6 +257,10 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				*hostedControlPlane.Spec.Replicas,
 				hostedControlPlane.Spec.Deployment.APIServer.PriorityClassName,
 				arr.componentAPIServer,
+				nil,
+				map[int32][]string{
+					arr.etcdServerPort: {arr.etcdComponentLabel},
+				},
 				arr.etcdComponentLabel,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(apiServerContainer, reconcilers.ContainerOptions{
@@ -357,6 +362,10 @@ func (arr *apiServerResourcesReconciler) reconcileControllerManagerDeployment(
 				*hostedControlPlane.Spec.Deployment.ControllerManager.Replicas,
 				hostedControlPlane.Spec.Deployment.ControllerManager.PriorityClassName,
 				arr.componentControllerManager,
+				map[int32][]string{},
+				map[int32][]string{
+					arr.apiServerServicePort: {arr.componentAPIServer},
+				},
 				arr.componentAPIServer,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(container, reconcilers.ContainerOptions{}),
@@ -393,6 +402,10 @@ func (arr *apiServerResourcesReconciler) reconcileSchedulerDeployment(
 				*hostedControlPlane.Spec.Deployment.Scheduler.Replicas,
 				hostedControlPlane.Spec.Deployment.Scheduler.PriorityClassName,
 				arr.componentScheduler,
+				map[int32][]string{},
+				map[int32][]string{
+					arr.apiServerServicePort: {arr.componentAPIServer},
+				},
 				arr.componentAPIServer,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(container, reconcilers.ContainerOptions{}),

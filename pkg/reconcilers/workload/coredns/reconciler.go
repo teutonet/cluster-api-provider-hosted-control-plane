@@ -334,6 +334,8 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) (st
 					},
 				},
 				cr.coreDNSLabels,
+				nil,
+				nil,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(container, reconcilers.ContainerOptions{
 						Capabilities: []corev1.Capability{"NET_BIND_SERVICE"},

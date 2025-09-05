@@ -55,6 +55,7 @@ func NewEtcdClusterReconciler(
 	etcdServerStorageBuffer resource.Quantity,
 	etcdServerStorageIncrement resource.Quantity,
 	componentLabel string,
+	apiServerComponentLabel string,
 ) EtcdClusterReconciler {
 	return &etcdClusterReconciler{
 		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
@@ -63,9 +64,11 @@ func NewEtcdClusterReconciler(
 		},
 		recorder:                   recorder,
 		etcdServerPort:             etcdServerPort,
+		etcdPeerPort:               2380,
 		etcdServerStorageBuffer:    etcdServerStorageBuffer,
 		etcdServerStorageIncrement: etcdServerStorageIncrement,
 		componentLabel:             componentLabel,
+		apiServerComponentLabel:    apiServerComponentLabel,
 	}
 }
 
@@ -73,9 +76,11 @@ type etcdClusterReconciler struct {
 	reconcilers.ManagementResourceReconciler
 	recorder                   record.EventRecorder
 	etcdServerPort             int32
+	etcdPeerPort               int32
 	etcdServerStorageBuffer    resource.Quantity
 	etcdServerStorageIncrement resource.Quantity
 	componentLabel             string
+	apiServerComponentLabel    string
 }
 
 var _ EtcdClusterReconciler = &etcdClusterReconciler{}
@@ -455,7 +460,7 @@ func (er *etcdClusterReconciler) reconcileService(
 						WithProtocol(corev1.ProtocolTCP),
 					corev1ac.ServicePort().
 						WithName("client-peer").
-						WithPort(2380).
+						WithPort(er.etcdPeerPort).
 						WithTargetPort(intstr.FromString(*peerPort.Name)).
 						WithProtocol(corev1.ProtocolTCP),
 					corev1ac.ServicePort().
@@ -527,6 +532,13 @@ func (er *etcdClusterReconciler) reconcileStatefulSet(
 					appsv1ac.RollingUpdateStatefulSetStrategy().WithMaxUnavailable(intstr.FromInt32(1)),
 				),
 				er.componentLabel,
+				map[int32][]string{
+					er.etcdServerPort: {er.apiServerComponentLabel},
+					er.etcdPeerPort:   {er.componentLabel},
+				},
+				map[int32][]string{
+					er.etcdPeerPort: {er.componentLabel},
+				},
 				3,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(container, reconcilers.ContainerOptions{}),

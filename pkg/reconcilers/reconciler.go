@@ -9,18 +9,22 @@ import (
 
 	slices "github.com/samber/lo"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
+	networkingv1ac "k8s.io/client-go/applyconfigurations/networking/v1"
 	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
+	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 var (
@@ -63,10 +67,16 @@ func reconcileWorkload[RA any, RSA any, R any](
 	kind string,
 	namespace string,
 	name string,
+	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
+	ingressPortLabels map[int32][]map[string]string,
+	egressPortLabels map[int32][]map[string]string,
 	propagationPolicy metav1.DeletionPropagation,
 	createResourceApplyConfiguration func(name string, namespace string) *RA,
 	createResourceSpecApplyConfiguration func() *RSA,
+	setOwnerReference func(
+		resourceApplyConfiguration *RA, ownerReference ...*metav1ac.OwnerReferenceApplyConfiguration,
+	) *RA,
 	setSpec func(resourceApplyConfiguration *RA, resourceSpecApplyConfiguration *RSA) *RA,
 	labelFunc func(resourceApplyConfiguration *RA, labels map[string]string) *RA,
 	setSpecSelector func(
@@ -89,6 +99,9 @@ func reconcileWorkload[RA any, RSA any, R any](
 	}
 
 	resourceApplyConfiguration := createResourceApplyConfiguration(name, namespace)
+	if ownerReference != nil {
+		resourceApplyConfiguration = setOwnerReference(resourceApplyConfiguration, ownerReference)
+	}
 	resourceApplyConfiguration = labelFunc(resourceApplyConfiguration, labels)
 	if err := operatorutil.ValidateMounts(podTemplateSpecApplyConfiguration.Spec); err != nil {
 		return nil, false, fmt.Errorf(
@@ -136,6 +149,21 @@ func reconcileWorkload[RA any, RSA any, R any](
 		return appliedResource, false, nil
 	}
 
+	if err := reconcileNetworkPolicy(
+		ctx,
+		kubernetesClient,
+		namespace,
+		name,
+		ownerReference,
+		labels,
+		ingressPortLabels,
+		egressPortLabels,
+	); err != nil {
+		return nil, false, fmt.Errorf("failed to reconcile network policy for %s %s/%s: %w",
+			kind, namespace, name, err,
+		)
+	}
+
 	return appliedResource, true, nil
 }
 
@@ -148,6 +176,8 @@ func reconcileDeployment(
 	name string,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
+	ingressPortLabels map[int32][]map[string]string,
+	egressPortLabels map[int32][]map[string]string,
 	replicas int32,
 	podTemplateSpec *corev1ac.PodTemplateSpecApplyConfiguration,
 ) (*appsv1.Deployment, bool, error) {
@@ -158,10 +188,14 @@ func reconcileDeployment(
 		"Deployment",
 		namespace,
 		name,
+		ownerReference,
 		labels,
+		ingressPortLabels,
+		egressPortLabels,
 		metav1.DeletePropagationBackground,
 		appsv1ac.Deployment,
 		appsv1ac.DeploymentSpec,
+		(*appsv1ac.DeploymentApplyConfiguration).WithOwnerReferences,
 		(*appsv1ac.DeploymentApplyConfiguration).WithSpec,
 		(*appsv1ac.DeploymentApplyConfiguration).WithLabels,
 		(*appsv1ac.DeploymentSpecApplyConfiguration).WithSelector,
@@ -173,12 +207,6 @@ func reconcileDeployment(
 		),
 		isDeploymentReady,
 		createDeploymentMutator(replicas),
-		func(deployment *appsv1ac.DeploymentApplyConfiguration) *appsv1ac.DeploymentApplyConfiguration {
-			if ownerReference != nil {
-				return deployment.WithOwnerReferences(ownerReference)
-			}
-			return deployment
-		},
 	)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to reconcile deployment %s/%s: %w", namespace, name, err)
@@ -203,6 +231,94 @@ func reconcileDeployment(
 	}
 
 	return deployment, true, nil
+}
+
+func convertToPortLabels(ingressPortComponents map[int32][]string, cluster *capiv1.Cluster) map[int32][]map[string]string {
+	return slices.MapEntries(ingressPortComponents,
+		func(port int32, components []string) (int32, []map[string]string) {
+			return port, slices.Map(components, func(component string, _ int) map[string]string {
+				return names.GetControlPlaneLabels(cluster, component)
+			})
+		},
+	)
+}
+
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=create;patch
+
+func reconcileNetworkPolicy(
+	ctx context.Context,
+	kubernetesClient kubernetes.Interface,
+	namespace string,
+	name string,
+	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
+	labels map[string]string,
+	ingressPortLabels map[int32][]map[string]string,
+	egressPortLabels map[int32][]map[string]string,
+) error {
+	networkPolicyInterface := kubernetesClient.NetworkingV1().NetworkPolicies(namespace)
+	convertToPeer := func(peerLabels []map[string]string) []*networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+		return slices.Map(peerLabels,
+			func(labels map[string]string, _ int) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+				return networkingv1ac.NetworkPolicyPeer().
+					WithPodSelector(metav1ac.LabelSelector().WithMatchLabels(labels)).
+					WithNamespaceSelector(metav1ac.LabelSelector().WithMatchLabels(map[string]string{
+						"kubernetes.io/metadata.name": namespace,
+					}))
+			})
+	}
+
+	spec := networkingv1ac.NetworkPolicySpec().
+		WithPodSelector(metav1ac.LabelSelector().WithMatchLabels(labels))
+
+	if ingressPortLabels != nil {
+		spec = spec.
+			WithPolicyTypes(v1.PolicyTypeIngress).
+			WithIngress(
+				slices.MapToSlice(ingressPortLabels, func(
+					port int32, peerLabels []map[string]string,
+				) *networkingv1ac.NetworkPolicyIngressRuleApplyConfiguration {
+					return networkingv1ac.NetworkPolicyIngressRule().
+						WithPorts(networkingv1ac.NetworkPolicyPort().
+							WithPort(intstr.FromInt32(port)),
+						).
+						WithFrom(convertToPeer(peerLabels)...)
+				})...,
+			)
+	}
+	if egressPortLabels != nil {
+		spec = spec.
+			WithPolicyTypes(v1.PolicyTypeEgress).
+			WithEgress(
+				slices.MapToSlice(egressPortLabels, func(
+					port int32, peerLabels []map[string]string,
+				) *networkingv1ac.NetworkPolicyEgressRuleApplyConfiguration {
+					return networkingv1ac.NetworkPolicyEgressRule().
+						WithPorts(networkingv1ac.NetworkPolicyPort().
+							WithPort(intstr.FromInt32(port)),
+						).
+						WithTo(convertToPeer(peerLabels)...)
+				})...,
+			)
+	}
+	if ingressPortLabels == nil && egressPortLabels == nil {
+		if err := networkPolicyInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete network policy %s/%s: %w", namespace, name, err)
+		}
+		return nil
+	}
+
+	networkPolicyApplyConfiguration := networkingv1ac.NetworkPolicy(name, namespace).
+		WithLabels(labels).
+		WithOwnerReferences(ownerReference).
+		WithSpec(spec)
+
+	_, err := networkPolicyInterface.
+		Apply(
+			ctx,
+			networkPolicyApplyConfiguration,
+			operatorutil.ApplyOptions,
+		)
+	return errorsUtil.IfErrErrorf("failed to apply network policy %s/%s: %w", namespace, name, err)
 }
 
 //+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=create;patch;delete
@@ -426,6 +542,8 @@ func reconcileStatefulset(
 	podManagementPolicy appsv1.PodManagementPolicyType,
 	updateStrategy *appsv1ac.StatefulSetUpdateStrategyApplyConfiguration,
 	labels map[string]string,
+	ingressPortLabels map[int32][]map[string]string,
+	egressPortLabels map[int32][]map[string]string,
 	replicas int32,
 	podTemplateSpec *corev1ac.PodTemplateSpecApplyConfiguration,
 	volumeClaimTemplates []*corev1ac.PersistentVolumeClaimApplyConfiguration,
@@ -476,10 +594,14 @@ func reconcileStatefulset(
 		"StatefulSet",
 		namespace,
 		name,
+		ownerReference,
 		selectorLabels,
+		ingressPortLabels,
+		egressPortLabels,
 		metav1.DeletePropagationOrphan,
 		appsv1ac.StatefulSet,
 		appsv1ac.StatefulSetSpec,
+		(*appsv1ac.StatefulSetApplyConfiguration).WithOwnerReferences,
 		(*appsv1ac.StatefulSetApplyConfiguration).WithSpec,
 		(*appsv1ac.StatefulSetApplyConfiguration).WithLabels,
 		(*appsv1ac.StatefulSetSpecApplyConfiguration).WithSelector,
@@ -498,9 +620,6 @@ func reconcileStatefulset(
 			volumeClaimTemplates,
 			volumeClaimRetentionPolicy,
 		),
-		func(statefulset *appsv1ac.StatefulSetApplyConfiguration) *appsv1ac.StatefulSetApplyConfiguration {
-			return statefulset.WithOwnerReferences(ownerReference)
-		},
 		func(statefulset *appsv1ac.StatefulSetApplyConfiguration) *appsv1ac.StatefulSetApplyConfiguration {
 			return statefulset.
 				WithSpec(statefulset.Spec.
