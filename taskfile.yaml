@@ -26,25 +26,21 @@ vars:
       golangci-lint:
         url: github.com/golangci/golangci-lint/v2/cmd/golangci-lint
         version: 2.2.1
-      ginkgo:
-        url: github.com/onsi/ginkgo/v2/ginkgo
-        version: 2.23.4
       gofumpt:
         url: mvdan.cc/gofumpt
         version: 0.8.0
       golines:
         url: github.com/segmentio/golines
         version: 0.12.2
-      helm:
-        url: helm.sh/helm/v3/cmd/helm
-        version: 3.18.4
+      kustomize:
+        url: sigs.k8s.io/kustomize/kustomize/v5
+        version: 5.7.1
   controllerGenCmd: 'go run {{ (index .tools "controller-gen").url }}@v{{ (index .tools "controller-gen").version }}'
   conversionGenCmd: 'go run {{ (index .tools "conversion-gen").url }}@v{{ (index .tools "conversion-gen").version }}'
   golangciLintCmd: 'go run {{ (index .tools "golangci-lint").url }}@v{{ (index .tools "golangci-lint").version }}'
-  gingkoCmd: 'go run {{ (index .tools "ginkgo").url }}@v{{ (index .tools "ginkgo").version }}'
   gofumptCmd: 'go run {{ (index .tools "gofumpt").url }}@v{{ (index .tools "gofumpt").version }}'
   golinesCmd: 'go run {{ (index .tools "golines").url }}@v{{ (index .tools "golines").version }}'
-  helmCmd: 'go run {{ (index .tools "helm").url }}@v{{ (index .tools "helm").version }}'
+  kustomizeCmd: 'go run {{ (index .tools "kustomize").url }}@v{{ (index .tools "kustomize").version }}'
   buildDir: build
   artifactsDir: _artifacts
   #  TODO: until https://github.com/go-task/task/issues/178 is done
@@ -56,8 +52,11 @@ tasks:
     cmd:
       task: build
   manifests:
-    cmd:
-      task: manifest-concat
+    cmds:
+      - task: manifest-kustomize
+      - "{{ .kustomizeCmd }} build ./config > {{ .buildDir }}/control-plane-components.yaml"
+    generates:
+      - "{{ .buildDir }}/control-plane-components.yaml"
   generate:
     cmds:
       - task: generate-deepcopy
@@ -232,7 +231,7 @@ tasks:
       - pkg/**/*.go
       - exclude: pkg/**/*_test.go
     cmds:
-      - "{{ .controllerGenCmd }} rbac:roleName=manager-role paths=./api/... paths=./pkg/... output:rbac:artifacts:config={{ .buildDir }}/rbac"
+      - "{{ .controllerGenCmd }} rbac:roleName=capi-hosted-control-plane-manager paths=./api/... paths=./pkg/... output:rbac:artifacts:config={{ .buildDir }}/rbac"
     generates:
       - "{{ .buildDir }}/rbac/role.yaml"
   manifest-webhooks:
@@ -262,26 +261,24 @@ tasks:
     generates:
       - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanes.yaml"
       - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanetemplates.yaml"
-  manifest-concat:
+  manifest-kustomize:
     internal: true
-    desc: Concatenate all generated manifests into a single control-plane-components.yaml file
+    desc: Generate `kustomization.yaml`s for all generated manifests
     deps:
       - manifest-rbac
       - manifest-crds
       - manifest-webhooks
     vars:
       files:
-        - "{{ .buildDir }}/rbac/role.yaml"
-        - "{{ .buildDir }}/webhooks/manifests.yaml"
-        - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanes.yaml"
-        - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanetemplates.yaml"
-        - ./config/deployment.yaml
-        - ./config/rbac.yaml
-        - ./config/webhook-certificate.yaml
+        - "{{ .buildDir }}/rbac"
+        - "{{ .buildDir }}/webhooks"
+        - "{{ .buildDir }}/crds"
     cmds:
-      - rm -f {{ .buildDir }}/control-plane-components.yaml
       - for:
           var: files
-        cmd: awk '{ if (NR != 1 || $0 != "---") {print} } END { if ($0 != "---") {print "---"} }' {{ .ITEM }} >> {{ .buildDir }}/control-plane-components.yaml
+        cmd: "rm {{ .ITEM }}/kustomization.yaml"
+      - for:
+          var: files
+        cmd: "env -C {{ .ITEM }} {{ .kustomizeCmd }} create --autodetect"
     generates:
-      - "{{ .buildDir }}/control-plane-components.yaml"
+      - "{{ .buildDir }}/*/kustomization.yaml"

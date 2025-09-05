@@ -1,0 +1,126 @@
+namespace: capi-hosted-control-plane-manager-system
+
+namePrefix: capi-hosted-control-plane-
+
+labels:
+  - includeSelectors: true
+    pairs:
+      cluster.x-k8s.io/provider: control-plane-hosted
+
+resources:
+  - ./deployment.yaml
+  - ./namespace.yaml
+  - ./rbac.yaml
+  - ./service.yaml
+  - ./webhook-certificate.yaml
+  - ../build/crds
+  - ../build/rbac
+  - ../build/webhooks
+
+configurations:
+  - ./kustomizeconfig.yaml
+
+replacements:
+  - source:
+      fieldPath: .spec.secretName
+      group: cert-manager.io
+      version: v1
+      kind: Certificate
+      name: webhook-service
+    targets:
+      - select:
+          kind: Deployment
+        options:
+          create: true
+          delimiter: /
+        fieldPaths:
+          - .spec.template.spec.volumes.0.secret.secretName
+  - source:
+      fieldPath: .metadata.namespace
+      group: cert-manager.io
+      version: v1
+      kind: Certificate
+      name: webhook-service
+    targets:
+      - select:
+          kind: ValidatingWebhookConfiguration
+        options:
+          create: true
+          delimiter: /
+        fieldPaths:
+          - .medatata.annotations.["cert-manager.io/inject-ca-from"]
+      - select:
+          kind: MutatingWebhookConfiguration
+        options:
+          create: true
+          delimiter: /
+        fieldPaths:
+        - .metadata.annotations.[cert-manager.io/inject-ca-from]
+      - select:
+          kind: CustomResourceDefinition
+        options:
+          create: true
+          delimiter: /
+        fieldPaths:
+          - .metadata.annotations.[cert-manager.io/inject-ca-from]
+  - source:
+      fieldPath: .metadata.name
+      group: cert-manager.io
+      version: v1
+      kind: Certificate
+      name: webhook-service
+    targets:
+      - select:
+          kind: ValidatingWebhookConfiguration
+        options:
+          create: true
+          delimiter: /
+          index: 1
+        fieldPaths:
+          - .metadata.annotations.[cert-manager.io/inject-ca-from]
+      - select:
+          kind: MutatingWebhookConfiguration
+        options:
+          create: true
+          delimiter: /
+          index: 1
+        fieldPaths:
+          - .metadata.annotations.[cert-manager.io/inject-ca-from]
+      - select:
+          kind: CustomResourceDefinition
+        options:
+          create: true
+          delimiter: /
+          index: 1
+        fieldPaths:
+          - .metadata.annotations.[cert-manager.io/inject-ca-from]
+  - source:
+      fieldPath: .metadata.name
+      kind: Service
+      version: v1
+      name: controller-manager
+    targets:
+      - select:
+          group: cert-manager.io
+          kind: Certificate
+        options:
+          create: true
+          delimiter: .
+        fieldPaths:
+          - .spec.dnsNames.0
+          - .spec.dnsNames.1
+  - source:
+      fieldPath: .metadata.namespace
+      kind: Service
+      version: v1
+      name: controller-manager
+    targets:
+      - select:
+          group: cert-manager.io
+          kind: Certificate
+        options:
+          create: true
+          delimiter: .
+        fieldPaths:
+          - .spec.dnsNames.0
+          - .spec.dnsNames.1

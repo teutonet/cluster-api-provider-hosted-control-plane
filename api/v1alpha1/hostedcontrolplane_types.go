@@ -29,7 +29,6 @@ import (
 //+kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
 //+kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 //+kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
-//+kubebuilder:metadata:annotations={"cert-manager.io/inject-ca-from=system/controller-manager-serving-certificate"}
 //+kubebuilder:metadata:labels={"cluster.x-k8s.io/provider=control-plane-hosted-control-plane","cluster.x-k8s.io/v1beta1=v1alpha1"}
 
 type HostedControlPlane struct {
@@ -123,6 +122,13 @@ type ETCDComponent struct {
 	AutoGrow bool `json:"autoGrow,omitempty"`
 	//+kubebuilder:validation:Optional
 	PriorityClassName string `json:"priorityClassName,omitempty"`
+	//+kubebuilder:validation:Optional
+	Backup *ETCDBackup `json:"backup,omitempty"`
+}
+
+type ETCDBackup struct {
+	//+kubebuilder:validation:Required
+	Schedule string `json:"schedule"`
 }
 
 type APIServerPod struct {
@@ -154,6 +160,10 @@ type HostedControlPlaneStatus struct {
 	ETCDVolumeSize resource.Quantity `json:"etcdVolumeSize,omitempty"`
 	//+kubebuilder:validation:Optional
 	ETCDVolumeUsage resource.Quantity `json:"etcdVolumeUsage,omitempty"`
+	//+kubebuilder:validation:Optional
+	ETCDLastBackupTime metav1.Time `json:"etcdLastBackupTime,omitempty"`
+	//+kubebuilder:validation:Optional
+	ETCDNextBackupTime metav1.Time `json:"etcdNextBackupTime,omitempty"`
 
 	// Required fields by CAPI
 	// https://cluster-api.sigs.k8s.io/developer/providers/contracts/control-plane#controlplane-replicas
