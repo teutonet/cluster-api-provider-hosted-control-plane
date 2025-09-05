@@ -153,6 +153,10 @@ linters:
           alias: kubeproxyv1alpha1
         - pkg: k8s.io/kubernetes/cmd/kubeadm/app/util
           alias: kubeadmutil
+        - pkg: k8s.io/api/networking/v1
+          alias: networkingv1
+        - pkg: k8s.io/client-go/applyconfigurations/networking/v1
+          alias: networkingv1ac
 
         # Gateway API
         - pkg: sigs.k8s.io/gateway-api/apis/v1
@@ -199,7 +203,7 @@ linters:
           alias: clientv3
 
         # OpenTelemetry
-        - pkg: go.opentelemetry.io/otel/semconv/v1.34.0
+        - pkg: go.opentelemetry.io/otel/semconv/v1.37.0
           alias: semconv
 
         # hcp

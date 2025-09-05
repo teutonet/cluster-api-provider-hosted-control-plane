@@ -37,7 +37,7 @@ func NewCoreDNSReconciler(
 		},
 		serviceDomain:  serviceDomain,
 		dnsIP:          dnsIP,
-		coreDNSPort:    5353,
+		coreDNSPort:    53,
 		prometheusPort: 9153,
 		coreDNSLabels: map[string]string{
 			"k8s-app":                       "kube-dns",

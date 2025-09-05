@@ -15,11 +15,32 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
+	networkingv1ac "k8s.io/client-go/applyconfigurations/networking/v1"
 )
 
 type WorkloadResourceReconciler struct {
 	Tracer           string
 	KubernetesClient *alias.WorkloadClusterClient
+}
+
+func (wr *WorkloadResourceReconciler) convertToPeerApplyConfigurations(
+	ingressPortComponents map[int32][]map[string]string,
+) map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	if ingressPortComponents == nil {
+		return nil
+	}
+	return slices.MapEntries(
+		ingressPortComponents,
+		func(port int32, labelsSelectors []map[string]string) (int32, []*networkingv1ac.NetworkPolicyPeerApplyConfiguration) {
+			return port, slices.Map(labelsSelectors,
+				func(labelSelector map[string]string, _ int) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+					return networkingv1ac.NetworkPolicyPeer().
+						WithPodSelector(metav1ac.LabelSelector().WithMatchLabels(labelSelector))
+				},
+			)
+		},
+	)
 }
 
 func (wr *WorkloadResourceReconciler) ReconcileService(
@@ -104,7 +125,6 @@ func (wr *WorkloadResourceReconciler) ReconcileDeployment(
 				attribute.Int("deployment.replicas", int(replicas)),
 				attribute.Int("deployment.containers.count", len(containers)),
 				attribute.Int("deployment.volumes.count", len(volumes)),
-				attribute.String("deployment.component", "workload-cluster"),
 			)
 			return reconcileDeployment(
 				ctx,
@@ -113,8 +133,8 @@ func (wr *WorkloadResourceReconciler) ReconcileDeployment(
 				name,
 				nil,
 				labels,
-				ingressPortLabels,
-				egressPortLabels,
+				wr.convertToPeerApplyConfigurations(ingressPortLabels),
+				wr.convertToPeerApplyConfigurations(egressPortLabels),
 				replicas,
 				createPodTemplateSpec(podOptions, containers, volumes),
 			)
@@ -150,8 +170,8 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 				name,
 				nil,
 				labels,
-				ingressPortLabels,
-				egressPortLabels,
+				wr.convertToPeerApplyConfigurations(ingressPortLabels),
+				wr.convertToPeerApplyConfigurations(egressPortLabels),
 				metav1.DeletePropagationBackground,
 				appsv1ac.DaemonSet,
 				appsv1ac.DaemonSetSpec,

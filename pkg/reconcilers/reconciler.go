@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"sort"
 
 	slices "github.com/samber/lo"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/networking/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -24,7 +24,6 @@ import (
 	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 var (
@@ -34,8 +33,11 @@ var (
 	errServiceHasBothClusterIPAndIsHeadless = errors.New(
 		"service cannot be headless and have a clusterIP set",
 	)
+	errStatefulSetLabelChange = errors.New(
+		"statefulset: cannot change pod template label values",
+	)
 	specUpdateForbiddenErrorMessageRegex = regexp.MustCompile(
-		"Forbidden: updates to \\S+ spec for fields other than .* are forbidden",
+		`Forbidden: updates to \S+ spec for fields other than .* are forbidden`,
 	)
 )
 
@@ -69,8 +71,8 @@ func reconcileWorkload[RA any, RSA any, R any](
 	name string,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
-	ingressPortLabels map[int32][]map[string]string,
-	egressPortLabels map[int32][]map[string]string,
+	ingressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+	egressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 	propagationPolicy metav1.DeletionPropagation,
 	createResourceApplyConfiguration func(name string, namespace string) *RA,
 	createResourceSpecApplyConfiguration func() *RSA,
@@ -87,6 +89,21 @@ func reconcileWorkload[RA any, RSA any, R any](
 	readinessCheck func(*R) bool,
 	mutateFuncs ...func(*RA) *RA,
 ) (*R, bool, error) {
+	if err := reconcileNetworkPolicy(
+		ctx,
+		kubernetesClient,
+		namespace,
+		name,
+		ownerReference,
+		labels,
+		ingressPortLabels,
+		egressPortLabels,
+	); err != nil {
+		return nil, false, fmt.Errorf("failed to reconcile network policy for %s %s/%s: %w",
+			kind, namespace, name, err,
+		)
+	}
+
 	labelSelector := metav1ac.LabelSelector().WithMatchLabels(labels)
 	podTemplateSpecApplyConfiguration = podTemplateSpecApplyConfiguration.
 		WithLabels(labels)
@@ -149,21 +166,6 @@ func reconcileWorkload[RA any, RSA any, R any](
 		return appliedResource, false, nil
 	}
 
-	if err := reconcileNetworkPolicy(
-		ctx,
-		kubernetesClient,
-		namespace,
-		name,
-		ownerReference,
-		labels,
-		ingressPortLabels,
-		egressPortLabels,
-	); err != nil {
-		return nil, false, fmt.Errorf("failed to reconcile network policy for %s %s/%s: %w",
-			kind, namespace, name, err,
-		)
-	}
-
 	return appliedResource, true, nil
 }
 
@@ -176,8 +178,8 @@ func reconcileDeployment(
 	name string,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
-	ingressPortLabels map[int32][]map[string]string,
-	egressPortLabels map[int32][]map[string]string,
+	ingressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+	egressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 	replicas int32,
 	podTemplateSpec *corev1ac.PodTemplateSpecApplyConfiguration,
 ) (*appsv1.Deployment, bool, error) {
@@ -233,16 +235,6 @@ func reconcileDeployment(
 	return deployment, true, nil
 }
 
-func convertToPortLabels(ingressPortComponents map[int32][]string, cluster *capiv1.Cluster) map[int32][]map[string]string {
-	return slices.MapEntries(ingressPortComponents,
-		func(port int32, components []string) (int32, []map[string]string) {
-			return port, slices.Map(components, func(component string, _ int) map[string]string {
-				return names.GetControlPlaneLabels(cluster, component)
-			})
-		},
-	)
-}
-
 //+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=create;patch
 
 func reconcileNetworkPolicy(
@@ -252,19 +244,17 @@ func reconcileNetworkPolicy(
 	name string,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
-	ingressPortLabels map[int32][]map[string]string,
-	egressPortLabels map[int32][]map[string]string,
+	ingressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+	egressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 ) error {
 	networkPolicyInterface := kubernetesClient.NetworkingV1().NetworkPolicies(namespace)
-	convertToPeer := func(peerLabels []map[string]string) []*networkingv1ac.NetworkPolicyPeerApplyConfiguration {
-		return slices.Map(peerLabels,
-			func(labels map[string]string, _ int) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
-				return networkingv1ac.NetworkPolicyPeer().
-					WithPodSelector(metav1ac.LabelSelector().WithMatchLabels(labels)).
-					WithNamespaceSelector(metav1ac.LabelSelector().WithMatchLabels(map[string]string{
-						"kubernetes.io/metadata.name": namespace,
-					}))
-			})
+
+	if ingressPortLabels == nil && egressPortLabels == nil {
+		if err := networkPolicyInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil &&
+			!apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete network policy %s/%s: %w", namespace, name, err)
+		}
+		return nil
 	}
 
 	spec := networkingv1ac.NetworkPolicySpec().
@@ -272,45 +262,53 @@ func reconcileNetworkPolicy(
 
 	if ingressPortLabels != nil {
 		spec = spec.
-			WithPolicyTypes(v1.PolicyTypeIngress).
-			WithIngress(
-				slices.MapToSlice(ingressPortLabels, func(
-					port int32, peerLabels []map[string]string,
-				) *networkingv1ac.NetworkPolicyIngressRuleApplyConfiguration {
-					return networkingv1ac.NetworkPolicyIngressRule().
-						WithPorts(networkingv1ac.NetworkPolicyPort().
-							WithPort(intstr.FromInt32(port)),
-						).
-						WithFrom(convertToPeer(peerLabels)...)
-				})...,
-			)
+			WithPolicyTypes(networkingv1.PolicyTypeIngress).
+			WithIngress(convertToRule(
+				networkingv1ac.NetworkPolicyIngressRule,
+				(*networkingv1ac.NetworkPolicyIngressRuleApplyConfiguration).WithPorts,
+				(*networkingv1ac.NetworkPolicyIngressRuleApplyConfiguration).WithFrom,
+				ingressPortLabels,
+			)...)
 	}
 	if egressPortLabels != nil {
+		egressRules := convertToRule(
+			networkingv1ac.NetworkPolicyEgressRule,
+			(*networkingv1ac.NetworkPolicyEgressRuleApplyConfiguration).WithPorts,
+			(*networkingv1ac.NetworkPolicyEgressRuleApplyConfiguration).WithTo,
+			egressPortLabels,
+		)
+		egressRules = append(egressRules,
+			networkingv1ac.NetworkPolicyEgressRule().
+				WithPorts(networkingv1ac.NetworkPolicyPort().
+					WithProtocol(corev1.ProtocolUDP).
+					WithPort(intstr.FromInt32(53)),
+				).
+				WithTo(networkingv1ac.NetworkPolicyPeer().
+					WithNamespaceSelector(metav1ac.LabelSelector().
+						WithMatchLabels(map[string]string{
+							corev1.LabelMetadataName: "kube-system",
+						}),
+					).
+					WithPodSelector(metav1ac.LabelSelector().
+						WithMatchLabels(map[string]string{
+							"k8s-app": "kube-dns",
+						}),
+					),
+				),
+		)
 		spec = spec.
-			WithPolicyTypes(v1.PolicyTypeEgress).
-			WithEgress(
-				slices.MapToSlice(egressPortLabels, func(
-					port int32, peerLabels []map[string]string,
-				) *networkingv1ac.NetworkPolicyEgressRuleApplyConfiguration {
-					return networkingv1ac.NetworkPolicyEgressRule().
-						WithPorts(networkingv1ac.NetworkPolicyPort().
-							WithPort(intstr.FromInt32(port)),
-						).
-						WithTo(convertToPeer(peerLabels)...)
-				})...,
-			)
-	}
-	if ingressPortLabels == nil && egressPortLabels == nil {
-		if err := networkPolicyInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete network policy %s/%s: %w", namespace, name, err)
-		}
-		return nil
+			WithPolicyTypes(networkingv1.PolicyTypeEgress).
+			WithEgress(egressRules...)
 	}
 
 	networkPolicyApplyConfiguration := networkingv1ac.NetworkPolicy(name, namespace).
 		WithLabels(labels).
-		WithOwnerReferences(ownerReference).
 		WithSpec(spec)
+
+	if ownerReference != nil {
+		networkPolicyApplyConfiguration = networkPolicyApplyConfiguration.
+			WithOwnerReferences(ownerReference)
+	}
 
 	_, err := networkPolicyInterface.
 		Apply(
@@ -319,6 +317,37 @@ func reconcileNetworkPolicy(
 			operatorutil.ApplyOptions,
 		)
 	return errorsUtil.IfErrErrorf("failed to apply network policy %s/%s: %w", namespace, name, err)
+}
+
+func sortByPort(
+	portLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+) []slices.Entry[int32, []*networkingv1ac.NetworkPolicyPeerApplyConfiguration] {
+	portLabelMappings := slices.ToPairs(portLabels)
+	sort.Slice(portLabelMappings, func(i, j int) bool {
+		return portLabelMappings[i].Key < portLabelMappings[j].Key
+	})
+	return portLabelMappings
+}
+
+func convertToRule[AC any](
+	createResourceApplyConfiguration func() *AC,
+	withPorts func(applyConfiguration *AC, ports ...*networkingv1ac.NetworkPolicyPortApplyConfiguration) *AC,
+	addPeers func(applyConfiguration *AC, peers ...*networkingv1ac.NetworkPolicyPeerApplyConfiguration) *AC,
+	egressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+) []*AC {
+	return slices.Map(sortByPort(egressPortLabels), func(
+		egressPortMapping slices.Entry[int32, []*networkingv1ac.NetworkPolicyPeerApplyConfiguration], _ int,
+	) *AC {
+		port, peerLabels := egressPortMapping.Key, egressPortMapping.Value
+		applyConfiguration := createResourceApplyConfiguration()
+		applyConfiguration = withPorts(
+			applyConfiguration,
+			networkingv1ac.NetworkPolicyPort().
+				WithPort(intstr.FromInt32(port)),
+		)
+		applyConfiguration = addPeers(applyConfiguration, peerLabels...)
+		return applyConfiguration
+	})
 }
 
 //+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=create;patch;delete
@@ -542,8 +571,8 @@ func reconcileStatefulset(
 	podManagementPolicy appsv1.PodManagementPolicyType,
 	updateStrategy *appsv1ac.StatefulSetUpdateStrategyApplyConfiguration,
 	labels map[string]string,
-	ingressPortLabels map[int32][]map[string]string,
-	egressPortLabels map[int32][]map[string]string,
+	ingressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+	egressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 	replicas int32,
 	podTemplateSpec *corev1ac.PodTemplateSpecApplyConfiguration,
 	volumeClaimTemplates []*corev1ac.PersistentVolumeClaimApplyConfiguration,
@@ -566,15 +595,16 @@ func reconcileStatefulset(
 		existingSelector := existingStatefulSet.Spec.Selector.MatchLabels
 		mergedLabels := slices.Assign(labels, existingPodLabels)
 
-		if slices.Every(slices.ToPairs(existingPodLabels), slices.ToPairs(labels)) {
+		switch {
+		case slices.Every(slices.ToPairs(existingPodLabels), slices.ToPairs(labels)):
 			selectorLabels = labels
-		} else if slices.Every(slices.ToPairs(mergedLabels), slices.ToPairs(existingSelector)) {
+		case slices.Every(slices.ToPairs(mergedLabels), slices.ToPairs(existingSelector)):
 			selectorLabels = existingSelector
 			labels = mergedLabels
-		} else if len(labels) == len(existingPodLabels) {
+		case len(labels) == len(existingPodLabels):
 			return nil, false, fmt.Errorf(
-				"statefulset %s/%s: cannot change pod template label values",
-				namespace, name,
+				"statefulset %s/%s: %w",
+				namespace, name, errStatefulSetLabelChange,
 			)
 		}
 

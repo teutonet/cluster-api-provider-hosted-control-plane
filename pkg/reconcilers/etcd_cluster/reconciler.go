@@ -13,6 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/robfig/cron/v3"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
@@ -56,11 +61,15 @@ func NewEtcdClusterReconciler(
 	etcdServerStorageIncrement resource.Quantity,
 	componentLabel string,
 	apiServerComponentLabel string,
+	controllerNamespace string,
+	systemControllerComponent string,
 ) EtcdClusterReconciler {
 	return &etcdClusterReconciler{
 		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
-			Tracer:           tracing.GetTracer("EtcdCluster"),
-			KubernetesClient: kubernetesClient,
+			Tracer:              tracing.GetTracer("EtcdCluster"),
+			KubernetesClient:    kubernetesClient,
+			ControllerNamespace: controllerNamespace,
+			ControllerComponent: systemControllerComponent,
 		},
 		recorder:                   recorder,
 		etcdServerPort:             etcdServerPort,
@@ -69,6 +78,7 @@ func NewEtcdClusterReconciler(
 		etcdServerStorageIncrement: etcdServerStorageIncrement,
 		componentLabel:             componentLabel,
 		apiServerComponentLabel:    apiServerComponentLabel,
+		controllerComponent:        systemControllerComponent,
 	}
 }
 
@@ -81,6 +91,7 @@ type etcdClusterReconciler struct {
 	etcdServerStorageIncrement resource.Quantity
 	componentLabel             string
 	apiServerComponentLabel    string
+	controllerComponent        string
 }
 
 var _ EtcdClusterReconciler = &etcdClusterReconciler{}
@@ -150,6 +161,12 @@ func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 
 			if err := er.reconcileETCDSpaceUsage(ctx, hostedControlPlane, cluster); err != nil {
 				return "", fmt.Errorf("failed to reconcile etcd space usage: %w", err)
+			}
+
+			if hostedControlPlane.Spec.ETCD.Backup != nil {
+				if err := er.reconcileETCDBackup(ctx, hostedControlPlane, cluster); err != nil {
+					return "", fmt.Errorf("failed to reconcile etcd backup: %w", err)
+				}
 			}
 
 			return "", nil
@@ -238,6 +255,60 @@ func (er *etcdClusterReconciler) getETCDVolumeSize(hostedControlPlane *v1alpha1.
 	} else {
 		return hostedControlPlane.Spec.ETCD.VolumeSize
 	}
+}
+
+func (er *etcdClusterReconciler) reconcileETCDBackup(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
+) error {
+	return tracing.WithSpan1(ctx, er.Tracer, "ReconcileETCDBackup",
+		func(ctx context.Context, span trace.Span) error {
+			schedule, err := cron.ParseStandard(hostedControlPlane.Spec.ETCD.Backup.Schedule)
+			if err != nil {
+				return fmt.Errorf("failed to parse etcd backup schedule: %w", err)
+			}
+
+			lastBackupTime := hostedControlPlane.Status.ETCDLastBackupTime
+			if lastBackupTime.IsZero() || schedule.Next(lastBackupTime.Time).Before(time.Now()) {
+				snapshotReader, err := callETCDFuncOnAnyMember(
+					ctx,
+					er.KubernetesClient,
+					hostedControlPlane,
+					cluster,
+					er.etcdServerPort,
+					clientv3.Client.Snapshot,
+				)
+				if err != nil {
+					return fmt.Errorf("failed to create etcd snapshot: %w", err)
+				}
+
+				defaultConfig, err := config.LoadDefaultConfig(ctx)
+				if err != nil {
+					return fmt.Errorf("failed to load AWS config: %w", err)
+				}
+				uploader := manager.NewUploader(s3.NewFromConfig(defaultConfig))
+				if _, err := uploader.Upload(ctx, &s3.PutObjectInput{
+					Bucket: aws.String(fmt.Sprintf("hcp-%s-etcd-backups", hostedControlPlane.Name)),
+					Key:    aws.String(fmt.Sprintf("%s/%d.etcd", cluster.Name, time.Now().Unix())),
+					Body:   snapshotReader,
+				}); err != nil {
+					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", err)
+				}
+				hostedControlPlane.Status.ETCDLastBackupTime = metav1.NewTime(time.Now())
+				hostedControlPlane.Status.ETCDNextBackupTime = metav1.NewTime(
+					schedule.Next(hostedControlPlane.Status.ETCDLastBackupTime.Time),
+				)
+				er.recorder.Eventf(
+					hostedControlPlane,
+					corev1.EventTypeNormal,
+					"EtcdBackup",
+					"Created etcd backup",
+				)
+			}
+			return nil
+		},
+	)
 }
 
 func (er *etcdClusterReconciler) reconcileETCDSpaceUsage(
@@ -356,10 +427,10 @@ func callETCDFuncOnMember[R any](
 	endpoint string,
 	caPool *x509.CertPool,
 	clientCertificate tls.Certificate,
-	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (*R, error),
-) (*R, error) {
+	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (R, error),
+) (R, error) {
 	return tracing.WithSpan(ctx, "EtcdCluster", "CallETCDFuncOnMember",
-		func(ctx context.Context, span trace.Span) (*R, error) {
+		func(ctx context.Context, span trace.Span) (R, error) {
 			span.SetAttributes(
 				attribute.String("etcd.endpoint", endpoint),
 			)
@@ -376,7 +447,7 @@ func callETCDFuncOnMember[R any](
 			}
 			etcdClient, err := clientv3.New(etcdConfig)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create etcd client for endpoint %s: %w", endpoint, err)
+				return *new(R), fmt.Errorf("failed to create etcd client for endpoint %s: %w", endpoint, err)
 			}
 			defer func() {
 				if closeErr := etcdClient.Close(); closeErr != nil {
@@ -401,13 +472,13 @@ func callETCDFuncOnAnyMember[R any](
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv1.Cluster,
 	etcdServerPort int32,
-	etcdFunc func(client clientv3.Client, ctx context.Context) (*R, error),
-) (*R, error) {
+	etcdFunc func(client clientv3.Client, ctx context.Context) (R, error),
+) (R, error) {
 	return tracing.WithSpan(ctx, "EtcdCluster", "CallETCDFuncOnAnyMember",
-		func(ctx context.Context, span trace.Span) (*R, error) {
+		func(ctx context.Context, span trace.Span) (R, error) {
 			caPool, clientCertificate, err := getETCDConnectionTLS(ctx, kubernetesClient, hostedControlPlane, cluster)
 			if err != nil {
-				return nil, err
+				return *new(R), err
 			}
 
 			endpoint := fmt.Sprintf("https://%s", net.JoinHostPort(
@@ -416,7 +487,7 @@ func callETCDFuncOnAnyMember[R any](
 			))
 
 			return callETCDFuncOnMember(ctx, endpoint, caPool, clientCertificate,
-				func(client clientv3.Client, ctx context.Context, _ string) (*R, error) {
+				func(client clientv3.Client, ctx context.Context, _ string) (R, error) {
 					return etcdFunc(client, ctx)
 				},
 			)
@@ -533,7 +604,7 @@ func (er *etcdClusterReconciler) reconcileStatefulSet(
 				),
 				er.componentLabel,
 				map[int32][]string{
-					er.etcdServerPort: {er.apiServerComponentLabel},
+					er.etcdServerPort: {er.apiServerComponentLabel, er.controllerComponent},
 					er.etcdPeerPort:   {er.componentLabel},
 				},
 				map[int32][]string{

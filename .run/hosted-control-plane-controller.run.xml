@@ -1,6 +1,6 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="hosted-control-plane-controller" type="GoApplicationRunConfiguration" factoryName="Go Application">
-    <module name="cluster-api-control-plane-provider-hosted-control-plane" />
+    <module name="cluster-api-control-plane-provider-hcp" />
     <working_directory value="$PROJECT_DIR$" />
     <envs>
       <env name="LEADER_ELECTION" value="false" />

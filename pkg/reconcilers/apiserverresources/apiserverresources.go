@@ -43,6 +43,7 @@ type ApiServerResourcesReconciler interface {
 
 func NewApiServerResourcesReconciler(
 	kubernetesClient kubernetes.Interface,
+	worldComponent string,
 	serviceCIDR string,
 	apiServerComponentLabel string,
 	apiServerServicePort int32,
@@ -59,7 +60,9 @@ func NewApiServerResourcesReconciler(
 		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
 			Tracer:           tracing.GetTracer("apiServerResources"),
 			KubernetesClient: kubernetesClient,
+			WorldComponent:   worldComponent,
 		},
+		worldComponent:                      worldComponent,
 		serviceCIDR:                         serviceCIDR,
 		apiServerServicePort:                apiServerServicePort,
 		apiServerServiceLegacyPortName:      apiServerServiceLegacyPortName,
@@ -78,6 +81,7 @@ func NewApiServerResourcesReconciler(
 		componentControllerManager:          "controller-manager",
 		componentScheduler:                  "scheduler",
 		apiContainerPortName:                intstr.FromString("api"),
+		apiContainerPort:                    konstants.KubeAPIServerPort,
 		konnectivityContainerPortName:       intstr.FromString("konnectivity"),
 		konnectivityKubeconfigFileName:      "konnectivity-server.conf",
 	}
@@ -85,6 +89,7 @@ func NewApiServerResourcesReconciler(
 
 type apiServerResourcesReconciler struct {
 	reconcilers.ManagementResourceReconciler
+	worldComponent                      string
 	serviceCIDR                         string
 	apiServerServicePort                int32
 	apiServerServiceLegacyPortName      string
@@ -103,6 +108,7 @@ type apiServerResourcesReconciler struct {
 	componentControllerManager          string
 	componentScheduler                  string
 	apiContainerPortName                intstr.IntOrString
+	apiContainerPort                    int32
 	konnectivityContainerPortName       intstr.IntOrString
 	konnectivityKubeconfigFileName      string
 }
@@ -259,7 +265,8 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				arr.componentAPIServer,
 				nil,
 				map[int32][]string{
-					arr.etcdServerPort: {arr.etcdComponentLabel},
+					arr.etcdServerPort:       {arr.etcdComponentLabel},
+					arr.apiServerServicePort: {arr.worldComponent}, // for stuff like OIDC
 				},
 				arr.etcdComponentLabel,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
@@ -364,7 +371,7 @@ func (arr *apiServerResourcesReconciler) reconcileControllerManagerDeployment(
 				arr.componentControllerManager,
 				map[int32][]string{},
 				map[int32][]string{
-					arr.apiServerServicePort: {arr.componentAPIServer},
+					arr.apiContainerPort: {arr.componentAPIServer},
 				},
 				arr.componentAPIServer,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
@@ -404,7 +411,7 @@ func (arr *apiServerResourcesReconciler) reconcileSchedulerDeployment(
 				arr.componentScheduler,
 				map[int32][]string{},
 				map[int32][]string{
-					arr.apiServerServicePort: {arr.componentAPIServer},
+					arr.apiContainerPort: {arr.componentAPIServer},
 				},
 				arr.componentAPIServer,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
@@ -821,7 +828,7 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 ) *corev1ac.ContainerApplyConfiguration {
 	apiPort := corev1ac.ContainerPort().
 		WithName(arr.apiContainerPortName.String()).
-		WithContainerPort(konstants.KubeAPIServerPort).
+		WithContainerPort(arr.apiContainerPort).
 		WithProtocol(corev1.ProtocolTCP)
 
 	apiServerCertificatesVolumeMount := corev1ac.VolumeMount().

@@ -6,6 +6,15 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 )
 
+func Test_fieldOwnerIsTheSame(t *testing.T) {
+	t.Run("field owner is the same", func(t *testing.T) {
+		if hostedControlPlaneControllerName != "hcp-controller" {
+			t.Errorf("field owner has changed, this needs a migration, better undo it: got %s, want %s",
+				hostedControlPlaneControllerName, "hcp-controller")
+		}
+	})
+}
+
 func Test_newResource(t *testing.T) {
 	type args struct {
 		serviceName string

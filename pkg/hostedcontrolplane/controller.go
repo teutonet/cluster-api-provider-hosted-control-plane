@@ -65,6 +65,7 @@ func NewHostedControlPlaneReconciler(
 	certManagerClient cmclient.Interface,
 	gatewayClient gwclient.Interface,
 	recorder record.EventRecorder,
+	controllerNamespace string,
 	tracingWrapper func(rt http.RoundTripper) http.RoundTripper,
 ) HostedControlPlaneReconciler {
 	return &hostedControlPlaneReconciler{
@@ -74,6 +75,9 @@ func NewHostedControlPlaneReconciler(
 		gatewayClient:                    gatewayClient,
 		recorder:                         recorder,
 		managementCluster:                workload.NewManagementCluster(kubernetesClient, tracingWrapper, "controller"),
+		worldComponent:                   "world",
+		controllerNamespace:              controllerNamespace,
+		controllerComponent:              "hosted-control-plane-controller",
 		caCertificatesDuration:           31 * 24 * time.Hour,
 		certificatesDuration:             24 * time.Hour,
 		apiServerComponentLabel:          "api-server",
@@ -101,6 +105,9 @@ type hostedControlPlaneReconciler struct {
 	gatewayClient                    gwclient.Interface
 	recorder                         record.EventRecorder
 	managementCluster                workload.ManagementCluster
+	worldComponent                   string
+	controllerNamespace              string
+	controllerComponent              string
 	caCertificatesDuration           time.Duration
 	certificatesDuration             time.Duration
 	apiServerComponentLabel          string
@@ -498,9 +505,12 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.etcdServerStorageIncrement,
 				r.etcdComponentLabel,
 				r.apiServerComponentLabel,
+				r.controllerNamespace,
+				r.controllerComponent,
 			)
 			apiServerResourcesReconciler := apiserverresources.NewApiServerResourcesReconciler(
 				r.kubernetesClient,
+				r.worldComponent,
 				serviceCIDR,
 				r.apiServerComponentLabel,
 				r.apiServerServicePort,

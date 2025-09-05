@@ -16,13 +16,18 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
+	networkingv1ac "k8s.io/client-go/applyconfigurations/networking/v1"
 	"k8s.io/client-go/kubernetes"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 type ManagementResourceReconciler struct {
-	Tracer           string
-	KubernetesClient kubernetes.Interface
+	Tracer              string
+	KubernetesClient    kubernetes.Interface
+	WorldComponent      string
+	ControllerNamespace string
+	ControllerComponent string
 }
 
 func (mr *ManagementResourceReconciler) ReconcileService(
@@ -121,6 +126,42 @@ func (mr *ManagementResourceReconciler) ReconcileConfigmap(
 	)
 }
 
+func (mr *ManagementResourceReconciler) convertToPeerApplyConfigurations(
+	portComponentMappings map[int32][]string,
+	cluster *capiv1.Cluster,
+) map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	if portComponentMappings == nil {
+		return nil
+	}
+	return slices.MapEntries(portComponentMappings,
+		func(port int32, components []string) (int32, []*networkingv1ac.NetworkPolicyPeerApplyConfiguration) {
+			return port, slices.Map(components,
+				func(component string, _ int) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+					if component == mr.ControllerComponent {
+						return networkingv1ac.NetworkPolicyPeer().
+							WithNamespaceSelector(metav1ac.LabelSelector().
+								WithMatchLabels(map[string]string{
+									corev1.LabelMetadataName: mr.ControllerNamespace,
+								}),
+							)
+					}
+					if component == mr.WorldComponent {
+						return networkingv1ac.NetworkPolicyPeer().
+							WithIPBlock(networkingv1ac.IPBlock().WithCIDR("0.0.0.0/0"))
+					}
+					return networkingv1ac.NetworkPolicyPeer().
+						WithPodSelector(names.GetControlPlaneSelector(cluster, component)).
+						WithNamespaceSelector(metav1ac.LabelSelector().
+							WithMatchLabels(map[string]string{
+								corev1.LabelMetadataName: cluster.Namespace,
+							}),
+						)
+				},
+			)
+		},
+	)
+}
+
 func (mr *ManagementResourceReconciler) ReconcileDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
@@ -166,8 +207,8 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 				fmt.Sprintf("%s-%s", cluster.Name, component),
 				operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
 				names.GetControlPlaneLabels(cluster, component),
-				convertToPortLabels(ingressPortComponents, cluster),
-				convertToPortLabels(egressPortComponents, cluster),
+				mr.convertToPeerApplyConfigurations(ingressPortComponents, cluster),
+				mr.convertToPeerApplyConfigurations(egressPortComponents, cluster),
 				replicas,
 				createPodTemplateSpec(podOptions, containers, volumes),
 			)
@@ -213,8 +254,8 @@ func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 				podManagementPolicy,
 				updateStrategy,
 				names.GetControlPlaneLabels(cluster, component),
-				convertToPortLabels(ingressPortComponents, cluster),
-				convertToPortLabels(egressPortComponents, cluster),
+				mr.convertToPeerApplyConfigurations(ingressPortComponents, cluster),
+				mr.convertToPeerApplyConfigurations(egressPortComponents, cluster),
 				replicas,
 				createPodTemplateSpec(
 					podOptions,

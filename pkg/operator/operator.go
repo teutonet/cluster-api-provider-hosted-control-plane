@@ -23,7 +23,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	semconv "go.opentelemetry.io/otel/semconv/v1.34.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"google.golang.org/grpc/grpclog"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
@@ -86,6 +86,7 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (err 
 
 	if err := setupControllers(ctx, mgr,
 		operatorConfig.MaxConcurrentReconciles,
+		operatorConfig.ControllerNamespace,
 		tracingWrapper,
 	); err != nil {
 		return err
@@ -147,6 +148,7 @@ func setupControllers(
 	ctx context.Context,
 	mgr manager.Manager,
 	maxConcurrentReconciles int,
+	controllerNamespace string,
 	tracingWrapper func(rt http.RoundTripper) http.RoundTripper,
 ) error {
 	predicateLogger, err := logr.FromContext(ctx)
@@ -176,6 +178,7 @@ func setupControllers(
 		certManagerClient,
 		gatewayClient,
 		mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
+		controllerNamespace,
 		tracingWrapper,
 	).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
