@@ -32,7 +32,7 @@ spec:
       containers:
         - command:
             - /manager
-          image: controller:latest
+          image: controller-manager
           env:
             - name: CONTROLLER_NAMESPACE
               valueFrom:

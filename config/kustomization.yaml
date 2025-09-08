@@ -48,7 +48,7 @@ replacements:
           create: true
           delimiter: /
         fieldPaths:
-          - .medatata.annotations.["cert-manager.io/inject-ca-from"]
+          - .metadata.annotations.[cert-manager.io/inject-ca-from]
       - select:
           kind: MutatingWebhookConfiguration
         options:

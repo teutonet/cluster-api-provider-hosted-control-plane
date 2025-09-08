@@ -33,7 +33,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: manager-leader-election
-  namespace: manager-system
+  namespace: system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -41,6 +41,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: manager
+    namespace: system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -52,4 +53,5 @@ roleRef:
   name: manager
 subjects:
   - kind: ServiceAccount
-    name: manager-controller-manager
+    name: manager
+    namespace: system

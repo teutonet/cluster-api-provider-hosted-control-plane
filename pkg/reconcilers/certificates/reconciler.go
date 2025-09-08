@@ -50,7 +50,7 @@ func NewCertificateReconciler(
 		kubernetesServiceIP:        kubernetesServiceIP,
 		caCertificateDuration:      caCertificateDuration,
 		certificateDuration:        certificateDuration,
-		certificateRenewBefore:     int32(90),
+		certificateRenewBefore:     int32(50),
 		konnectivityServerAudience: konnectivityServerAudience,
 		tracer:                     tracing.GetTracer("certificates"),
 	}

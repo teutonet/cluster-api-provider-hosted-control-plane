@@ -210,8 +210,8 @@ tasks:
       vars:
         - KUBECONFIG
     env:
-      NAMESPACE: system
-      DEPLOYMENT_NAME: controller-manager
+      NAMESPACE: capi-hosted-control-plane-manager-system
+      DEPLOYMENT_NAME: capi-hosted-control-plane-controller-manager
     # always run the cleanup stuff
     ignore_error: true
     cmds:
@@ -231,7 +231,7 @@ tasks:
       - pkg/**/*.go
       - exclude: pkg/**/*_test.go
     cmds:
-      - "{{ .controllerGenCmd }} rbac:roleName=capi-hosted-control-plane-manager paths=./api/... paths=./pkg/... output:rbac:artifacts:config={{ .buildDir }}/rbac"
+      - "{{ .controllerGenCmd }} rbac:roleName=manager paths=./api/... paths=./pkg/... output:rbac:artifacts:config={{ .buildDir }}/rbac"
     generates:
       - "{{ .buildDir }}/rbac/role.yaml"
   manifest-webhooks:
@@ -276,7 +276,7 @@ tasks:
     cmds:
       - for:
           var: files
-        cmd: "rm {{ .ITEM }}/kustomization.yaml"
+        cmd: "rm -f {{ .ITEM }}/kustomization.yaml"
       - for:
           var: files
         cmd: "env -C {{ .ITEM }} {{ .kustomizeCmd }} create --autodetect"
