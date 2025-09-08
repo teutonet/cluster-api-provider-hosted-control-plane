@@ -32,7 +32,7 @@ spec:
       containers:
         - command:
             - /manager
-          image: controller:latest
+          image: docker.io/cwrau/controller:1
           env:
             - name: CONTROLLER_NAMESPACE
               valueFrom:

@@ -198,7 +198,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 					Name:     "kube-proxy",
 					Disabled: hostedControlPlane.Spec.KubeProxy.Disabled,
 					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) (string, error) {
-						return kubeProxyReconciler.ReconcileKubeProxy(ctx, cluster, hostedControlPlane)
+						return kubeProxyReconciler.ReconcileKubeProxy(ctx, hostedControlPlane, cluster)
 					},
 					Condition:    v1alpha1.WorkloadKubeProxyReadyCondition,
 					FailedReason: v1alpha1.WorkloadKubeProxyFailedReason,

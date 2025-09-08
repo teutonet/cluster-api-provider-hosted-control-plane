@@ -24,11 +24,11 @@ func (c *HostedControlPlane) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return errorsUtil.IfErrErrorf("failed to setup webhook: %w", ctrl.NewWebhookManagedBy(mgr).
 		For(c).
 		WithValidator(&hostedControlPlaneWebhook{}).
-		Complete())
+		Complete(),
+	)
 }
 
 //+kubebuilder:webhook:path=/validate-controlplane-cluster-x-k8s-io-v1alpha1-hostedcontrolplane,mutating=false,failurePolicy=fail,sideEffects=None,groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes,verbs=create;update,versions=v1alpha1,name=vhostedcontrolplane.kb.io,admissionReviewVersions=v1,serviceName=controller-manager
-//+kubebuilder:metadata:annotations="cert-manager.io/inject-ca-from=cluster-api-control-plane-provider-hosted-control-plane-webhook-ca"
 
 type hostedControlPlaneWebhook struct {
 	groupKind schema.GroupKind

@@ -271,13 +271,13 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 
 			lastBackupTime := hostedControlPlane.Status.ETCDLastBackupTime
 			if lastBackupTime.IsZero() || schedule.Next(lastBackupTime.Time).Before(time.Now()) {
-				snapshotReader, err := callETCDFuncOnAnyMember(
+				snapshotResponse, err := callETCDFuncOnAnyMember(
 					ctx,
 					er.KubernetesClient,
 					hostedControlPlane,
 					cluster,
 					er.etcdServerPort,
-					clientv3.Client.Snapshot,
+					clientv3.Client.SnapshotWithVersion,
 				)
 				if err != nil {
 					return fmt.Errorf("failed to create etcd snapshot: %w", err)
@@ -291,7 +291,7 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 				if _, err := uploader.Upload(ctx, &s3.PutObjectInput{
 					Bucket: aws.String(fmt.Sprintf("hcp-%s-etcd-backups", hostedControlPlane.Name)),
 					Key:    aws.String(fmt.Sprintf("%s/%d.etcd", cluster.Name, time.Now().Unix())),
-					Body:   snapshotReader,
+					Body:   snapshotResponse.Snapshot,
 				}); err != nil {
 					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", err)
 				}

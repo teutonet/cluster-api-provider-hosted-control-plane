@@ -2,7 +2,7 @@ apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
   name: selfsigned
-  namespace: manager-system
+  namespace: system
 spec:
   selfSigned: {}
 ---
@@ -10,7 +10,7 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: webhook-service
-  namespace: manager-system
+  namespace: system
 spec:
   dnsNames:
     - SERVICE_NAME.SERVICE_NAMESPACE.svc

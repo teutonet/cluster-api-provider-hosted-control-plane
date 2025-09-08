@@ -33,8 +33,8 @@ import (
 type KubeProxyReconciler interface {
 	ReconcileKubeProxy(
 		ctx context.Context,
-		cluster *capiv1.Cluster,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
+		cluster *capiv1.Cluster,
 	) (string, error)
 }
 
@@ -75,8 +75,8 @@ var _ KubeProxyReconciler = &kubeProxyReconciler{}
 
 func (kr *kubeProxyReconciler) ReconcileKubeProxy(
 	ctx context.Context,
-	cluster *capiv1.Cluster,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv1.Cluster,
 ) (string, error) {
 	return tracing.WithSpan(ctx, kr.Tracer, "ReconcileKubeProxy",
 		func(ctx context.Context, span trace.Span) (string, error) {
