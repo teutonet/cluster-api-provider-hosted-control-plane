@@ -226,10 +226,8 @@ for details on:
 
 ## 🆘 Support
 
-- **GitHub Issues
-  **: [Report bugs or request features](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues)
-- **Discussions
-  **: [Community discussions and Q&A](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/discussions)
+- **GitHub Issues**: [Report bugs or request features](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues)
+- **Discussions**: [Community discussions and Q&A](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/discussions)
 
 ## 📄 License
 
