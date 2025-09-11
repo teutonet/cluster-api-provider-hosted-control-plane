@@ -36,6 +36,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
+	utilNet "k8s.io/utils/net"
 	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -78,7 +79,7 @@ func NewHostedControlPlaneReconciler(
 		worldComponent:                   "world",
 		controllerNamespace:              controllerNamespace,
 		controllerComponent:              "hosted-control-plane-controller",
-		caCertificatesDuration:           31 * 24 * time.Hour,
+		caCertificatesDuration:           2 * 24 * time.Hour,
 		certificatesDuration:             24 * time.Hour,
 		apiServerComponentLabel:          "api-server",
 		apiServerServicePort:             int32(443),
@@ -460,7 +461,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 
 			var dnsIP net.IP
 			var kubernetesServiceIP net.IP
-			if serviceCIDRIP, _, err := net.ParseCIDR(strings.Split(serviceCIDR, ",")[0]); err != nil {
+			if _, serviceNet, err := net.ParseCIDR(strings.Split(serviceCIDR, ",")[0]); err != nil {
 				conditions.MarkFalse(
 					hostedControlPlane,
 					v1alpha1.WorkloadClusterResourcesReadyCondition,
@@ -470,17 +471,29 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				)
 				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to parse Service CIDR %q: %w", serviceCIDR, err)
 			} else {
-				dnsIP = make(net.IP, len(serviceCIDRIP))
-				copy(dnsIP, serviceCIDRIP)
-				kubernetesServiceIP = make(net.IP, len(serviceCIDRIP))
-				copy(kubernetesServiceIP, serviceCIDRIP)
-				switch {
-				case serviceCIDRIP.To4() != nil:
-					dnsIP[len(dnsIP)-1] += 10
-					kubernetesServiceIP[len(kubernetesServiceIP)-1] += 1
-				case serviceCIDRIP.To16() != nil:
-					dnsIP[len(dnsIP)-1] += 16
-					kubernetesServiceIP[len(kubernetesServiceIP)-1] += 1
+				dnsIP, err = utilNet.GetIndexedIP(serviceNet, 10)
+				if err != nil {
+					conditions.MarkFalse(
+						hostedControlPlane,
+						v1alpha1.WorkloadClusterResourcesReadyCondition,
+						v1alpha1.WorkloadClusterResourcesFailedReason,
+						capiv1.ConditionSeverityError,
+						"Failed to calculate DNS IP from Service CIDR %q: %v", serviceCIDR, err,
+					)
+					return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to calculate DNS IP from Service CIDR %q: %w",
+						serviceCIDR, err)
+				}
+				kubernetesServiceIP, err = utilNet.GetIndexedIP(serviceNet, 1)
+				if err != nil {
+					conditions.MarkFalse(
+						hostedControlPlane,
+						v1alpha1.WorkloadClusterResourcesReadyCondition,
+						v1alpha1.WorkloadClusterResourcesFailedReason,
+						capiv1.ConditionSeverityError,
+						"Failed to calculate Kubernetes Service IP from Service CIDR %q: %v", serviceCIDR, err,
+					)
+					return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to calculate Kubernetes Service IP from Service CIDR %q: %w",
+						serviceCIDR, err)
 				}
 			}
 
