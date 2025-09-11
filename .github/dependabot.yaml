@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - &updates
+    package-ecosystem: docker
+    schedule:
+      interval: weekly
+      day: monday
+  - <<: *updates
+    package-ecosystem: github-actions
+  - <<: *updates
+    package-ecosystem: gomod
