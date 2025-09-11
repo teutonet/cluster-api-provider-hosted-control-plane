@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ./go.mod
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      - run: task lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ./go.mod
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      - run: task test
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ./go.mod
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      - run: task build
+
+      - name: Check for uncommitted changes
+        run: task check-diff

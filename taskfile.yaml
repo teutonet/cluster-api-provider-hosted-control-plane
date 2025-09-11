@@ -28,10 +28,10 @@ vars:
         version: 2.2.1
       gofumpt:
         url: mvdan.cc/gofumpt
-        version: 0.8.0
+        version: 0.9.1
       golines:
         url: github.com/segmentio/golines
-        version: 0.12.2
+        version: 0.13.0
       kustomize:
         url: sigs.k8s.io/kustomize/kustomize/v5
         version: 5.7.1
@@ -54,7 +54,11 @@ tasks:
   manifests:
     cmds:
       - task: manifest-kustomize
-      - "{{ .kustomizeCmd }} build ./config > {{ .buildDir }}/control-plane-components.yaml"
+      - mkdir -p {{ .buildDir }}/config
+      - rm -f {{ .buildDir }}/config/kustomization.yaml
+      - env -C {{ .buildDir }}/config {{ .kustomizeCmd }} create --resources ../../config
+      - env -C {{ .buildDir }}/config {{ .kustomizeCmd }} edit set image controller-manager=ghcr.io/teutonet/cluster-api-provider-hosted-control-plane:{{ .version }}
+      - "{{ .kustomizeCmd }} build {{ .buildDir }}/config > {{ .buildDir }}/control-plane-components.yaml"
     generates:
       - "{{ .buildDir }}/control-plane-components.yaml"
   generate:
@@ -124,16 +128,25 @@ tasks:
       - ./**/*.go
       - go.sum
     vars:
-      GOOS: linux
-    env:
-      CGO_ENABLED: "0"
-      GOOS: linux
-      GOARCH: amd64
+      IMAGE: '{{ .IMAGE | default "controller-manager" }}'
+      architectures: amd64,arm64
     cmds:
-      - go build -ldflags=-X=main.version={{ .version }}, -o ./build/manager ./cmd/hosted-control-plane-controller/main.go
-      - strip ./build/manager
+      - rm -f {{ .buildDir }}/manager-*
+      - buildah manifest rm {{ .IMAGE }} 2>/dev/null || true
+      - for: &forArch
+          var: architectures
+          split: ","
+          as: arch
+        cmd: env GOARCH={{ .arch }} GOOS=linux CGO_ENABLED=0 go build -ldflags="-X=main.version={{ .version }} -s -w" -o {{ .buildDir }}/manager-{{ .arch }} ./cmd/hosted-control-plane-controller/main.go
+      - for: *forArch
+        cmd: buildah build --arch {{ .arch }} --manifest {{ .IMAGE }} --build-arg=manager={{ .buildDir }}/manager-{{ .arch }} .
+    status:
+      - file {{ .buildDir }}/manager-amd64 | grep -q 'ELF 64-bit LSB executable, x86-64'
+      - file {{ .buildDir }}/manager-arm64 | grep -q 'ELF 64-bit LSB executable, ARM aarch64'
+      - test $(buildah manifest inspect {{ .IMAGE }} | grep -c -e arm64 -e amd64) -eq 2
     generates:
-      - build/manager
+      - "{{ .buildDir }}/manager-amd64"
+      - "{{ .buildDir }}/manager-arm64"
   get-version:
     cmd: echo {{ .version }}
   dev:
@@ -276,9 +289,9 @@ tasks:
     cmds:
       - for:
           var: files
-        cmd: "rm -f {{ .ITEM }}/kustomization.yaml"
+        cmd: rm -f {{ .ITEM }}/kustomization.yaml
       - for:
           var: files
-        cmd: "env -C {{ .ITEM }} {{ .kustomizeCmd }} create --autodetect"
+        cmd: env -C {{ .ITEM }} {{ .kustomizeCmd }} create --autodetect
     generates:
       - "{{ .buildDir }}/*/kustomization.yaml"
