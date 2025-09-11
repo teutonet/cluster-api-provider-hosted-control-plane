@@ -157,6 +157,8 @@ linters:
           alias: networkingv1
         - pkg: k8s.io/client-go/applyconfigurations/networking/v1
           alias: networkingv1ac
+        - pkg: k8s.io/utils/net
+          alias: utilNet
 
         # Gateway API
         - pkg: sigs.k8s.io/gateway-api/apis/v1
