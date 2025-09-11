@@ -25,6 +25,10 @@ jobs:
           version: 3.x
 
       - run: task lint
+      - run: task lint fix=true
+
+      - name: Check for uncommitted changes
+        run: task check-diff
 
   test:
     name: Test
@@ -57,6 +61,3 @@ jobs:
           version: 3.x
 
       - run: task build
-
-      - name: Check for uncommitted changes
-        run: task check-diff
