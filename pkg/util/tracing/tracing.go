@@ -42,7 +42,7 @@ func WithSpan[R any](
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}
-	return
+	return r, err
 }
 
 func WithSpan1[R any](
@@ -59,7 +59,7 @@ func WithSpan1[R any](
 			span.SetStatus(codes.Error, err.Error())
 		}
 	}
-	return
+	return r
 }
 
 func WithSpan3[R1 any, R2 any](
@@ -75,5 +75,5 @@ func WithSpan3[R1 any, R2 any](
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}
-	return
+	return r1, r2, err
 }
