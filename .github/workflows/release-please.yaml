@@ -19,12 +19,10 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
       upload_url: ${{ steps.release.outputs.upload_url }}
     steps:
-      - uses: google-github-actions/release-please-action@v4
+      - uses: googleapis/release-please-action@v4
         id: release
         with:
-          release-type: go
           config-file: .github/release-please/config.json
-          manifest-file: .github/release-please/manifest.json
 
   build-and-release:
     needs: release-please
@@ -53,8 +51,7 @@ jobs:
 
       - env:
           IMAGE: ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}
-        run: |          
-          buildah manifest push --all ${IMAGE}
+        run: buildah manifest push --all ${IMAGE}
 
       - name: Upload manifests
         uses: actions/upload-release-asset@v1
@@ -65,5 +62,4 @@ jobs:
           asset_content_type: application/yaml
 
       - name: Release draft
-        run: |
-          gh release edit ${{ needs.release-please.outputs.tag_name }} --draft=false
+        run: gh release edit ${{ needs.release-please.outputs.tag_name }} --draft=false
