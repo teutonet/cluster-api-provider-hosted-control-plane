@@ -45,31 +45,31 @@ graph TB
             subgraph CP["Control Plane Components"]
                 direction LR
                 API["📡 API Server"]
-                CM["🔧 Controller Manager"] 
+                CM["🔧 Controller Manager"]
                 SCHED["⏰ Scheduler"]
                 API --- CM --- SCHED
             end
-            
+
             ETCD["💾 ETCD Cluster"]
             CP --- ETCD
         end
-        
+
         CAPI["🤖 Cluster API"]
         PROVIDER["🏠 HCP Provider"]
     end
-    
+
     subgraph WC["🔨 Workload Cluster"]
         direction LR
         W1["👷 Worker Node 1"]
-        W2["👷 Worker Node 2"]  
+        W2["👷 Worker Node 2"]
         WN["👷 Worker Node N"]
         W1 --- W2 --- WN
     end
-    
+
     HCP -->|"🔑 Kubeconfig"| WC
     CAPI --> PROVIDER
     PROVIDER --> HCP
-    
+
     style MC fill:#e1f5fe,color:#000
     style HCP fill:#f3e5f5,color:#000
     style WC fill:#e8f5e8,color:#000
@@ -92,10 +92,10 @@ graph TB
 
 ```bash
 # Install using the latest release
-kubectl apply -f https://github.com/teutonet/cluster-api-provider-hosted-control-plane/releases/latest/download/control-plane-components.yaml.yaml
+kubectl apply -f https://github.com/teutonet/cluster-api-provider-hosted-control-plane/releases/latest/download/control-plane-components.yaml
 
 # Or install a specific version
-kubectl apply -f https://github.com/teutonet/cluster-api-provider-hosted-control-plane/releases/download/v0.1.0/control-plane-components.yaml.yaml
+kubectl apply -f https://github.com/teutonet/cluster-api-provider-hosted-control-plane/releases/download/v0.1.0/control-plane-components.yaml
 ```
 
 ### Verify Installation
