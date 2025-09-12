@@ -23,6 +23,7 @@ jobs:
         id: release
         with:
           config-file: .github/release-please/config.json
+          manifest-file: .github/release-please/manifest.json
 
   build-and-release:
     needs: release-please
