@@ -3,10 +3,10 @@ name: CI
 on:
   push:
     branches:
-    - ${{ github.event.repository.default_branch }}
+    - main
   pull_request:
     branches:
-      - ${{ github.event.repository.default_branch }}
+      - main
 
   workflow_dispatch:
 
