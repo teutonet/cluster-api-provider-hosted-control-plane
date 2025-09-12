@@ -1,7 +1,6 @@
 # 🏗️ Cluster API Control Plane Provider for Hosted Control Planes
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/teutonet/cluster-api-provider-hosted-control-plane)](https://goreportcard.com/report/github.com/teutonet/cluster-api-provider-hosted-control-plane)
-[![Go Reference](https://pkg.go.dev/badge/github.com/teutonet/cluster-api-provider-hosted-control-plane.svg)](https://pkg.go.dev/github.com/teutonet/cluster-api-provider-hosted-control-plane)
 [![License](https://img.shields.io/badge/license-AGPL%20v3-blue.svg)](LICENSE)
 
 A Kubernetes Cluster API control plane provider that enables management of hosted control planes as first-class
@@ -71,13 +70,13 @@ graph TB
     CAPI --> PROVIDER
     PROVIDER --> HCP
     
-    style MC fill:#e1f5fe
-    style HCP fill:#f3e5f5
-    style WC fill:#e8f5e8
-    style API fill:#fff3e0
-    style CM fill:#fff3e0
-    style SCHED fill:#fff3e0
-    style ETCD fill:#fce4ec
+    style MC fill:#e1f5fe,color:#000
+    style HCP fill:#f3e5f5,color:#000
+    style WC fill:#e8f5e8,color:#000
+    style API fill:#fff3e0,color:#000
+    style CM fill:#fff3e0,color:#000
+    style SCHED fill:#fff3e0,color:#000
+    style ETCD fill:#fce4ec,color:#000
 ```
 
 ## 🛠️ Installation
@@ -118,6 +117,9 @@ metadata:
 spec:
   version: v1.33.0
   replicas: 3
+  gateway:
+    name: capi
+    namespace: capi-system
 ```
 
 ### Integration with Cluster API
@@ -143,7 +145,7 @@ spec:
 ### Environment Variables
 
 | Variable                      | Description                      | Default                               |
-| ----------------------------- | -------------------------------- | ------------------------------------- |
+|-------------------------------|----------------------------------|---------------------------------------|
 | `LEADER_ELECTION`             | Enable leader election           | true                                  |
 | `WEBHOOK_CERT_DIR`            | Directory for webhook certs      | /tmp/k8s-webhook-server/serving-certs |
 | `MAX_CONCURRENT_RECONCILES`   | Max concurrent reconciles        | 10                                    |
@@ -212,7 +214,7 @@ for details on:
 ## 📋 Compatibility
 
 | Component    | Version          |
-| ------------ | ---------------- |
+|--------------|------------------|
 | Kubernetes   | v1.28+           |
 | Cluster API  | v1.10+           |
 | cert-manager | v1.18+           |
