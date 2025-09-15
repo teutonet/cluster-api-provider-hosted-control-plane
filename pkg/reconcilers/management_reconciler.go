@@ -19,7 +19,7 @@ import (
 	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	networkingv1ac "k8s.io/client-go/applyconfigurations/networking/v1"
 	"k8s.io/client-go/kubernetes"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 type ManagementResourceReconciler struct {
@@ -33,7 +33,7 @@ type ManagementResourceReconciler struct {
 func (mr *ManagementResourceReconciler) ReconcileService(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	namespace string,
 	name string,
 	serviceType corev1.ServiceType,
@@ -66,7 +66,7 @@ func (mr *ManagementResourceReconciler) ReconcileService(
 func (mr *ManagementResourceReconciler) ReconcileSecret(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	namespace string,
 	name string,
 	data map[string][]byte,
@@ -97,7 +97,7 @@ func (mr *ManagementResourceReconciler) ReconcileSecret(
 func (mr *ManagementResourceReconciler) ReconcileConfigmap(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	component string,
 	namespace string,
 	name string,
@@ -117,6 +117,7 @@ func (mr *ManagementResourceReconciler) ReconcileConfigmap(
 					mr.KubernetesClient,
 					namespace,
 					name,
+					false,
 					operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
 					names.GetControlPlaneLabels(cluster, component),
 					data,
@@ -128,7 +129,7 @@ func (mr *ManagementResourceReconciler) ReconcileConfigmap(
 
 func (mr *ManagementResourceReconciler) convertToPeerApplyConfigurations(
 	portComponentMappings map[int32][]string,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration {
 	if portComponentMappings == nil {
 		return nil
@@ -165,7 +166,7 @@ func (mr *ManagementResourceReconciler) convertToPeerApplyConfigurations(
 func (mr *ManagementResourceReconciler) ReconcileDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	replicas int32,
 	priorityClassName string,
 	component string,
@@ -205,6 +206,7 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 				mr.KubernetesClient,
 				cluster.Namespace,
 				fmt.Sprintf("%s-%s", cluster.Name, component),
+				false,
 				operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
 				names.GetControlPlaneLabels(cluster, component),
 				mr.convertToPeerApplyConfigurations(ingressPortComponents, cluster),
@@ -219,7 +221,7 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	name string,
 	namespace string,
 	podOptions PodOptions,
@@ -249,6 +251,7 @@ func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 				mr.KubernetesClient,
 				namespace,
 				name,
+				false,
 				operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
 				serviceName,
 				podManagementPolicy,

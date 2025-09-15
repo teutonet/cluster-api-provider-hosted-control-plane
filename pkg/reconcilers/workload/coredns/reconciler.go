@@ -7,6 +7,7 @@ import (
 	"path"
 
 	"github.com/coredns/corefile-migration/migration/corefile"
+	"github.com/go-logr/logr"
 	slices "github.com/samber/lo"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
@@ -101,8 +102,17 @@ func (cr *coreDNSReconciler) ReconcileCoreDNS(ctx context.Context) (string, erro
 				},
 			}
 
+			logger := logr.FromContextAsSlogLogger(ctx)
 			for _, phase := range phases {
-				if notReadyReason, err := phase.Reconcile(ctx); err != nil {
+				notReadyReason, err := tracing.WithSpan(
+					ctx,
+					cr.Tracer,
+					phase.Name,
+					func(ctx context.Context, _ trace.Span) (string, error) {
+						return phase.Reconcile(logr.NewContextWithSlogLogger(ctx, logger.With("phase", phase.Name)))
+					},
+				)
+				if err != nil {
 					return "", fmt.Errorf("failed to reconcile CoreDNS phase %s: %w", phase.Name, err)
 				} else if notReadyReason != "" {
 					return notReadyReason, nil
@@ -253,6 +263,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context) erro
 				ctx,
 				cr.coreDNSNamespace,
 				cr.coreDNSResourceName,
+				false,
 				cr.coreDNSLabels,
 				map[string]string{
 					cr.coreDNSCorefileFileName: defaultCorefile.ToString(),
@@ -323,6 +334,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) (st
 				ctx,
 				cr.coreDNSResourceName,
 				cr.coreDNSNamespace,
+				false,
 				slices.Ternary(len(nodes.Items) > 1, int32(2), int32(1)),
 				reconcilers.PodOptions{
 					ServiceAccountName: cr.coreDNSServiceAccountName,

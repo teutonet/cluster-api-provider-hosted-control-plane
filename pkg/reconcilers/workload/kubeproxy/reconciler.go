@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/go-logr/logr"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
@@ -27,14 +30,15 @@ import (
 	"k8s.io/kubernetes/cmd/kubeadm/app/phases/addons/proxy"
 	kubeadmutil "k8s.io/kubernetes/cmd/kubeadm/app/util"
 	"k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 type KubeProxyReconciler interface {
 	ReconcileKubeProxy(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
-		cluster *capiv1.Cluster,
+		cluster *capiv2.Cluster,
+		deleteResource bool,
 	) (string, error)
 }
 
@@ -76,36 +80,49 @@ var _ KubeProxyReconciler = &kubeProxyReconciler{}
 func (kr *kubeProxyReconciler) ReconcileKubeProxy(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
+	deleteResource bool,
 ) (string, error) {
 	return tracing.WithSpan(ctx, kr.Tracer, "ReconcileKubeProxy",
 		func(ctx context.Context, span trace.Span) (string, error) {
 			phases := []struct {
 				Name      string
-				Reconcile func(context.Context) (string, error)
+				Reconcile func(ctx context.Context, deleteResource bool) (string, error)
 			}{
 				{
 					Name: "ConfigMap",
-					Reconcile: func(ctx context.Context) (string, error) {
-						return "", kr.reconcileKubeProxyConfigMap(ctx, cluster)
+					Reconcile: func(ctx context.Context, deleteResource bool) (string, error) {
+						return "", kr.reconcileKubeProxyConfigMap(ctx, cluster, deleteResource)
 					},
 				},
 				{
 					Name: "RBAC",
-					Reconcile: func(ctx context.Context) (string, error) {
-						return "", kr.reconcileKubeProxyRBAC(ctx)
+					Reconcile: func(ctx context.Context, deleteResource bool) (string, error) {
+						return "", kr.reconcileKubeProxyRBAC(ctx, deleteResource)
 					},
 				},
 				{
 					Name: "DaemonSet",
-					Reconcile: func(ctx context.Context) (string, error) {
-						return kr.reconcileKubeProxyDaemonSet(ctx, hostedControlPlane)
+					Reconcile: func(ctx context.Context, deleteResource bool) (string, error) {
+						return kr.reconcileKubeProxyDaemonSet(ctx, hostedControlPlane, deleteResource)
 					},
 				},
 			}
 
+			logger := logr.FromContextAsSlogLogger(ctx)
 			for _, phase := range phases {
-				if notReadyReason, err := phase.Reconcile(ctx); err != nil {
+				notReadyReason, err := tracing.WithSpan(
+					ctx,
+					kr.Tracer,
+					phase.Name,
+					func(ctx context.Context, _ trace.Span) (string, error) {
+						return phase.Reconcile(
+							logr.NewContextWithSlogLogger(ctx, logger.With("phase", phase.Name)),
+							deleteResource,
+						)
+					},
+				)
+				if err != nil {
 					return "", fmt.Errorf("failed to reconcile kube-proxy phase %s: %w", phase.Name, err)
 				} else if notReadyReason != "" {
 					return notReadyReason, nil
@@ -117,16 +134,28 @@ func (kr *kubeProxyReconciler) ReconcileKubeProxy(
 	)
 }
 
-func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error {
+func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(
+	ctx context.Context,
+	deleteResource bool,
+) error {
 	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeProxyRBAC",
 		func(ctx context.Context, span trace.Span) error {
 			serviceAccount := corev1ac.ServiceAccount(kr.kubeProxyServiceAccount, kr.kubeProxyNamespace)
 
-			_, err := kr.KubernetesClient.CoreV1().
-				ServiceAccounts(*serviceAccount.Namespace).
-				Apply(ctx, serviceAccount, operatorutil.ApplyOptions)
-			if err != nil {
-				return fmt.Errorf("failed to apply kube-proxy service account: %w", err)
+			serviceAccountInterface := kr.KubernetesClient.CoreV1().
+				ServiceAccounts(*serviceAccount.Namespace)
+			if deleteResource {
+				err := serviceAccountInterface.
+					Delete(ctx, *serviceAccount.Name, metav1.DeleteOptions{})
+				if err != nil && !apierrors.IsNotFound(err) {
+					return fmt.Errorf("failed to delete kube-proxy service account: %w", err)
+				}
+			} else {
+				_, err := serviceAccountInterface.
+					Apply(ctx, serviceAccount, operatorutil.ApplyOptions)
+				if err != nil {
+					return fmt.Errorf("failed to apply kube-proxy service account: %w", err)
+				}
 			}
 
 			clusterRoleBinding := rbacv1ac.ClusterRoleBinding(konstants.KubeProxyClusterRoleBindingName).
@@ -141,10 +170,19 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error
 					WithNamespace(*serviceAccount.Namespace),
 				)
 
-			_, err = kr.KubernetesClient.RbacV1().ClusterRoleBindings().
-				Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
-			if err != nil {
-				return fmt.Errorf("failed to apply kube-proxy cluster role binding: %w", err)
+			clusterRoleBindingInterface := kr.KubernetesClient.RbacV1().ClusterRoleBindings()
+			if deleteResource {
+				err := clusterRoleBindingInterface.
+					Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{})
+				if err != nil && !apierrors.IsNotFound(err) {
+					return fmt.Errorf("failed to delete kube-proxy cluster role binding: %w", err)
+				}
+			} else {
+				_, err := clusterRoleBindingInterface.
+					Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
+				if err != nil {
+					return fmt.Errorf("failed to apply kube-proxy cluster role binding: %w", err)
+				}
 			}
 
 			role := rbacv1ac.Role(proxy.KubeProxyConfigMapRoleName, kr.kubeProxyNamespace).
@@ -156,10 +194,19 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error
 						WithResourceNames(kr.kubeProxyConfigMapName),
 				)
 
-			_, err = kr.KubernetesClient.RbacV1().Roles(*role.Namespace).
-				Apply(ctx, role, operatorutil.ApplyOptions)
-			if err != nil {
-				return fmt.Errorf("failed to apply kube-proxy role: %w", err)
+			roleInterface := kr.KubernetesClient.RbacV1().Roles(*role.Namespace)
+			if deleteResource {
+				err := roleInterface.
+					Delete(ctx, *role.Name, metav1.DeleteOptions{})
+				if err != nil && !apierrors.IsNotFound(err) {
+					return fmt.Errorf("failed to delete kube-proxy role: %w", err)
+				}
+			} else {
+				_, err := roleInterface.
+					Apply(ctx, role, operatorutil.ApplyOptions)
+				if err != nil {
+					return fmt.Errorf("failed to apply kube-proxy role: %w", err)
+				}
 			}
 
 			roleBinding := rbacv1ac.RoleBinding(proxy.KubeProxyConfigMapRoleName, kr.kubeProxyNamespace).
@@ -173,10 +220,19 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error
 					WithName(konstants.NodeBootstrapTokenAuthGroup),
 				)
 
-			_, err = kr.KubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
-				Apply(ctx, roleBinding, operatorutil.ApplyOptions)
-			if err != nil {
-				return fmt.Errorf("failed to apply kube-proxy role binding: %w", err)
+			roleBindingInterface := kr.KubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace)
+			if deleteResource {
+				err := roleBindingInterface.
+					Delete(ctx, *roleBinding.Name, metav1.DeleteOptions{})
+				if err != nil && !apierrors.IsNotFound(err) {
+					return fmt.Errorf("failed to delete kube-proxy role binding: %w", err)
+				}
+			} else {
+				_, err := roleBindingInterface.
+					Apply(ctx, roleBinding, operatorutil.ApplyOptions)
+				if err != nil {
+					return fmt.Errorf("failed to apply kube-proxy role binding: %w", err)
+				}
 			}
 
 			return nil
@@ -184,7 +240,11 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(ctx context.Context) error
 	)
 }
 
-func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(ctx context.Context, cluster *capiv1.Cluster) error {
+func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(
+	ctx context.Context,
+	cluster *capiv2.Cluster,
+	deleteResource bool,
+) error {
 	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeProxyConfigMap",
 		func(ctx context.Context, span trace.Span) error {
 			kubeconfigFileName := "kubeconfig.conf"
@@ -238,6 +298,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(ctx context.Context, 
 				ctx,
 				kr.kubeProxyNamespace,
 				kr.kubeProxyConfigMapName,
+				deleteResource,
 				nil,
 				map[string]string{
 					kubeconfigFileName:       string(kubeconfigBytes),
@@ -251,6 +312,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(ctx context.Context, 
 func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	deleteResource bool,
 ) (string, error) {
 	return tracing.WithSpan(ctx, kr.Tracer, "ReconcileKubeProxyDaemonSet",
 		func(ctx context.Context, span trace.Span) (string, error) {
@@ -306,8 +368,9 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 
 			_, ready, err := kr.ReconcileDaemonSet(
 				ctx,
-				konstants.KubeProxy,
 				kr.kubeProxyNamespace,
+				konstants.KubeProxy,
+				deleteResource,
 				reconcilers.PodOptions{
 					ServiceAccountName: kr.kubeProxyServiceAccount,
 					PriorityClassName:  "system-node-critical",

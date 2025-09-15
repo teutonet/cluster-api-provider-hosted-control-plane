@@ -9,8 +9,8 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
-	"sigs.k8s.io/cluster-api/controlplane/kubeadm/api/v1beta1"
+	"sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
@@ -23,8 +23,8 @@ func NewScheme() (*runtime.Scheme, error) {
 		networkingv1.AddToScheme,
 		appsv1.AddToScheme,
 		policyv1.AddToScheme,
-		capiv1.AddToScheme,
-		v1beta1.AddToScheme,
+		capiv2.AddToScheme,
+		v1beta2.AddToScheme,
 		v1alpha1.AddToScheme,
 		certmanagerv1.AddToScheme,
 		gwv1.Install,

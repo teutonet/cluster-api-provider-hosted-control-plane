@@ -6,6 +6,7 @@ import (
 	"path"
 	"strconv"
 
+	"github.com/go-logr/logr"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
@@ -21,14 +22,14 @@ import (
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
 	"k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 type KonnectivityReconciler interface {
 	ReconcileKonnectivity(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
-		cluster *capiv1.Cluster,
+		cluster *capiv2.Cluster,
 	) (string, error)
 }
 
@@ -66,7 +67,7 @@ var _ KonnectivityReconciler = &konnectivityReconciler{}
 func (kr *konnectivityReconciler) ReconcileKonnectivity(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) (string, error) {
 	return tracing.WithSpan(ctx, kr.Tracer, "ReconcileKonnectivity",
 		func(ctx context.Context, span trace.Span) (string, error) {
@@ -86,8 +87,17 @@ func (kr *konnectivityReconciler) ReconcileKonnectivity(
 				},
 			}
 
+			logger := logr.FromContextAsSlogLogger(ctx)
 			for _, phase := range phases {
-				if notReadyReason, err := phase.Reconcile(ctx); err != nil {
+				notReadyReason, err := tracing.WithSpan(
+					ctx,
+					kr.Tracer,
+					phase.Name,
+					func(ctx context.Context, _ trace.Span) (string, error) {
+						return phase.Reconcile(logr.NewContextWithSlogLogger(ctx, logger.With("phase", phase.Name)))
+					},
+				)
+				if err != nil {
 					return "", fmt.Errorf("failed to reconcile konnectivity phase %s: %w", phase.Name, err)
 				} else if notReadyReason != "" {
 					return notReadyReason, nil
@@ -157,7 +167,7 @@ func (kr *konnectivityReconciler) reconcileKonnectivityRBAC(ctx context.Context)
 func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) (string, error) {
 	return tracing.WithSpan(ctx, kr.Tracer, "reconcileKonnectivityDaemonSet",
 		func(ctx context.Context, span trace.Span) (string, error) {
@@ -194,6 +204,7 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 					fmt.Sprintf("registry.k8s.io/kas-network-proxy/proxy-agent:v0.%d.0", minorVersion),
 				).
 				WithArgs(kr.buildKonnectivityClientArgs(
+					ctx,
 					hostedControlPlane,
 					cluster,
 					serviceAccountTokenVolumeMount,
@@ -219,8 +230,9 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 
 			_, ready, err := kr.ReconcileDaemonSet(
 				ctx,
-				"konnectivity-agent",
 				kr.konnectivityNamespace,
+				"konnectivity-agent",
+				false,
 				reconcilers.PodOptions{
 					ServiceAccountName: kr.konnectivityServiceAccountName,
 					PriorityClassName:  "system-node-critical",
@@ -251,8 +263,9 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 }
 
 func (kr *konnectivityReconciler) buildKonnectivityClientArgs(
+	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	serviceAccountTokenVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	healthPort *corev1ac.ContainerPortApplyConfiguration,
 ) []string {
@@ -269,5 +282,9 @@ func (kr *konnectivityReconciler) buildKonnectivityClientArgs(
 			kr.konnectivityServiceAccountTokenName,
 		),
 	}
-	return operatorutil.ArgsToSlice(hostedControlPlane.Spec.KonnectivityClient.Args, args)
+	return operatorutil.ArgsToSliceWithObservability(
+		ctx,
+		hostedControlPlane.Spec.KonnectivityClient.Args,
+		args,
+	)
 }

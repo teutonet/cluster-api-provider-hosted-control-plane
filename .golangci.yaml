@@ -175,10 +175,8 @@ linters:
           alias: ctrl
 
         # CAPI
-        - pkg: sigs.k8s.io/cluster-api/api/v1beta1
-          alias: capiv1
-        - pkg: sigs.k8s.io/cluster-api/exp/addons/api/v1beta
-          alias: addonsv1
+        - pkg: sigs.k8s.io/cluster-api/api/core/v1beta2
+          alias: capiv2
         - pkg: sigs.k8s.io/cluster-api/util/secret
           alias: capisecretutil
 
@@ -306,6 +304,8 @@ linters:
       - linters:
           - err113
           - varnamelen
+          - funlen
+          - nestif
         path: _test\.go
       # Append should be able to assign to a different var/slice.
       #- linters:

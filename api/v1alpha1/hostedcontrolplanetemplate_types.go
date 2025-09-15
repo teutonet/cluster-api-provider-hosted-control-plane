@@ -9,7 +9,7 @@ import (
 //+kubebuilder:storageversion
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="Time duration since creation of HostedControlPlaneTemplate"
 //+kubebuilder:metadata:annotations={"cert-manager.io/inject-ca-from=system/controller-manager-serving-certificate"}
-//+kubebuilder:metadata:labels={"cluster.x-k8s.io/provider=control-plane-hosted-control-plane","cluster.x-k8s.io/v1beta1=v1alpha1"}
+//+kubebuilder:metadata:labels={"cluster.x-k8s.io/provider=control-plane-hosted-control-plane","cluster.x-k8s.io/v1beta2=v1alpha1"}
 
 type HostedControlPlaneTemplate struct {
 	metav1.TypeMeta `json:",inline"`

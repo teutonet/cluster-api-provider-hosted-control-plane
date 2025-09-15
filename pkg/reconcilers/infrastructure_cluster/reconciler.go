@@ -13,7 +13,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/controllers/external"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -23,7 +24,7 @@ type InfrastructureClusterReconciler interface {
 	SyncControlPlaneEndpoint(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
-		cluster *capiv1.Cluster,
+		cluster *capiv2.Cluster,
 	) (string, error)
 }
 
@@ -50,11 +51,12 @@ var errGatewayMissingListener = errors.New("gateway is missing a TLS listener wi
 
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=*,verbs=get;patch
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=get
+//+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get
 
 func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) (string, error) {
 	return tracing.WithSpan(ctx, i.tracer, "SyncControlPlaneEndpoint",
 		func(ctx context.Context, span trace.Span) (string, error) {
@@ -84,18 +86,19 @@ func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 				)
 			}
 
-			endpoint := capiv1.APIEndpoint{
+			endpoint := capiv2.APIEndpoint{
 				Host: fmt.Sprintf("%s.%s.%s",
 					cluster.Name, cluster.Namespace, strings.TrimPrefix(string(*listener.Hostname), "*."),
 				),
 				Port: i.apiServerServicePort,
 			}
 
-			infraCluster := &unstructured.Unstructured{}
-
-			infraCluster.SetGroupVersionKind(cluster.Spec.InfrastructureRef.GroupVersionKind())
-			infraCluster.SetName(cluster.Spec.InfrastructureRef.Name)
-			infraCluster.SetNamespace(cluster.Spec.InfrastructureRef.Namespace)
+			infraCluster, err := external.GetObjectFromContractVersionedRef(
+				ctx, i.client, cluster.Spec.InfrastructureRef, cluster.Namespace,
+			)
+			if err != nil {
+				return "", fmt.Errorf("failed to get infrastructure cluster reference: %w", err)
+			}
 
 			if err := i.client.Get(ctx, client.ObjectKeyFromObject(infraCluster), infraCluster); err != nil {
 				return "", fmt.Errorf("failed to get infrastructure cluster: %w", err)

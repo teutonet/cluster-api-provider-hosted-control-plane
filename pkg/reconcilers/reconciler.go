@@ -69,6 +69,7 @@ func reconcileWorkload[RA any, RSA any, R any](
 	kind string,
 	namespace string,
 	name string,
+	deleteResource bool,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
 	ingressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
@@ -94,6 +95,7 @@ func reconcileWorkload[RA any, RSA any, R any](
 		kubernetesClient,
 		namespace,
 		name,
+		deleteResource,
 		ownerReference,
 		labels,
 		ingressPortLabels,
@@ -102,6 +104,16 @@ func reconcileWorkload[RA any, RSA any, R any](
 		return nil, false, fmt.Errorf("failed to reconcile network policy for %s %s/%s: %w",
 			kind, namespace, name, err,
 		)
+	}
+
+	if deleteResource {
+		if err := client.Delete(
+			ctx,
+			name,
+			metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
+		); err != nil && !apierrors.IsNotFound(err) {
+			return nil, false, fmt.Errorf("failed to delete %s %s: %w", kind, name, err)
+		}
 	}
 
 	labelSelector := metav1ac.LabelSelector().WithMatchLabels(labels)
@@ -176,6 +188,7 @@ func reconcileDeployment(
 	kubernetesClient kubernetes.Interface,
 	namespace string,
 	name string,
+	deleteResource bool,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
 	ingressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
@@ -190,6 +203,7 @@ func reconcileDeployment(
 		"Deployment",
 		namespace,
 		name,
+		deleteResource,
 		ownerReference,
 		labels,
 		ingressPortLabels,
@@ -222,6 +236,7 @@ func reconcileDeployment(
 		kubernetesClient,
 		namespace,
 		name,
+		deleteResource,
 		ownerReference,
 		labels,
 		slices.Ternary(replicas > 2, int32(1), int32(0)),
@@ -242,6 +257,7 @@ func reconcileNetworkPolicy(
 	kubernetesClient kubernetes.Interface,
 	namespace string,
 	name string,
+	deleteResource bool,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
 	ingressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
@@ -249,7 +265,7 @@ func reconcileNetworkPolicy(
 ) error {
 	networkPolicyInterface := kubernetesClient.NetworkingV1().NetworkPolicies(namespace)
 
-	if ingressPortLabels == nil && egressPortLabels == nil {
+	if deleteResource || ingressPortLabels == nil && egressPortLabels == nil {
 		if err := networkPolicyInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil &&
 			!apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete network policy %s/%s: %w", namespace, name, err)
@@ -357,13 +373,15 @@ func reconcilePodDisruptionBudget(
 	kubernetesClient kubernetes.Interface,
 	namespace string,
 	name string,
+	deleteResource bool,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
 	minAvailable int32,
 	maxUnavailable int32,
 ) error {
-	if minAvailable == 0 && maxUnavailable == 0 {
-		if err := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace).
+	podDisruptionBudgetInterface := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace)
+	if deleteResource || minAvailable == 0 && maxUnavailable == 0 {
+		if err := podDisruptionBudgetInterface.
 			Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete pod disruption budget %s/%s: %w", namespace, name, err)
 		}
@@ -394,7 +412,7 @@ func reconcilePodDisruptionBudget(
 			WithOwnerReferences(ownerReference)
 	}
 
-	_, err := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace).
+	_, err := podDisruptionBudgetInterface.
 		Apply(
 			ctx,
 			podDisruptionBudgetApplyConfiguration,
@@ -504,6 +522,7 @@ func reconcileConfigmap(
 	kubernetesClient kubernetes.Interface,
 	namespace string,
 	name string,
+	deleteResource bool,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
 	data map[string]string,
@@ -512,12 +531,21 @@ func reconcileConfigmap(
 		WithLabels(labels).
 		WithData(data)
 
+	configMapInterface := kubernetesClient.CoreV1().ConfigMaps(namespace)
+	if deleteResource {
+		err := configMapInterface.
+			Delete(ctx, name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete configmap %s/%s: %w", namespace, name, err)
+		}
+		return nil
+	}
 	if ownerReference != nil {
 		configMapApplyConfiguration = configMapApplyConfiguration.
 			WithOwnerReferences(ownerReference)
 	}
 
-	_, err := kubernetesClient.CoreV1().ConfigMaps(namespace).
+	_, err := configMapInterface.
 		Apply(
 			ctx,
 			configMapApplyConfiguration,
@@ -566,6 +594,7 @@ func reconcileStatefulset(
 	kubernetesClient kubernetes.Interface,
 	namespace string,
 	name string,
+	deleteResource bool,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	serviceName string,
 	podManagementPolicy appsv1.PodManagementPolicyType,
@@ -624,6 +653,7 @@ func reconcileStatefulset(
 		"StatefulSet",
 		namespace,
 		name,
+		deleteResource,
 		ownerReference,
 		selectorLabels,
 		ingressPortLabels,
@@ -673,6 +703,7 @@ func reconcileStatefulset(
 		kubernetesClient,
 		namespace,
 		name,
+		deleteResource,
 		ownerReference,
 		labels,
 		0,

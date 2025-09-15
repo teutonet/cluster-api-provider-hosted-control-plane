@@ -13,7 +13,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
@@ -26,7 +26,7 @@ type KubeconfigReconciler interface {
 	ReconcileKubeconfigs(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
-		cluster *capiv1.Cluster,
+		cluster *capiv2.Cluster,
 	) error
 }
 
@@ -61,13 +61,13 @@ type kubeconfigConfig struct {
 	SecretName            string
 	CertificateSecretName string
 	ClusterName           string
-	ApiServerEndpoint     capiv1.APIEndpoint
+	ApiServerEndpoint     capiv2.APIEndpoint
 }
 
 func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeconfigs",
 		func(ctx context.Context, span trace.Span) error {
@@ -75,16 +75,16 @@ func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 				attribute.String("konnectivity.client.kubeconfig.name", kr.konnectivityClientKubeconfigName),
 				attribute.String("controller.kubeconfig.name", kr.controllerKubeconfigName),
 			)
-			localEndpoint := capiv1.APIEndpoint{
+			localEndpoint := capiv2.APIEndpoint{
 				Host: "localhost",
 				Port: 6443,
 			}
 			controlPlaneName := hostedControlPlane.Name
-			clusterInternalServiceEndpoint := capiv1.APIEndpoint{
+			clusterInternalServiceEndpoint := capiv2.APIEndpoint{
 				Host: names.GetInternalServiceHost(cluster),
 				Port: kr.apiServerServicePort,
 			}
-			internalServiceEndpoint := capiv1.APIEndpoint{
+			internalServiceEndpoint := capiv2.APIEndpoint{
 				Host: names.GetServiceName(cluster),
 				Port: kr.apiServerServicePort,
 			}
@@ -141,7 +141,7 @@ func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 func (kr *kubeconfigReconciler) reconcileKubeconfig(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	kubeconfigConfig kubeconfigConfig,
 ) error {
 	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeconfig",
@@ -182,8 +182,8 @@ func (kr *kubeconfigReconciler) reconcileKubeconfig(
 
 func (kr *kubeconfigReconciler) generateKubeconfig(
 	ctx context.Context,
-	cluster *capiv1.Cluster,
-	apiEndpoint capiv1.APIEndpoint,
+	cluster *capiv2.Cluster,
+	apiEndpoint capiv2.APIEndpoint,
 	userName string,
 	kubeconfiCertificateSecretName string,
 ) (*api.Config, error) {

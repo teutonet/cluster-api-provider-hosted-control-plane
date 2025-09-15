@@ -40,7 +40,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 var errETCDCAFailedToAppend = errors.New("failed to append etcd CA certificate")
@@ -49,7 +49,7 @@ type EtcdClusterReconciler interface {
 	ReconcileEtcdCluster(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
-		cluster *capiv1.Cluster,
+		cluster *capiv2.Cluster,
 	) (string, error)
 }
 
@@ -99,7 +99,7 @@ var _ EtcdClusterReconciler = &etcdClusterReconciler{}
 func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) (string, error) {
 	return tracing.WithSpan(ctx, er.Tracer, "ReconcileEtcdCluster",
 		func(ctx context.Context, span trace.Span) (string, error) {
@@ -179,7 +179,7 @@ func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 func (er *etcdClusterReconciler) reconcilePVCSizes(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, er.Tracer, "ReconcilePVCSizes",
 		func(ctx context.Context, span trace.Span) error {
@@ -260,7 +260,7 @@ func (er *etcdClusterReconciler) getETCDVolumeSize(hostedControlPlane *v1alpha1.
 func (er *etcdClusterReconciler) reconcileETCDBackup(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, er.Tracer, "ReconcileETCDBackup",
 		func(ctx context.Context, span trace.Span) error {
@@ -314,7 +314,7 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 func (er *etcdClusterReconciler) reconcileETCDSpaceUsage(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, er.Tracer, "ReconcileETCDSpaceUsage",
 		func(ctx context.Context, span trace.Span) (err error) {
@@ -356,7 +356,7 @@ func callETCDFuncOnAllMembers[R any](
 	ctx context.Context,
 	kubernetesClient kubernetes.Interface,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	etcdServerPort int32,
 	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (*R, error),
 ) (map[string]*R, error) {
@@ -386,7 +386,7 @@ func getETCDConnectionTLS(
 	ctx context.Context,
 	kubernetesClient kubernetes.Interface,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) (*x509.CertPool, tls.Certificate, error) {
 	return tracing.WithSpan3(ctx, "EtcdCluster", "GetETCDConnectionTLS",
 		func(ctx context.Context, span trace.Span) (*x509.CertPool, tls.Certificate, error) {
@@ -470,7 +470,7 @@ func callETCDFuncOnAnyMember[R any](
 	ctx context.Context,
 	kubernetesClient kubernetes.Interface,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	etcdServerPort int32,
 	etcdFunc func(client clientv3.Client, ctx context.Context) (R, error),
 ) (R, error) {
@@ -500,7 +500,7 @@ func callETCDFuncOnAnyMember[R any](
 func (er *etcdClusterReconciler) reconcileService(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	name string,
 	headless bool,
 	serverPort *corev1ac.ContainerPortApplyConfiguration,
@@ -554,7 +554,7 @@ func (er *etcdClusterReconciler) reconcileService(
 func (er *etcdClusterReconciler) reconcileStatefulSet(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	serverPort *corev1ac.ContainerPortApplyConfiguration,
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 	metricsPort *corev1ac.ContainerPortApplyConfiguration,
@@ -633,7 +633,7 @@ func (er *etcdClusterReconciler) reconcileStatefulSet(
 func (er *etcdClusterReconciler) etcdIsHealthy(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) error {
 	alarmResponse, err := callETCDFuncOnAnyMember(
 		ctx,
@@ -711,7 +711,7 @@ func (er *etcdClusterReconciler) createEtcdDataVolumeClaimTemplate(
 }
 
 func (er *etcdClusterReconciler) createEtcdCertificatesVolume(
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
 		WithName("etcd-certificates").
@@ -753,7 +753,7 @@ func (er *etcdClusterReconciler) createEtcdCertificatesVolume(
 
 func (er *etcdClusterReconciler) createEtcdContainer(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	etcdDataVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	etcdCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	serverPort *corev1ac.ContainerPortApplyConfiguration,
@@ -797,7 +797,7 @@ func (er *etcdClusterReconciler) createEtcdContainer(
 
 func (er *etcdClusterReconciler) buildEtcdArgs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	etcdDataVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	etcdCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	serverPort *corev1ac.ContainerPortApplyConfiguration,
@@ -842,7 +842,7 @@ func (er *etcdClusterReconciler) buildEtcdArgs(
 }
 
 func (er *etcdClusterReconciler) buildInitialCluster(
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	peerPort *corev1ac.ContainerPortApplyConfiguration,
 ) string {
 	entries := slices.MapToSlice(names.GetEtcdDNSNames(cluster),

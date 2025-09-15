@@ -22,19 +22,19 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 type CertificateReconciler interface {
 	ReconcileCACertificates(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
-		cluster *capiv1.Cluster,
+		cluster *capiv2.Cluster,
 	) (string, error)
 	ReconcileCertificates(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
-		cluster *capiv1.Cluster,
+		cluster *capiv2.Cluster,
 	) (string, error)
 }
 
@@ -78,7 +78,7 @@ type certificateSpec struct {
 func (cr *certificateReconciler) ReconcileCACertificates(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) (string, error) {
 	return tracing.WithSpan(ctx, cr.tracer, "ReconcileCACertificates",
 		func(ctx context.Context, span trace.Span) (string, error) {
@@ -208,7 +208,7 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 
 func (cr *certificateReconciler) createIssuer(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	name string,
 	issuerSecretName string,
 ) *certmanagerv1ac.IssuerApplyConfiguration {
@@ -257,7 +257,7 @@ func (cr *certificateReconciler) createCertificateSpec(
 
 func (cr *certificateReconciler) createCertificateSpecs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) []certificateSpec {
 	createCertificateSpec := func(
 		caIssuerName string,
@@ -426,7 +426,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 func (cr *certificateReconciler) ReconcileCertificates(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) (string, error) {
 	return tracing.WithSpan(ctx, cr.tracer, "ReconcileCertificates",
 		func(ctx context.Context, span trace.Span) (string, error) {
@@ -460,7 +460,7 @@ func (cr *certificateReconciler) ReconcileCertificates(
 func (cr *certificateReconciler) reconcileCertificate(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	name string,
 	spec *certmanagerv1ac.CertificateSpecApplyConfiguration,
 ) (*certmanagerv1.Certificate, bool, error) {

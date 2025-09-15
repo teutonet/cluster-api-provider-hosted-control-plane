@@ -8,7 +8,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/paused"
 )
@@ -29,7 +28,7 @@ import (
 //+kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
 //+kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 //+kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.replicas,selectorpath=.status.selector
-//+kubebuilder:metadata:labels={"cluster.x-k8s.io/provider=control-plane-hosted-control-plane","cluster.x-k8s.io/v1beta1=v1alpha1"}
+//+kubebuilder:metadata:labels={"cluster.x-k8s.io/provider=control-plane-hosted-control-plane","cluster.x-k8s.io/v1beta2=v1alpha1"}
 
 type HostedControlPlane struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -153,7 +152,7 @@ type HostedControlPlaneMount struct {
 
 type HostedControlPlaneStatus struct {
 	//+kubebuilder:validation:Optional
-	Conditions capiv1.Conditions `json:"conditions,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	//+kubebuilder:validation:Optional
 	LegacyIP string `json:"legacyIP,omitempty"`
 	//+kubebuilder:validation:Optional
@@ -190,16 +189,6 @@ type HostedControlPlaneStatus struct {
 	Version string `json:"version,omitempty"`
 	// +kubebuilder:default=true
 	ExternalManagedControlPlane *bool `json:"externalManagedControlPlane"`
-
-	// Compatibility with upstream CAPI v1beta2 fields
-	//+kubebuilder:validation:Optional
-	V1Beta2 *HostedControlPlaneV1Beta2Status `json:"v1beta2,omitempty"`
-}
-
-type HostedControlPlaneV1Beta2Status struct {
-	//+kubebuilder:validation:MaxItems=32
-	//+kubebuilder:validation:Optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -210,24 +199,10 @@ type HostedControlPlaneList struct {
 	Items           []HostedControlPlane `json:"items"`
 }
 
-func (c *HostedControlPlane) GetConditions() capiv1.Conditions {
+func (c *HostedControlPlane) GetConditions() []metav1.Condition {
 	return c.Status.Conditions
 }
 
-func (c *HostedControlPlane) SetConditions(conditions capiv1.Conditions) {
+func (c *HostedControlPlane) SetConditions(conditions []metav1.Condition) {
 	c.Status.Conditions = conditions
-}
-
-func (c *HostedControlPlane) GetV1Beta2Conditions() []metav1.Condition {
-	if c.Status.V1Beta2 == nil {
-		return nil
-	}
-	return c.Status.V1Beta2.Conditions
-}
-
-func (c *HostedControlPlane) SetV1Beta2Conditions(conditions []metav1.Condition) {
-	if c.Status.V1Beta2 == nil {
-		c.Status.V1Beta2 = &HostedControlPlaneV1Beta2Status{}
-	}
-	c.Status.V1Beta2.Conditions = conditions
 }

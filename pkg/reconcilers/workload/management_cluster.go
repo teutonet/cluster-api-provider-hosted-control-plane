@@ -14,12 +14,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 )
 
 type ManagementCluster interface {
-	GetWorkloadClusterClient(ctx context.Context, cluster *capiv1.Cluster) (*alias.WorkloadClusterClient, error)
+	GetWorkloadClusterClient(ctx context.Context, cluster *capiv2.Cluster) (*alias.WorkloadClusterClient, error)
 }
 
 func NewManagementCluster(
@@ -46,10 +46,10 @@ var _ ManagementCluster = &management{}
 
 func (m *management) GetWorkloadClusterClient(
 	ctx context.Context,
-	cluster *capiv1.Cluster,
-) (*kubernetes.Clientset, error) {
+	cluster *capiv2.Cluster,
+) (*alias.WorkloadClusterClient, error) {
 	return tracing.WithSpan(ctx, "managementCluster", "GetWorkloadClusterClient",
-		func(ctx context.Context, span trace.Span) (*kubernetes.Clientset, error) {
+		func(ctx context.Context, span trace.Span) (*alias.WorkloadClusterClient, error) {
 			span.SetAttributes(
 				attribute.String(
 					"kubeconfig.secret.name",

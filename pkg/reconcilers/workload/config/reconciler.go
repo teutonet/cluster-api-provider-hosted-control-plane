@@ -26,19 +26,19 @@ import (
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/config"
 	kubeletv1beta1 "k8s.io/kubernetes/pkg/kubelet/apis/config/v1beta1"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 type ConfigReconciler interface {
 	ReconcileClusterInfoConfigMap(
 		ctx context.Context,
 		managementClient kubernetes.Interface,
-		cluster *capiv1.Cluster,
+		cluster *capiv2.Cluster,
 	) error
 	ReconcileKubeadmConfig(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
-		cluster *capiv1.Cluster,
+		cluster *capiv2.Cluster,
 	) error
 	ReconcileKubeletConfig(
 		ctx context.Context,
@@ -101,7 +101,7 @@ var _ ConfigReconciler = &configReconciler{}
 func (cr *configReconciler) ReconcileClusterInfoConfigMap(
 	ctx context.Context,
 	managementClient kubernetes.Interface,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, cr.Tracer, "ReconcileClusterInfoConfigMap",
 		func(ctx context.Context, span trace.Span) error {
@@ -127,6 +127,7 @@ func (cr *configReconciler) ReconcileClusterInfoConfigMap(
 				ctx,
 				cr.clusterInfoConfigMapNamespace,
 				cr.clusterInfoConfigMapName,
+				false,
 				nil,
 				map[string]string{
 					bootstrapapi.KubeConfigKey: string(kubeconfigBytes),
@@ -139,7 +140,7 @@ func (cr *configReconciler) ReconcileClusterInfoConfigMap(
 func (cr *configReconciler) ReconcileKubeadmConfig(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, cr.Tracer, "reconcileKubeadmConfig",
 		func(ctx context.Context, span trace.Span) error {
@@ -168,6 +169,7 @@ func (cr *configReconciler) ReconcileKubeadmConfig(
 				ctx,
 				cr.kubeadmConfigConfigMapNamespace,
 				cr.kubeadmConfigConfigMapName,
+				false,
 				nil,
 				map[string]string{
 					konstants.ClusterConfigurationKind: string(clusterConfiguration),
@@ -206,6 +208,7 @@ func (cr *configReconciler) ReconcileKubeletConfig(
 				ctx,
 				cr.kubeletConfigMapNamespace,
 				cr.kubeletConfigMapName,
+				false,
 				nil,
 				map[string]string{
 					konstants.KubeletBaseConfigurationConfigMapKey: content.String(),

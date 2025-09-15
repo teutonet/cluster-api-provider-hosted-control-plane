@@ -18,7 +18,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/conditions"
 )
 
@@ -26,7 +26,7 @@ type WorkloadClusterReconciler interface {
 	ReconcileWorkloadClusterResources(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
-		cluster *capiv1.Cluster,
+		cluster *capiv2.Cluster,
 	) (string, error)
 }
 
@@ -96,14 +96,13 @@ var _ WorkloadClusterReconciler = &workloadClusterReconciler{}
 func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) (string, error) {
 	return tracing.WithSpan(ctx, wr.tracer, "ReconcileWorkloadSetup",
 		func(ctx context.Context, span trace.Span) (string, error) {
 			type WorkloadPhase struct {
-				Reconcile    func(context.Context, *capiv1.Cluster) (string, error)
-				Disabled     bool
-				Condition    capiv1.ConditionType
+				Reconcile    func(context.Context, *capiv2.Cluster) (string, error)
+				Condition    capiv2.ConditionType
 				FailedReason string
 				Name         string
 			}
@@ -160,7 +159,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 			workloadPhases := []WorkloadPhase{
 				{
 					Name: "RBAC",
-					Reconcile: func(ctx context.Context, _ *capiv1.Cluster) (string, error) {
+					Reconcile: func(ctx context.Context, _ *capiv2.Cluster) (string, error) {
 						return rbacReconciler.ReconcileRBAC(ctx)
 					},
 					Condition:    v1alpha1.WorkloadRBACReadyCondition,
@@ -168,7 +167,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				},
 				{
 					Name: "cluster-info",
-					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) (string, error) {
+					Reconcile: func(ctx context.Context, cluster *capiv2.Cluster) (string, error) {
 						return "", configReconciler.ReconcileClusterInfoConfigMap(
 							ctx,
 							wr.kubernetesClient,
@@ -180,7 +179,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				},
 				{
 					Name: "kubeadm-config",
-					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) (string, error) {
+					Reconcile: func(ctx context.Context, cluster *capiv2.Cluster) (string, error) {
 						return "", configReconciler.ReconcileKubeadmConfig(ctx, hostedControlPlane, cluster)
 					},
 					Condition:    v1alpha1.WorkloadKubeadmConfigReadyCondition,
@@ -188,24 +187,27 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				},
 				{
 					Name: "kubelet-config",
-					Reconcile: func(ctx context.Context, _ *capiv1.Cluster) (string, error) {
+					Reconcile: func(ctx context.Context, _ *capiv2.Cluster) (string, error) {
 						return "", configReconciler.ReconcileKubeletConfig(ctx)
 					},
 					Condition:    v1alpha1.WorkloadKubeletConfigReadyCondition,
 					FailedReason: v1alpha1.WorkloadKubeletConfigFailedReason,
 				},
 				{
-					Name:     "kube-proxy",
-					Disabled: hostedControlPlane.Spec.KubeProxy.Disabled,
-					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) (string, error) {
-						return kubeProxyReconciler.ReconcileKubeProxy(ctx, hostedControlPlane, cluster)
+					Name: "kube-proxy",
+					Reconcile: func(ctx context.Context, cluster *capiv2.Cluster) (string, error) {
+						return kubeProxyReconciler.ReconcileKubeProxy(
+							ctx,
+							hostedControlPlane, cluster,
+							hostedControlPlane.Spec.KubeProxy.Disabled,
+						)
 					},
 					Condition:    v1alpha1.WorkloadKubeProxyReadyCondition,
 					FailedReason: v1alpha1.WorkloadKubeProxyFailedReason,
 				},
 				{
 					Name: "coredns",
-					Reconcile: func(ctx context.Context, _ *capiv1.Cluster) (string, error) {
+					Reconcile: func(ctx context.Context, _ *capiv2.Cluster) (string, error) {
 						return coreDNSReconciler.ReconcileCoreDNS(ctx)
 					},
 					Condition:    v1alpha1.WorkloadCoreDNSReadyCondition,
@@ -213,7 +215,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				},
 				{
 					Name: "konnectivity",
-					Reconcile: func(ctx context.Context, cluster *capiv1.Cluster) (string, error) {
+					Reconcile: func(ctx context.Context, cluster *capiv2.Cluster) (string, error) {
 						return konnectivityReconciler.ReconcileKonnectivity(ctx, hostedControlPlane, cluster)
 					},
 					Condition:    v1alpha1.WorkloadKonnectivityReadyCondition,
@@ -222,28 +224,29 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 			}
 
 			for _, phase := range workloadPhases {
-				if !phase.Disabled {
-					if notReadyReason, err := phase.Reconcile(ctx, cluster); err != nil {
-						conditions.MarkFalse(
-							hostedControlPlane,
-							phase.Condition,
-							phase.FailedReason,
-							capiv1.ConditionSeverityError,
-							"Reconciling workload phase %s failed: %v", phase.Name, err,
-						)
-						return "", err
-					} else if notReadyReason != "" {
-						conditions.MarkFalse(
-							hostedControlPlane,
-							phase.Condition,
-							notReadyReason,
-							capiv1.ConditionSeverityInfo,
-							"Reconciling workload phase %s not ready: %s", phase.Name, notReadyReason,
-						)
-						return notReadyReason, nil
-					} else {
-						conditions.MarkTrue(hostedControlPlane, phase.Condition)
-					}
+				switch notReadyReason, err := phase.Reconcile(ctx, cluster); {
+				case err != nil:
+					conditions.Set(hostedControlPlane, metav1.Condition{
+						Type:    string(phase.Condition),
+						Status:  metav1.ConditionFalse,
+						Reason:  phase.FailedReason,
+						Message: fmt.Sprintf("Reconciling workload phase %s failed: %v", phase.Name, err),
+					})
+					return "", err
+				case notReadyReason != "":
+					conditions.Set(hostedControlPlane, metav1.Condition{
+						Type:    string(phase.Condition),
+						Status:  metav1.ConditionFalse,
+						Reason:  notReadyReason,
+						Message: fmt.Sprintf("Reconciling workload phase %s not ready: %s", phase.Name, notReadyReason),
+					})
+					return notReadyReason, nil
+				default:
+					conditions.Set(hostedControlPlane, metav1.Condition{
+						Type:   string(phase.Condition),
+						Status: metav1.ConditionTrue,
+						Reason: "ReconcileSucceeded",
+					})
 				}
 			}
 

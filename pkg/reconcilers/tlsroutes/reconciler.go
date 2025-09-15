@@ -11,7 +11,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	capiv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 	gwv1ac "sigs.k8s.io/gateway-api/applyconfiguration/apis/v1"
@@ -23,7 +23,7 @@ type TLSRoutesReconciler interface {
 	ReconcileTLSRoutes(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
-		cluster *capiv1.Cluster,
+		cluster *capiv2.Cluster,
 	) (string, error)
 }
 
@@ -54,7 +54,7 @@ var _ TLSRoutesReconciler = &tlsRoutesReconciler{}
 func (trr *tlsRoutesReconciler) ReconcileTLSRoutes(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 ) (string, error) {
 	return tracing.WithSpan(ctx, trr.tracer, "ReconcileTLSRoutes",
 		func(ctx context.Context, span trace.Span) (string, error) {
@@ -95,7 +95,7 @@ func (trr *tlsRoutesReconciler) ReconcileTLSRoutes(
 
 func (trr *tlsRoutesReconciler) createTLSRoute(
 	name string,
-	cluster *capiv1.Cluster,
+	cluster *capiv2.Cluster,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	host string,
 	port int32,

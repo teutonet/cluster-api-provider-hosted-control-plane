@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/go-logr/logr"
+
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
@@ -102,112 +104,136 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 				},
 			}
 
+			logger := logr.FromContextAsSlogLogger(ctx)
 			for _, phase := range phases {
-				var notReadyReasons []string
-				resources, err := phase.Generate()
+				notReadyReasons, err := tracing.WithSpan(
+					ctx,
+					rr.tracer,
+					phase.Name,
+					func(ctx context.Context, _ trace.Span) ([]string, error) {
+						ctx = logr.NewContextWithSlogLogger(ctx, logger.With("phase", phase.Name))
+						var notReadyReasons []string
+						resources, err := phase.Generate()
+						if err != nil {
+							return nil, fmt.Errorf("failed to generate %s: %w", phase.Name, err)
+						}
+						for _, clusterRole := range resources.ClusterRoles {
+							clusterRoleInterface := rr.kubernetesClient.RbacV1().ClusterRoles()
+							_, err := clusterRoleInterface.
+								Apply(ctx, clusterRole, operatorutil.ApplyOptions)
+							if err != nil {
+								if !apierrors.IsInvalid(err) {
+									return nil, fmt.Errorf(
+										"failed to apply cluster role %s: %w",
+										*clusterRole.Name,
+										err,
+									)
+								}
+								if err := clusterRoleInterface.
+									Delete(ctx, *clusterRole.Name, metav1.DeleteOptions{}); err != nil {
+									return nil, fmt.Errorf(
+										"failed to delete invalid cluster role %s: %w",
+										*clusterRole.Name, err,
+									)
+								}
+								notReadyReasons = append(
+									notReadyReasons,
+									fmt.Sprintf("cluster role %s needs to be recreated", *clusterRole.Name),
+								)
+							}
+						}
+
+						for _, clusterRoleBinding := range resources.ClusterRoleBindings {
+							clusterRoleBindingInterface := rr.kubernetesClient.RbacV1().ClusterRoleBindings()
+							_, err := clusterRoleBindingInterface.
+								Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
+							if err != nil {
+								if !apierrors.IsInvalid(err) {
+									return nil, fmt.Errorf(
+										"failed to apply cluster role binding %s: %w", *clusterRoleBinding.Name, err,
+									)
+								}
+								if err := clusterRoleBindingInterface.
+									Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{}); err != nil {
+									return nil, fmt.Errorf(
+										"failed to delete invalid cluster role binding %s: %w",
+										*clusterRoleBinding.Name, err,
+									)
+								}
+								notReadyReasons = append(
+									notReadyReasons,
+									fmt.Sprintf(
+										"cluster role binding %s needs to be recreated",
+										*clusterRoleBinding.Name,
+									),
+								)
+							}
+						}
+
+						for _, role := range resources.Roles {
+							roleInterface := rr.kubernetesClient.RbacV1().Roles(*role.Namespace)
+							_, err := roleInterface.
+								Apply(ctx, role, operatorutil.ApplyOptions)
+							if err != nil {
+								if !apierrors.IsInvalid(err) {
+									return nil, fmt.Errorf(
+										"failed to apply role %s in namespace %s: %w",
+										*role.Name, *role.Namespace, err,
+									)
+								}
+								if err := roleInterface.
+									Delete(ctx, *role.Name, metav1.DeleteOptions{}); err != nil {
+									return nil, fmt.Errorf(
+										"failed to delete invalid role %s in namespace %s: %w",
+										*role.Name, *role.Namespace, err,
+									)
+								}
+								notReadyReasons = append(
+									notReadyReasons,
+									fmt.Sprintf(
+										"role %s in namespace %s needs to be recreated",
+										*role.Name,
+										*role.Namespace,
+									),
+								)
+							}
+						}
+
+						for _, roleBinding := range resources.RoleBindings {
+							roleBindingInterface := rr.kubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace)
+							_, err := roleBindingInterface.
+								Apply(ctx, roleBinding, operatorutil.ApplyOptions)
+							if err != nil {
+								if !apierrors.IsInvalid(err) {
+									return nil, fmt.Errorf(
+										"failed to apply role binding %s in namespace %s: %w",
+										*roleBinding.Name, *roleBinding.Namespace, err,
+									)
+								}
+								if err := roleBindingInterface.
+									Delete(ctx, *roleBinding.Name, metav1.DeleteOptions{}); err != nil {
+									return nil, fmt.Errorf(
+										"failed to delete invalid role binding %s in namespace %s: %w",
+										*roleBinding.Name, *roleBinding.Namespace, err,
+									)
+								}
+								notReadyReasons = append(
+									notReadyReasons,
+									fmt.Sprintf(
+										"role binding %s in namespace %s needs to be recreated",
+										*roleBinding.Name,
+										*roleBinding.Namespace,
+									),
+								)
+							}
+						}
+
+						return notReadyReasons, nil
+					},
+				)
 				if err != nil {
-					return "", fmt.Errorf("failed to generate %s: %w", phase.Name, err)
+					return "", err
 				}
-				for _, clusterRole := range resources.ClusterRoles {
-					_, err := rr.kubernetesClient.RbacV1().ClusterRoles().
-						Apply(ctx, clusterRole, operatorutil.ApplyOptions)
-					if err != nil {
-						if !apierrors.IsInvalid(err) {
-							return "", fmt.Errorf("failed to apply cluster role %s: %w", *clusterRole.Name, err)
-						}
-						if err := rr.kubernetesClient.RbacV1().ClusterRoles().
-							Delete(ctx, *clusterRole.Name, metav1.DeleteOptions{}); err != nil {
-							return "", fmt.Errorf(
-								"failed to delete invalid cluster role %s: %w",
-								*clusterRole.Name, err,
-							)
-						}
-						notReadyReasons = append(
-							notReadyReasons,
-							fmt.Sprintf("cluster role %s needs to be recreated", *clusterRole.Name),
-						)
-					}
-				}
-
-				for _, clusterRoleBinding := range resources.ClusterRoleBindings {
-					_, err := rr.kubernetesClient.RbacV1().ClusterRoleBindings().
-						Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
-					if err != nil {
-						if !apierrors.IsInvalid(err) {
-							return "", fmt.Errorf(
-								"failed to apply cluster role binding %s: %w", *clusterRoleBinding.Name, err,
-							)
-						}
-						if err := rr.kubernetesClient.RbacV1().ClusterRoleBindings().
-							Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{}); err != nil {
-							return "", fmt.Errorf(
-								"failed to delete invalid cluster role binding %s: %w",
-								*clusterRoleBinding.Name, err,
-							)
-						}
-						notReadyReasons = append(
-							notReadyReasons,
-							fmt.Sprintf("cluster role binding %s needs to be recreated", *clusterRoleBinding.Name),
-						)
-					}
-				}
-
-				for _, role := range resources.Roles {
-					_, err := rr.kubernetesClient.RbacV1().Roles(*role.Namespace).
-						Apply(ctx, role, operatorutil.ApplyOptions)
-					if err != nil {
-						if !apierrors.IsInvalid(err) {
-							return "", fmt.Errorf(
-								"failed to apply role %s in namespace %s: %w",
-								*role.Name, *role.Namespace, err,
-							)
-						}
-						if err := rr.kubernetesClient.RbacV1().Roles(*role.Namespace).
-							Delete(ctx, *role.Name, metav1.DeleteOptions{}); err != nil {
-							return "", fmt.Errorf(
-								"failed to delete invalid role %s in namespace %s: %w",
-								*role.Name, *role.Namespace, err,
-							)
-						}
-						notReadyReasons = append(
-							notReadyReasons,
-							fmt.Sprintf(
-								"role %s in namespace %s needs to be recreated",
-								*role.Name,
-								*role.Namespace,
-							),
-						)
-					}
-				}
-
-				for _, roleBinding := range resources.RoleBindings {
-					_, err := rr.kubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
-						Apply(ctx, roleBinding, operatorutil.ApplyOptions)
-					if err != nil {
-						if !apierrors.IsInvalid(err) {
-							return "", fmt.Errorf(
-								"failed to apply role binding %s in namespace %s: %w",
-								*roleBinding.Name, *roleBinding.Namespace, err,
-							)
-						}
-						if err := rr.kubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
-							Delete(ctx, *roleBinding.Name, metav1.DeleteOptions{}); err != nil {
-							return "", fmt.Errorf(
-								"failed to delete invalid role binding %s in namespace %s: %w",
-								*roleBinding.Name, *roleBinding.Namespace, err,
-							)
-						}
-						notReadyReasons = append(
-							notReadyReasons,
-							fmt.Sprintf(
-								"role binding %s in namespace %s needs to be recreated",
-								*roleBinding.Name,
-								*roleBinding.Namespace,
-							),
-						)
-					}
-				}
-
 				if len(notReadyReasons) > 0 {
 					return strings.Join(notReadyReasons, ","), nil
 				}
