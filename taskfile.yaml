@@ -89,14 +89,17 @@ tasks:
       - ./**/*.go
       - "{{ .artifactsDir }}/golangci-lint.json"
   test:
+    label: "test {{ .path }}"
     deps:
       - artifacts-dir
       - generate
       - format
+    vars:
+      path: '{{ .path | default "." }}'
     sources:
-      - ./**/*.go
+      - ./{{ .path }}/*.go
       - go.sum
-    cmd: go test ./... -coverprofile {{ .artifactsDir }}/cover.out
+    cmd: go test ./{{ .path }}/... -coverprofile {{ .artifactsDir }}/cover.out
     generates:
       - "{{ .artifactsDir }}/cover.out"
   ci:

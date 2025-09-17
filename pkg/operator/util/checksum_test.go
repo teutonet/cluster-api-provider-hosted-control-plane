@@ -1,7 +1,6 @@
 package util
 
 import (
-	"context"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -34,7 +33,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			configMapNames: []string{"test-config"},
 			setupConfigMaps: func(client *fake.Clientset, namespace string) {
 				_, err := client.CoreV1().ConfigMaps(namespace).Create(
-					context.Background(),
+					t.Context(),
 					&corev1.ConfigMap{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      "test-config",
@@ -84,7 +83,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 
 				for _, cm := range configMaps {
 					_, err := client.CoreV1().ConfigMaps(namespace).Create(
-						context.Background(),
+						t.Context(),
 						cm,
 						metav1.CreateOptions{},
 					)
@@ -102,7 +101,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			configMapNames: []string{"binary-config"},
 			setupConfigMaps: func(client *fake.Clientset, namespace string) {
 				_, err := client.CoreV1().ConfigMaps(namespace).Create(
-					context.Background(),
+					t.Context(),
 					&corev1.ConfigMap{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      "binary-config",
@@ -138,7 +137,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			configMapNames: []string{"existing", "non-existent"},
 			setupConfigMaps: func(client *fake.Clientset, namespace string) {
 				_, err := client.CoreV1().ConfigMaps(namespace).Create(
-					context.Background(),
+					t.Context(),
 					&corev1.ConfigMap{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      "existing",
@@ -165,7 +164,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			tt.setupConfigMaps(fakeClient, tt.namespace)
 
 			checksum, err := CalculateConfigMapChecksum(
-				context.Background(),
+				t.Context(),
 				fakeClient,
 				tt.namespace,
 				tt.configMapNames,
@@ -207,7 +206,7 @@ func TestCalculateConfigMapChecksum_Consistency(t *testing.T) {
 	fakeClient := fake.NewClientset()
 
 	_, err := fakeClient.CoreV1().ConfigMaps(namespace).Create(
-		context.Background(),
+		t.Context(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-config",
@@ -226,7 +225,7 @@ func TestCalculateConfigMapChecksum_Consistency(t *testing.T) {
 
 	// Calculate checksum multiple times
 	checksum1, err := CalculateConfigMapChecksum(
-		context.Background(),
+		t.Context(),
 		fakeClient,
 		namespace,
 		[]string{"test-config"},
@@ -236,7 +235,7 @@ func TestCalculateConfigMapChecksum_Consistency(t *testing.T) {
 	}
 
 	checksum2, err := CalculateConfigMapChecksum(
-		context.Background(),
+		t.Context(),
 		fakeClient,
 		namespace,
 		[]string{"test-config"},
@@ -276,7 +275,7 @@ func TestCalculateConfigMapChecksum_Ordering(t *testing.T) {
 
 	for _, cm := range configMaps {
 		_, err := fakeClient.CoreV1().ConfigMaps(namespace).Create(
-			context.Background(),
+			t.Context(),
 			cm,
 			metav1.CreateOptions{},
 		)
@@ -287,7 +286,7 @@ func TestCalculateConfigMapChecksum_Ordering(t *testing.T) {
 
 	// Calculate checksum with different order
 	checksum1, err := CalculateConfigMapChecksum(
-		context.Background(),
+		t.Context(),
 		fakeClient,
 		namespace,
 		[]string{"config1", "config2"},
@@ -297,7 +296,7 @@ func TestCalculateConfigMapChecksum_Ordering(t *testing.T) {
 	}
 
 	checksum2, err := CalculateConfigMapChecksum(
-		context.Background(),
+		t.Context(),
 		fakeClient,
 		namespace,
 		[]string{"config2", "config1"},
@@ -315,7 +314,7 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 	fakeClient := fake.NewClientset()
 
 	_, err := fakeClient.CoreV1().ConfigMaps(namespace).Create(
-		context.Background(),
+		t.Context(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-config",
@@ -332,7 +331,7 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 	}
 
 	checksum1, err := CalculateConfigMapChecksum(
-		context.Background(),
+		t.Context(),
 		fakeClient,
 		namespace,
 		[]string{"test-config"},
@@ -342,7 +341,7 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 	}
 
 	_, err = fakeClient.CoreV1().ConfigMaps(namespace).Update(
-		context.Background(),
+		t.Context(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-config",
@@ -360,7 +359,7 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 	}
 
 	checksum2, err := CalculateConfigMapChecksum(
-		context.Background(),
+		t.Context(),
 		fakeClient,
 		namespace,
 		[]string{"test-config"},

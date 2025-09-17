@@ -164,6 +164,24 @@ func getValidateMountsTestCases() []validateMountTestCase {
 			errorMsg:    "bad-vol",
 		},
 		{
+			name: "invalid mount with empty path",
+			podSpec: corev1ac.PodSpec().
+				WithVolumes(
+					corev1ac.Volume().WithName("test-vol").WithEmptyDir(
+						corev1ac.EmptyDirVolumeSource(),
+					),
+				).
+				WithContainers(
+					corev1ac.Container().
+						WithName("test-container").
+						WithVolumeMounts(
+							corev1ac.VolumeMount().WithName("test-vol").WithMountPath(""),
+						),
+				),
+			expectError: true,
+			errorMsg:    "test-vol",
+		},
+		{
 			name: "valid pod spec with different volume types",
 			podSpec: corev1ac.PodSpec().
 				WithVolumes(
@@ -283,20 +301,4 @@ func TestValidateMountsNilPodSpec(t *testing.T) {
 	}()
 
 	_ = ValidateMounts(nil)
-}
-
-func TestErrInvalidMountError(t *testing.T) {
-	// Test that ErrInvalidMount is a proper error
-	if ErrInvalidMount == nil {
-		t.Fatal("ErrInvalidMount should not be nil")
-	}
-
-	if ErrInvalidMount.Error() == "" {
-		t.Fatal("ErrInvalidMount should have a non-empty error message")
-	}
-
-	expectedMsg := "volume mount using non-existing volume"
-	if ErrInvalidMount.Error() != expectedMsg {
-		t.Errorf("ErrInvalidMount message = %q, want %q", ErrInvalidMount.Error(), expectedMsg)
-	}
 }

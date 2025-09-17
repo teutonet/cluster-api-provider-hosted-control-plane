@@ -9,7 +9,7 @@ import (
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 )
 
-var ErrInvalidMount = errors.New("volume mount using non-existing volume")
+var ErrInvalidMount = errors.New("volume mount invalid or using non-existing volume")
 
 func ValidateMounts(podSpec *corev1ac.PodSpecApplyConfiguration) error {
 	volumeMounts := slices.FlatMap(podSpec.Containers,
@@ -20,17 +20,20 @@ func ValidateMounts(podSpec *corev1ac.PodSpecApplyConfiguration) error {
 
 	invalidMounts := slices.Filter(volumeMounts,
 		func(mount corev1ac.VolumeMountApplyConfiguration, _ int) bool {
-			return slices.NoneBy(podSpec.Volumes, func(volume corev1ac.VolumeApplyConfiguration) bool {
-				return *mount.Name == *volume.Name
-			})
+			return *mount.MountPath == "" ||
+				slices.NoneBy(podSpec.Volumes, func(volume corev1ac.VolumeApplyConfiguration) bool {
+					return *mount.Name == *volume.Name
+				})
 		},
 	)
 
 	if len(invalidMounts) > 0 {
-		return fmt.Errorf("VolumeMounts %s are using a non-existent volume: %w", strings.Join(
-			slices.Map(invalidMounts, func(mount corev1ac.VolumeMountApplyConfiguration, _ int) string {
-				return *mount.Name
-			}), ","),
+		return fmt.Errorf(
+			"VolumeMounts %s are using a non-existent volume or have an empty mountPath: %w",
+			strings.Join(
+				slices.Map(invalidMounts, func(mount corev1ac.VolumeMountApplyConfiguration, _ int) string {
+					return *mount.Name
+				}), ","),
 			ErrInvalidMount,
 		)
 	}

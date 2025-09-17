@@ -128,6 +128,25 @@ type ETCDComponent struct {
 type ETCDBackup struct {
 	//+kubebuilder:validation:Required
 	Schedule string `json:"schedule"`
+	//+kubebuilder:validation:Required
+	Bucket string `json:"bucket"`
+	//+kubebuilder:validation:Required
+	Secret ETCDBackupSecret `json:"secret"`
+	//+kubebuilder:validation:Optional
+	Region string `json:"region,omitempty"`
+}
+
+type ETCDBackupSecret struct {
+	//+kubebuilder:validation:Required
+	Name string `json:"name"`
+	//+kubebuilder:validation:Optional
+	Namespace string `json:"namespace"`
+	//+kubebuilder:validation:Optional
+	//+kubebuilder:default="accessKeyID"
+	AccessKeyIDKey string `json:"accessKeyIDKey,omitempty"`
+	//+kubebuilder:validation:Optional
+	//+kubebuilder:default="secretAccessKey"
+	SecretAccessKeyKey string `json:"secretAccessKeyKey,omitempty"`
 }
 
 type APIServerPod struct {

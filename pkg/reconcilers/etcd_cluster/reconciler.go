@@ -15,6 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/robfig/cron/v3"
@@ -43,7 +44,10 @@ import (
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
-var errETCDCAFailedToAppend = errors.New("failed to append etcd CA certificate")
+var (
+	errETCDCAFailedToAppend = errors.New("failed to append etcd CA certificate")
+	etcdVolumeResizeEvent   = "EtcdVolumeAutoResize"
+)
 
 type EtcdClusterReconciler interface {
 	ReconcileEtcdCluster(
@@ -244,7 +248,7 @@ func (er *etcdClusterReconciler) getETCDVolumeSize(hostedControlPlane *v1alpha1.
 			er.recorder.Eventf(
 				hostedControlPlane,
 				corev1.EventTypeNormal,
-				"EtcdVolumeAutoResize",
+				etcdVolumeResizeEvent,
 				"Auto-resized etcd volume from %s to %s",
 				hostedControlPlane.Status.ETCDVolumeSize.String(),
 				newValue.String(),
@@ -283,14 +287,50 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 					return fmt.Errorf("failed to create etcd snapshot: %w", err)
 				}
 
-				defaultConfig, err := config.LoadDefaultConfig(ctx)
+				etcdBackupSecretConfig := hostedControlPlane.Spec.ETCD.Backup.Secret
+				secretNamespace := etcdBackupSecretConfig.Namespace
+				secretName := etcdBackupSecretConfig.Name
+				accessKeyIDKey := etcdBackupSecretConfig.AccessKeyIDKey
+				secretAccessKeyKey := etcdBackupSecretConfig.SecretAccessKeyKey
+				span.SetAttributes(
+					attribute.String("etcd.backup.s3.secret.namespace", secretNamespace),
+					attribute.String("etcd.backup.s3.secret.name", secretName),
+					attribute.String("etcd.backup.s3.secret.accessKeyIDKey", accessKeyIDKey),
+					attribute.String("etcd.backup.s3.secret.secretAccessKey", secretAccessKeyKey),
+					attribute.String("etcd.backup.s3.bucket", hostedControlPlane.Spec.ETCD.Backup.Bucket),
+					attribute.String("etcd.backup.s3.region", hostedControlPlane.Spec.ETCD.Backup.Region),
+					attribute.String("etcd.backup.s3.key", fmt.Sprintf("%s/<timestamp>.etcd", cluster.Name)),
+					attribute.String("etcd.backup.schedule", hostedControlPlane.Spec.ETCD.Backup.Schedule),
+				)
+				s3Secret, err := er.KubernetesClient.CoreV1().Secrets(secretNamespace).
+					Get(ctx, secretName, metav1.GetOptions{})
+				if err != nil {
+					return fmt.Errorf("failed to get S3 credentials secret: %w", err)
+				}
+				accessKeyID, ok := s3Secret.Data[accessKeyIDKey]
+				if !ok {
+					return fmt.Errorf("s3 credentials secret is missing %s key", accessKeyIDKey)
+				}
+				secretAccessKey, ok := s3Secret.Data[secretAccessKeyKey]
+				if !ok {
+					return fmt.Errorf("s3 credentials secret is missing %s key", secretAccessKeyKey)
+				}
+
+				defaultConfig, err := config.LoadDefaultConfig(ctx,
+					config.WithRegion(hostedControlPlane.Spec.ETCD.Backup.Region),
+					config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+						string(accessKeyID),
+						string(secretAccessKey),
+						"",
+					)),
+				)
 				if err != nil {
 					return fmt.Errorf("failed to load AWS config: %w", err)
 				}
 				uploader := manager.NewUploader(s3.NewFromConfig(defaultConfig))
 				if _, err := uploader.Upload(ctx, &s3.PutObjectInput{
-					Bucket: aws.String(fmt.Sprintf("hcp-%s-etcd-backups", hostedControlPlane.Name)),
-					Key:    aws.String(fmt.Sprintf("%s/%d.etcd", cluster.Name, time.Now().Unix())),
+					Bucket: aws.String(hostedControlPlane.Spec.ETCD.Backup.Bucket),
+					Key:    aws.String(fmt.Sprintf("%s/%s.etcd", cluster.Name, time.Now().Format(time.RFC3339))),
 					Body:   snapshotResponse.Snapshot,
 				}); err != nil {
 					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", err)

@@ -103,7 +103,7 @@ func (w *hostedControlPlaneWebhook) parseVersion(
 }
 
 func (w *hostedControlPlaneWebhook) ValidateUpdate(
-	_ context.Context,
+	ctx context.Context,
 	oldObj runtime.Object,
 	newObj runtime.Object,
 ) (admission.Warnings, error) {
@@ -123,7 +123,7 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 
 	// ignore fieldErr because we're going to validate the whole object anyway.
 	newVersion, _ := w.parseVersion(newHostedControlPlane)
-	warnings, objErr := w.ValidateCreate(context.Background(), newHostedControlPlane)
+	warnings, objErr := w.ValidateCreate(ctx, newHostedControlPlane)
 	if objErr != nil {
 		return warnings, objErr
 	}
