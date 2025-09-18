@@ -1,13 +1,14 @@
 package names
 
 import (
-	"reflect"
 	"testing"
 
+	. "github.com/onsi/gomega"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 func TestGetRootIssuerName(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -40,14 +41,13 @@ func TestGetRootIssuerName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetRootIssuerName(cluster)
-			if result != tt.expected {
-				t.Errorf("GetRootIssuerName() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "GetRootIssuerName() = %v, want %v", result, tt.expected)
 		})
 	}
 }
 
 func TestGetCAIssuerName(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -70,14 +70,13 @@ func TestGetCAIssuerName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetCAIssuerName(cluster)
-			if result != tt.expected {
-				t.Errorf("GetCAIssuerName() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "GetCAIssuerName() = %v, want %v", result, tt.expected)
 		})
 	}
 }
 
 func TestGetServiceName(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -100,14 +99,13 @@ func TestGetServiceName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetServiceName(cluster)
-			if result != tt.expected {
-				t.Errorf("GetServiceName() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "GetServiceName() = %v, want %v", result, tt.expected)
 		})
 	}
 }
 
 func TestGetInternalServiceHost(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -140,14 +138,13 @@ func TestGetInternalServiceHost(t *testing.T) {
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
 			result := GetInternalServiceHost(cluster)
-			if result != tt.expected {
-				t.Errorf("GetInternalServiceHost() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "GetInternalServiceHost() = %v, want %v", result, tt.expected)
 		})
 	}
 }
 
 func TestGetEtcdClientServiceDNSName(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -174,14 +171,13 @@ func TestGetEtcdClientServiceDNSName(t *testing.T) {
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
 			result := GetEtcdClientServiceDNSName(cluster)
-			if result != tt.expected {
-				t.Errorf("GetEtcdClientServiceDNSName() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "GetEtcdClientServiceDNSName() = %v, want %v", result, tt.expected)
 		})
 	}
 }
 
 func TestGetEtcdDNSNames(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -216,19 +212,16 @@ func TestGetEtcdDNSNames(t *testing.T) {
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
 			result := GetEtcdDNSNames(cluster)
-			if !reflect.DeepEqual(result, tt.expected) {
-				t.Errorf("GetEtcdDNSNames() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "GetEtcdDNSNames() = %v, want %v", result, tt.expected)
 
 			// Verify we always get exactly 3 entries
-			if len(result) != 3 {
-				t.Errorf("GetEtcdDNSNames() returned %d entries, want 3", len(result))
-			}
+			g.Expect(result).To(HaveLen(3), "GetEtcdDNSNames() returned %d entries, want 3", len(result))
 		})
 	}
 }
 
 func TestGetKubeconfigSecretName(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name           string
 		clusterName    string
@@ -266,14 +259,13 @@ func TestGetKubeconfigSecretName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetKubeconfigSecretName(cluster, tt.kubeconfigName)
-			if result != tt.expected {
-				t.Errorf("GetKubeconfigSecretName() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "GetKubeconfigSecretName() = %v, want %v", result, tt.expected)
 		})
 	}
 }
 
 func TestGetKonnectivityServerHost(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name                     string
 		clusterName              string
@@ -306,14 +298,13 @@ func TestGetKonnectivityServerHost(t *testing.T) {
 			cluster.Name = tt.clusterName
 			cluster.Spec.ControlPlaneEndpoint.Host = tt.controlPlaneEndpointHost
 			result := GetKonnectivityServerHost(cluster)
-			if result != tt.expected {
-				t.Errorf("GetKonnectivityServerHost() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "GetKonnectivityServerHost() = %v, want %v", result, tt.expected)
 		})
 	}
 }
 
 func TestGetTLSRouteName(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -336,14 +327,13 @@ func TestGetTLSRouteName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetTLSRouteName(cluster)
-			if result != tt.expected {
-				t.Errorf("GetTLSRouteName() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "GetTLSRouteName() = %v, want %v", result, tt.expected)
 		})
 	}
 }
 
 func TestGetKonnectivityTLSRouteName(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -366,15 +356,14 @@ func TestGetKonnectivityTLSRouteName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetKonnectivityTLSRouteName(cluster)
-			if result != tt.expected {
-				t.Errorf("GetKonnectivityTLSRouteName() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "GetKonnectivityTLSRouteName() = %v, want %v", result, tt.expected)
 		})
 	}
 }
 
 // Test multiple certificate name functions together since they follow the same pattern.
 func TestCertificateNames(t *testing.T) {
+	g := NewWithT(t)
 	cluster := &capiv2.Cluster{}
 	cluster.Name = "test-cluster"
 
@@ -406,9 +395,7 @@ func TestCertificateNames(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.function(cluster)
-			if result != tt.expected {
-				t.Errorf("%s() = %v, want %v", tt.name, result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "%s() = %v, want %v", tt.name, result, tt.expected)
 		})
 	}
 }

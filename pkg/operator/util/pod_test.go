@@ -2,20 +2,20 @@ package util
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
+	. "github.com/onsi/gomega"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 )
 
 func TestValidateMounts(t *testing.T) {
-	t.Helper()
+	g := NewWithT(t)
 
 	tests := getValidateMountsTestCases()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validateMountTest(t, tt)
+			validateMountTest(g, tt)
 		})
 	}
 }
@@ -213,34 +213,27 @@ func getValidateMountsTestCases() []validateMountTestCase {
 	}
 }
 
-func validateMountTest(t *testing.T, tt validateMountTestCase) {
-	t.Helper()
-
+func validateMountTest(g Gomega, tt validateMountTestCase) {
 	err := ValidateMounts(tt.podSpec)
 
 	if tt.expectError {
-		validateExpectedError(t, err, tt.errorMsg)
-	} else if err != nil {
-		t.Errorf("ValidateMounts() unexpected error: %v", err)
+		validateExpectedError(g, err, tt.errorMsg)
+	} else {
+		g.Expect(err).NotTo(HaveOccurred(), "ValidateMounts() unexpected error: %v", err)
 	}
 }
 
-func validateExpectedError(t *testing.T, err error, expectedMsg string) {
-	t.Helper()
-
-	if err == nil {
-		t.Errorf("ValidateMounts() expected error but got nil")
-		return
-	}
+func validateExpectedError(g Gomega, err error, expectedMsg string) {
+	g.Expect(err).To(HaveOccurred(), "ValidateMounts() expected error but got nil")
 
 	// Check that the error is the expected type
-	if !errors.Is(err, ErrInvalidMount) {
-		t.Errorf("ValidateMounts() error type mismatch: expected ErrInvalidMount, got %T", err)
-	}
+	g.Expect(errors.Is(err, ErrInvalidMount)).
+		To(BeTrue(), "ValidateMounts() error type mismatch: expected ErrInvalidMount, got %T", err)
 
 	// Check that the error message contains the expected volume names
-	if expectedMsg != "" && !strings.Contains(err.Error(), expectedMsg) {
-		t.Errorf(
+	if expectedMsg != "" {
+		g.Expect(err.Error()).To(
+			ContainSubstring(expectedMsg),
 			"ValidateMounts() error message %q does not contain expected text %q",
 			err.Error(),
 			expectedMsg,
@@ -248,12 +241,12 @@ func validateExpectedError(t *testing.T, err error, expectedMsg string) {
 	}
 
 	// Verify the error message mentions volume mounts
-	if !strings.Contains(err.Error(), "VolumeMounts") {
-		t.Errorf("ValidateMounts() error message should mention VolumeMounts: %s", err.Error())
-	}
+	g.Expect(err.Error()).
+		To(ContainSubstring("VolumeMounts"), "ValidateMounts() error message should mention VolumeMounts: %s", err.Error())
 }
 
 func TestValidateMountsErrorMessage(t *testing.T) {
+	g := NewWithT(t)
 	// Test specific error message format
 	podSpec := corev1ac.PodSpec().
 		WithContainers(
@@ -266,37 +259,29 @@ func TestValidateMountsErrorMessage(t *testing.T) {
 		)
 
 	err := ValidateMounts(podSpec)
-	if err == nil {
-		t.Fatal("Expected error but got nil")
-	}
+	g.Expect(err).To(HaveOccurred(), "Expected error but got nil")
 
 	errorMsg := err.Error()
 
 	// Should contain both missing volume names
-	if !strings.Contains(errorMsg, "missing1") {
-		t.Errorf("Error message should contain 'missing1': %s", errorMsg)
-	}
-	if !strings.Contains(errorMsg, "missing2") {
-		t.Errorf("Error message should contain 'missing2': %s", errorMsg)
-	}
+	g.Expect(errorMsg).To(ContainSubstring("missing1"), "Error message should contain 'missing1': %s", errorMsg)
+	g.Expect(errorMsg).To(ContainSubstring("missing2"), "Error message should contain 'missing2': %s", errorMsg)
 
 	// Should contain "VolumeMounts"
-	if !strings.Contains(errorMsg, "VolumeMounts") {
-		t.Errorf("Error message should contain 'VolumeMounts': %s", errorMsg)
-	}
+	g.Expect(errorMsg).To(ContainSubstring("VolumeMounts"), "Error message should contain 'VolumeMounts': %s", errorMsg)
 
 	// Should mention non-existent volume
-	if !strings.Contains(errorMsg, "non-existent") {
-		t.Errorf("Error message should mention non-existent volume: %s", errorMsg)
-	}
+	g.Expect(errorMsg).
+		To(ContainSubstring("non-existent"), "Error message should mention non-existent volume: %s", errorMsg)
 }
 
 func TestValidateMountsNilPodSpec(t *testing.T) {
+	g := NewWithT(t)
 	// Test edge case with nil pod spec - this will panic, which is acceptable
 	// since it indicates a programming error
 	defer func() {
 		if r := recover(); r == nil {
-			t.Errorf("ValidateMounts() with nil PodSpec should panic")
+			g.Expect(r).NotTo(BeNil(), "ValidateMounts() with nil PodSpec should panic")
 		}
 	}()
 

@@ -3,6 +3,7 @@ package util
 import (
 	"testing"
 
+	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -11,6 +12,7 @@ import (
 const namespace = "test-namespace"
 
 func TestCalculateConfigMapChecksum(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name            string
 		namespace       string
@@ -46,9 +48,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 					},
 					metav1.CreateOptions{},
 				)
-				if err != nil {
-					t.Fatalf("failed to create test configmap: %v", err)
-				}
+				g.Expect(err).NotTo(HaveOccurred())
 			},
 			expectError:    false,
 			expectedLength: 32,
@@ -87,9 +87,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 						cm,
 						metav1.CreateOptions{},
 					)
-					if err != nil {
-						t.Fatalf("failed to create test configmap %s: %v", cm.Name, err)
-					}
+					g.Expect(err).NotTo(HaveOccurred())
 				}
 			},
 			expectError:    false,
@@ -116,9 +114,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 					},
 					metav1.CreateOptions{},
 				)
-				if err != nil {
-					t.Fatalf("failed to create test configmap: %v", err)
-				}
+				g.Expect(err).NotTo(HaveOccurred())
 			},
 			expectError:    false,
 			expectedLength: 32,
@@ -149,9 +145,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 					},
 					metav1.CreateOptions{},
 				)
-				if err != nil {
-					t.Fatalf("failed to create test configmap: %v", err)
-				}
+				g.Expect(err).NotTo(HaveOccurred())
 			},
 			expectError:    true,
 			expectedLength: 0,
@@ -171,38 +165,37 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			)
 
 			if tt.expectError {
-				if err == nil {
-					t.Errorf("expected error but got none")
-				}
+				g.Expect(err).To(HaveOccurred(), "expected error but got none")
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			g.Expect(err).NotTo(HaveOccurred())
 
 			if tt.expectedLength == 0 {
-				if checksum != "" {
-					t.Errorf("expected empty checksum, got %s", checksum)
-				}
+				g.Expect(checksum).To(BeEmpty(), "expected empty checksum, got %s", checksum)
 				return
 			}
 
-			if len(checksum) != tt.expectedLength {
-				t.Errorf("expected checksum length %d, got %d", tt.expectedLength, len(checksum))
-			}
+			g.Expect(checksum).To(
+				HaveLen(tt.expectedLength),
+				"expected checksum length %d, got %d",
+				tt.expectedLength, len(checksum),
+			)
 
 			// Verify checksum is valid hex
 			for _, char := range checksum {
-				if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-					t.Errorf("checksum contains invalid hex character: %c", char)
-				}
+				g.Expect((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')).To(
+					BeTrue(),
+					"checksum contains invalid hex character: %c",
+					char,
+				)
 			}
 		})
 	}
 }
 
 func TestCalculateConfigMapChecksum_Consistency(t *testing.T) {
+	g := NewWithT(t)
 	fakeClient := fake.NewClientset()
 
 	_, err := fakeClient.CoreV1().ConfigMaps(namespace).Create(
@@ -219,9 +212,7 @@ func TestCalculateConfigMapChecksum_Consistency(t *testing.T) {
 		},
 		metav1.CreateOptions{},
 	)
-	if err != nil {
-		t.Fatalf("failed to create test configmap: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 
 	// Calculate checksum multiple times
 	checksum1, err := CalculateConfigMapChecksum(
@@ -230,9 +221,7 @@ func TestCalculateConfigMapChecksum_Consistency(t *testing.T) {
 		namespace,
 		[]string{"test-config"},
 	)
-	if err != nil {
-		t.Fatalf("failed to calculate first checksum: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 
 	checksum2, err := CalculateConfigMapChecksum(
 		t.Context(),
@@ -240,16 +229,13 @@ func TestCalculateConfigMapChecksum_Consistency(t *testing.T) {
 		namespace,
 		[]string{"test-config"},
 	)
-	if err != nil {
-		t.Fatalf("failed to calculate second checksum: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 
-	if checksum1 != checksum2 {
-		t.Errorf("checksums should be identical, got %s and %s", checksum1, checksum2)
-	}
+	g.Expect(checksum1).To(Equal(checksum2), "checksums should be identical, got %s and %s", checksum1, checksum2)
 }
 
 func TestCalculateConfigMapChecksum_Ordering(t *testing.T) {
+	g := NewWithT(t)
 	fakeClient := fake.NewClientset()
 
 	configMaps := []*corev1.ConfigMap{
@@ -279,9 +265,7 @@ func TestCalculateConfigMapChecksum_Ordering(t *testing.T) {
 			cm,
 			metav1.CreateOptions{},
 		)
-		if err != nil {
-			t.Fatalf("failed to create test configmap %s: %v", cm.Name, err)
-		}
+		g.Expect(err).NotTo(HaveOccurred())
 	}
 
 	// Calculate checksum with different order
@@ -291,9 +275,7 @@ func TestCalculateConfigMapChecksum_Ordering(t *testing.T) {
 		namespace,
 		[]string{"config1", "config2"},
 	)
-	if err != nil {
-		t.Fatalf("failed to calculate first checksum: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 
 	checksum2, err := CalculateConfigMapChecksum(
 		t.Context(),
@@ -301,16 +283,17 @@ func TestCalculateConfigMapChecksum_Ordering(t *testing.T) {
 		namespace,
 		[]string{"config2", "config1"},
 	)
-	if err != nil {
-		t.Fatalf("failed to calculate second checksum: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 
-	if checksum1 != checksum2 {
-		t.Errorf("checksums should be identical regardless of order, got %s and %s", checksum1, checksum2)
-	}
+	g.Expect(checksum1).To(
+		Equal(checksum2),
+		"checksums should be identical regardless of order, got %s and %s",
+		checksum1, checksum2,
+	)
 }
 
 func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
+	g := NewWithT(t)
 	fakeClient := fake.NewClientset()
 
 	_, err := fakeClient.CoreV1().ConfigMaps(namespace).Create(
@@ -326,9 +309,7 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 		},
 		metav1.CreateOptions{},
 	)
-	if err != nil {
-		t.Fatalf("failed to create test configmap: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 
 	checksum1, err := CalculateConfigMapChecksum(
 		t.Context(),
@@ -336,9 +317,7 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 		namespace,
 		[]string{"test-config"},
 	)
-	if err != nil {
-		t.Fatalf("failed to calculate initial checksum: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 
 	_, err = fakeClient.CoreV1().ConfigMaps(namespace).Update(
 		t.Context(),
@@ -354,9 +333,7 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 		},
 		metav1.UpdateOptions{},
 	)
-	if err != nil {
-		t.Fatalf("failed to update test configmap: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 
 	checksum2, err := CalculateConfigMapChecksum(
 		t.Context(),
@@ -364,16 +341,17 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 		namespace,
 		[]string{"test-config"},
 	)
-	if err != nil {
-		t.Fatalf("failed to calculate updated checksum: %v", err)
-	}
+	g.Expect(err).NotTo(HaveOccurred())
 
-	if checksum1 == checksum2 {
-		t.Errorf("checksums should be different after data change, got %s for both", checksum1)
-	}
+	g.Expect(checksum1).NotTo(
+		Equal(checksum2),
+		"checksums should be different after data change, got %s for both",
+		checksum1,
+	)
 }
 
 func TestCalculateChecksum(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name     string
 		dataMaps []map[string]any
@@ -418,52 +396,62 @@ func TestCalculateChecksum(t *testing.T) {
 			result := calculateChecksum(tt.dataMaps...)
 
 			if tt.expected == "" {
-				if result != "" {
-					t.Errorf("expected empty checksum, got %s", result)
-				}
+				g.Expect(result).To(BeEmpty(), "expected empty checksum, got %s", result)
 				return
 			}
 
-			if len(result) != 32 {
-				t.Errorf("expected checksum length 32, got %d", len(result))
-			}
+			g.Expect(result).To(
+				HaveLen(32),
+				"expected checksum length 32, got %d",
+				len(result),
+			)
 
 			// Verify checksum is valid hex
 			for _, char := range result {
-				if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-					t.Errorf("checksum contains invalid hex character: %c", char)
-				}
+				g.Expect((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')).To(
+					BeTrue(),
+					"checksum contains invalid hex character: %c",
+					char,
+				)
 			}
 
 			// Test consistency - same input should produce same output
 			result2 := calculateChecksum(tt.dataMaps...)
-			if result != result2 {
-				t.Errorf("checksums should be identical, got %s and %s", result, result2)
-			}
+			g.Expect(result).To(
+				Equal(result2),
+				"checksums should be identical, got %s and %s",
+				result, result2,
+			)
 		})
 	}
 }
 
 func TestCalculateChecksum_Ordering(t *testing.T) {
+	g := NewWithT(t)
 	map1 := map[string]any{"z": "26", "a": "1", "m": "13"}
 	map2 := map[string]any{"a": "1", "m": "13", "z": "26"}
 
 	result1 := calculateChecksum(map1)
 	result2 := calculateChecksum(map2)
 
-	if result1 != result2 {
-		t.Errorf("checksums should be identical regardless of key order, got %s and %s", result1, result2)
-	}
+	g.Expect(result1).To(
+		Equal(result2),
+		"checksums should be identical regardless of key order, got %s and %s",
+		result1, result2,
+	)
 
 	result3 := calculateChecksum(map1, map2)
 	result4 := calculateChecksum(map2, map1)
 
-	if result3 != result4 {
-		t.Errorf("checksums should be identical regardless of map order, got %s and %s", result3, result4)
-	}
+	g.Expect(result3).To(
+		Equal(result4),
+		"checksums should be identical regardless of map order, got %s and %s",
+		result3, result4,
+	)
 }
 
 func TestCalculateChecksum_Deterministic(t *testing.T) {
+	g := NewWithT(t)
 	dataMap := map[string]any{
 		"key1": "value1",
 		"key2": "value2",
@@ -475,7 +463,11 @@ func TestCalculateChecksum_Deterministic(t *testing.T) {
 	checksum2 := calculateChecksum(dataMap)
 	checksum3 := calculateChecksum(dataMap)
 
-	if checksum1 != checksum2 || checksum2 != checksum3 {
-		t.Errorf("checksums should be identical across multiple calls: %s, %s, %s", checksum1, checksum2, checksum3)
-	}
+	g.Expect(checksum1).To(Equal(checksum2))
+	g.Expect(checksum2).To(Equal(checksum3))
+	g.Expect(checksum1).To(
+		Equal(checksum3),
+		"checksums should be identical across multiple calls: %s, %s, %s",
+		checksum1, checksum2, checksum3,
+	)
 }

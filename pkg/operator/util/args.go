@@ -13,6 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+var argumentOverriddenEvent = "ArgumentOverridden"
+
 func ArgsToSlice(args ...map[string]string) []string {
 	argsSlice := slices.MapToSlice(slices.Assign(args...), func(key string, value string) string {
 		return fmt.Sprintf("--%s=%s", key, value)
@@ -55,7 +57,7 @@ func ArgsToSliceWithObservability(
 			))
 
 			eventRecorder.Eventf(
-				corev1.EventTypeWarning, "ArgumentOverridden",
+				corev1.EventTypeWarning, argumentOverriddenEvent,
 				"User argument overridden by controller: %s (userValue=%s, controllerValue=%s)",
 				key, userArgs[key], controllerArgs[key],
 			)

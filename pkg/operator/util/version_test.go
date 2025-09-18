@@ -3,10 +3,12 @@ package util
 import (
 	"testing"
 
+	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 )
 
 func TestGetMinorVersion(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		version     string
@@ -128,31 +130,23 @@ func TestGetMinorVersion(t *testing.T) {
 			result, err := GetMinorVersion(hcp)
 
 			if tt.expectError {
-				if err == nil {
-					t.Errorf("GetMinorVersion() expected error but got nil")
-				}
-				// Don't check the result value when we expect an error
+				g.Expect(err).To(HaveOccurred(), "GetMinorVersion() expected error but got nil")
 				return
 			}
 
-			if err != nil {
-				t.Errorf("GetMinorVersion() unexpected error: %v", err)
-				return
-			}
-
-			if result != tt.expected {
-				t.Errorf("GetMinorVersion() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(result).To(Equal(tt.expected), "GetMinorVersion() = %v, want %v", result, tt.expected)
 		})
 	}
 }
 
 func TestGetMinorVersionNilHostedControlPlane(t *testing.T) {
+	g := NewWithT(t)
 	// Test edge case with nil input - this will panic, which is acceptable behavior
 	// since it indicates a programming error
 	defer func() {
 		if r := recover(); r == nil {
-			t.Errorf("GetMinorVersion() with nil HostedControlPlane should panic")
+			g.Expect(r).NotTo(BeNil(), "GetMinorVersion() with nil HostedControlPlane should panic")
 		}
 	}()
 

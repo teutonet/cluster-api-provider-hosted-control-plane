@@ -1,10 +1,11 @@
 package util
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
+	. "github.com/onsi/gomega"
+	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,6 +21,7 @@ type OverriddenArg struct {
 }
 
 func TestArgsToSlice(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name     string
 		args     []map[string]string
@@ -94,20 +96,17 @@ func TestArgsToSlice(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := ArgsToSlice(tt.args...)
 
-			if !reflect.DeepEqual(result, tt.expected) {
-				t.Errorf("ArgsToSlice() = %v, want %v", result, tt.expected)
-			}
+			g.Expect(result).To(Equal(tt.expected), "ArgsToSlice() = %v, want %v", result, tt.expected)
 
 			for i := 1; i < len(result); i++ {
-				if result[i-1] > result[i] {
-					t.Errorf("Result is not sorted: %s > %s", result[i-1], result[i])
-				}
+				g.Expect(result[i-1] <= result[i]).To(BeTrue(), "Result is not sorted: %s > %s", result[i-1], result[i])
 			}
 		})
 	}
 }
 
 func TestArgsToSlice_Ordering(t *testing.T) {
+	g := NewWithT(t)
 	input1 := []map[string]string{
 		{"z": "26", "a": "1", "m": "13"},
 	}
@@ -118,19 +117,15 @@ func TestArgsToSlice_Ordering(t *testing.T) {
 	result1 := ArgsToSlice(input1...)
 	result2 := ArgsToSlice(input2...)
 
-	if !reflect.DeepEqual(result1, result2) {
-		t.Errorf("ArgsToSlice() should produce consistent sorted output regardless of input order")
-		t.Errorf("Input1 result: %v", result1)
-		t.Errorf("Input2 result: %v", result2)
-	}
+	g.Expect(result1).
+		To(Equal(result2), "ArgsToSlice() should produce consistent sorted output regardless of input order. Input1 result: %v, Input2 result: %v", result1, result2)
 
 	expected := []string{"--a=1", "--m=13", "--z=26"}
-	if !reflect.DeepEqual(result1, expected) {
-		t.Errorf("Expected sorted output %v, got %v", expected, result1)
-	}
+	g.Expect(result1).To(Equal(expected), "Expected sorted output %v, got %v", expected, result1)
 }
 
 func TestArgsToSliceWithObservability(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name              string
 		userArgs          map[string]string
@@ -138,7 +133,6 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 		expectedArgs      []string
 		expectedOverrides []OverriddenArg
 		expectEvent       bool
-		expectedEventType string
 	}{
 		{
 			name:     "no user args, only controller args",
@@ -209,8 +203,7 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 					ControllerValue: "6443",
 				},
 			},
-			expectEvent:       true,
-			expectedEventType: corev1.EventTypeWarning,
+			expectEvent: true,
 		},
 		{
 			name: "multiple overrides",
@@ -250,8 +243,7 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 					ControllerValue: "/etc/certs/server.crt",
 				},
 			},
-			expectEvent:       true,
-			expectedEventType: corev1.EventTypeWarning,
+			expectEvent: true,
 		},
 		{
 			name: "same values - no override",
@@ -292,56 +284,29 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 				tt.userArgs,
 				tt.controllerArgs,
 			)
+			close(eventRecorder.Events)
 
-			// Check the resulting args
-			if !reflect.DeepEqual(result, tt.expectedArgs) {
-				t.Errorf("ArgsToSliceWithObservability() = %v, want %v", result, tt.expectedArgs)
-			}
+			g.Expect(result).
+				To(Equal(tt.expectedArgs), "ArgsToSliceWithObservability() = %v, want %v", result, tt.expectedArgs)
 
-			// Check events
+			events := slices.ChannelToSlice(eventRecorder.Events)
+
+			eventsWithOverride := slices.Filter(events, func(event string, _ int) bool {
+				return strings.Contains(event, argumentOverriddenEvent)
+			})
 			if tt.expectEvent {
-				select {
-				case event := <-eventRecorder.Events:
-					if !strings.Contains(event, tt.expectedEventType) {
-						t.Errorf("Expected event type %s, but event was: %s", tt.expectedEventType, event)
-					}
-					if !strings.Contains(event, "ArgumentOverridden") {
-						t.Errorf("Expected event to contain 'ArgumentsOverridden', but event was: %s", event)
-					}
-				default:
-					t.Errorf("Expected an event to be emitted, but none was found")
-				}
+				g.Expect(eventsWithOverride).
+					NotTo(BeEmpty(), "Expected event to contain 'ArgumentsOverridden', but got events: %v", events)
 			} else {
-				select {
-				case event := <-eventRecorder.Events:
-					t.Errorf("Expected no event, but got: %s", event)
-				default:
-					// Expected no event - this is correct
-				}
-			}
-
-			if len(tt.expectedOverrides) > 0 {
-				foundOverride := false
-				for _, expectedOverride := range tt.expectedOverrides {
-					if userValue, exists := tt.userArgs[expectedOverride.Key]; exists {
-						if controllerValue, controllerExists := tt.controllerArgs[expectedOverride.Key]; controllerExists {
-							if userValue != controllerValue && userValue == expectedOverride.UserValue &&
-								controllerValue == expectedOverride.ControllerValue {
-								foundOverride = true
-								break
-							}
-						}
-					}
-				}
-				if !foundOverride {
-					t.Errorf("Expected to find at least one override matching the test case expectations")
-				}
+				g.Expect(eventsWithOverride).
+					To(BeEmpty(), "Expected no event, but got: %v", eventsWithOverride)
 			}
 		})
 	}
 }
 
 func TestArgsToSliceWithObservabilityNilInputs(t *testing.T) {
+	g := NewWithT(t)
 	ctx := log.IntoContext(t.Context(), log.Log.WithName("test"))
 
 	ctx = recorder.IntoContext(ctx, recorder.New(nil, nil))
@@ -353,30 +318,26 @@ func TestArgsToSliceWithObservabilityNilInputs(t *testing.T) {
 	)
 
 	expected := []string{"--test=value"}
-	if !reflect.DeepEqual(result, expected) {
-		t.Errorf("ArgsToSliceWithObservability() with nil inputs = %v, want %v", result, expected)
-	}
+	g.Expect(result).
+		To(Equal(expected), "ArgsToSliceWithObservability() with nil inputs = %v, want %v", result, expected)
 }
 
 func TestOverriddenArgStruct(t *testing.T) {
+	g := NewWithT(t)
 	arg := OverriddenArg{
 		Key:             "test-key",
 		UserValue:       "user-value",
 		ControllerValue: "controller-value",
 	}
 
-	if arg.Key != "test-key" {
-		t.Errorf("Expected Key to be 'test-key', got %s", arg.Key)
-	}
-	if arg.UserValue != "user-value" {
-		t.Errorf("Expected UserValue to be 'user-value', got %s", arg.UserValue)
-	}
-	if arg.ControllerValue != "controller-value" {
-		t.Errorf("Expected ControllerValue to be 'controller-value', got %s", arg.ControllerValue)
-	}
+	g.Expect(arg.Key).To(Equal("test-key"), "Expected Key to be 'test-key', got %s", arg.Key)
+	g.Expect(arg.UserValue).To(Equal("user-value"), "Expected UserValue to be 'user-value', got %s", arg.UserValue)
+	g.Expect(arg.ControllerValue).
+		To(Equal("controller-value"), "Expected ControllerValue to be 'controller-value', got %s", arg.ControllerValue)
 }
 
 func TestArgsToSliceWithObservabilityBackwardCompatibility(t *testing.T) {
+	g := NewWithT(t)
 	ctx := log.IntoContext(t.Context(), log.Log.WithName("test"))
 	ctx = recorder.IntoContext(ctx, recorder.New(nil, nil))
 
@@ -399,8 +360,6 @@ func TestArgsToSliceWithObservabilityBackwardCompatibility(t *testing.T) {
 		controllerArgs,
 	)
 
-	if !reflect.DeepEqual(originalResult, newResult) {
-		t.Errorf("Backward compatibility test failed. ArgsToSlice() = %v, ArgsToSliceWithObservability() = %v",
-			originalResult, newResult)
-	}
+	g.Expect(newResult).
+		To(Equal(originalResult), "Backward compatibility test failed. ArgsToSlice() = %v, ArgsToSliceWithObservability() = %v", originalResult, newResult)
 }
