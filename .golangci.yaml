@@ -27,6 +27,7 @@ linters:
     - fatcontext
     - forbidigo
     - funlen
+    - ginkgolinter
     - goconst
     - gocritic
     - gocyclo
@@ -306,6 +307,9 @@ linters:
           - varnamelen
           - funlen
           - nestif
+          - importas
+          - gosec
+          - wrapcheck
         path: _test\.go
       # Append should be able to assign to a different var/slice.
       #- linters:
