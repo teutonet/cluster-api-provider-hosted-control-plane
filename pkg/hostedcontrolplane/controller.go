@@ -20,6 +20,8 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/apiserverresources"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/certificates"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/infrastructure_cluster"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/kubeconfig"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/tlsroutes"
@@ -66,6 +68,8 @@ func NewHostedControlPlaneReconciler(
 	kubernetesClient kubernetes.Interface,
 	certManagerClient cmclient.Interface,
 	gatewayClient gwclient.Interface,
+	etcdClientFactory etcd_client.EtcdClientFactory,
+	s3ClientFactory s3_client.S3ClientFactory,
 	recorder record.EventRecorder,
 	controllerNamespace string,
 	tracingWrapper func(rt http.RoundTripper) http.RoundTripper,
@@ -75,6 +79,8 @@ func NewHostedControlPlaneReconciler(
 		kubernetesClient:                 kubernetesClient,
 		certManagerClient:                certManagerClient,
 		gatewayClient:                    gatewayClient,
+		etcdClientFactory:                etcdClientFactory,
+		s3ClientFactory:                  s3ClientFactory,
 		recorder:                         recorder,
 		managementCluster:                workload.NewManagementCluster(kubernetesClient, tracingWrapper, "controller"),
 		worldComponent:                   "world",
@@ -105,6 +111,8 @@ type hostedControlPlaneReconciler struct {
 	kubernetesClient                 kubernetes.Interface
 	certManagerClient                cmclient.Interface
 	gatewayClient                    gwclient.Interface
+	etcdClientFactory                etcd_client.EtcdClientFactory
+	s3ClientFactory                  s3_client.S3ClientFactory
 	recorder                         record.EventRecorder
 	managementCluster                workload.ManagementCluster
 	worldComponent                   string
@@ -370,10 +378,10 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 			if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.client, cluster, hostedControlPlane); err != nil ||
 				isPaused ||
 				requeue {
-				if err == nil || isPaused || requeue {
-					return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+				if err != nil {
+					return ctrl.Result{}, fmt.Errorf("failed to verify paused condition: %w", err)
 				}
-				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to verify paused condition: %w", err)
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 			}
 
 			if !hostedControlPlane.DeletionTimestamp.IsZero() {
@@ -436,15 +444,15 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 ) (ctrl.Result, error) {
 	return tracing.WithSpan(ctx, r.tracer, "ReconcileNormal",
 		func(ctx context.Context, span trace.Span) (_ ctrl.Result, reterr error) {
-			span.SetAttributes(
-				attribute.String("hostedcontrolplane.version", hostedControlPlane.Spec.Version),
-				attribute.Int("hostedcontrolplane.replicas", int(*hostedControlPlane.Spec.Replicas)),
-			)
 			if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.client,
 				hostedControlPlane, r.finalizer,
 			); err != nil || finalizerAdded {
 				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to ensure finalizer: %w", err)
 			}
+			span.SetAttributes(
+				attribute.String("hostedcontrolplane.version", hostedControlPlane.Spec.Version),
+				attribute.Int("hostedcontrolplane.replicas", int(*hostedControlPlane.Spec.Replicas)),
+			)
 
 			type Phase struct {
 				Reconcile    func(context.Context, *v1alpha1.HostedControlPlane, *capiv2.Cluster) (string, error)
@@ -517,12 +525,47 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.konnectivityClientKubeconfigName,
 				r.controllerKubeconfigName,
 			)
+			var etcdClient etcd_client.EtcdClient
+			var err error
+
+			etcdClient, err = r.etcdClientFactory(
+				ctx,
+				r.kubernetesClient,
+				hostedControlPlane,
+				cluster,
+				r.etcdServerPort,
+			)
+			if err != nil {
+				conditions.Set(hostedControlPlane, metav1.Condition{
+					Type:    v1alpha1.EtcdClusterReadyCondition,
+					Status:  metav1.ConditionFalse,
+					Reason:  v1alpha1.EtcdClusterFailedReason,
+					Message: fmt.Sprintf("Failed to create etcd client: %v", err),
+				})
+				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to create etcd client: %w", err)
+			}
+			s3Client, err := r.s3ClientFactory(
+				ctx,
+				r.kubernetesClient,
+				hostedControlPlane,
+				cluster,
+			)
+			if err != nil {
+				conditions.Set(hostedControlPlane, metav1.Condition{
+					Type:    v1alpha1.EtcdClusterReadyCondition,
+					Status:  metav1.ConditionFalse,
+					Reason:  v1alpha1.EtcdClusterFailedReason,
+					Message: fmt.Sprintf("Failed to create S3 client: %v", err),
+				})
+			}
 			etcdClusterReconciler := etcd_cluster.NewEtcdClusterReconciler(
 				r.kubernetesClient,
 				r.recorder,
 				r.etcdServerPort,
 				r.etcdServerStorageBuffer,
 				r.etcdServerStorageIncrement,
+				etcdClient,
+				s3Client,
 				r.etcdComponentLabel,
 				r.apiServerComponentLabel,
 				r.controllerNamespace,

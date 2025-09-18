@@ -15,6 +15,8 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/hostedcontrolplane"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/etc"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/logging"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
@@ -177,6 +179,8 @@ func setupControllers(
 		kubernetesClient,
 		certManagerClient,
 		gatewayClient,
+		etcd_client.NewEtcdClient,
+		s3_client.NewS3Client,
 		mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
 		controllerNamespace,
 		tracingWrapper,

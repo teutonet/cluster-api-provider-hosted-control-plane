@@ -2,35 +2,28 @@ package etcd_cluster
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
-	"net"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/robfig/cron/v3"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/api/v3/version"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -45,8 +38,8 @@ import (
 )
 
 var (
-	errETCDCAFailedToAppend = errors.New("failed to append etcd CA certificate")
-	etcdVolumeResizeEvent   = "EtcdVolumeAutoResize"
+	etcdVolumeResizeEvent           = "EtcdVolumeAutoResize"
+	etcdVolumeSizeReCalculatedEvent = "EtcdVolumeSizeRecalculated"
 )
 
 type EtcdClusterReconciler interface {
@@ -63,6 +56,8 @@ func NewEtcdClusterReconciler(
 	etcdServerPort int32,
 	etcdServerStorageBuffer resource.Quantity,
 	etcdServerStorageIncrement resource.Quantity,
+	etcdClient etcd_client.EtcdClient,
+	s3Client s3_client.S3Client,
 	componentLabel string,
 	apiServerComponentLabel string,
 	controllerNamespace string,
@@ -80,6 +75,8 @@ func NewEtcdClusterReconciler(
 		etcdPeerPort:               2380,
 		etcdServerStorageBuffer:    etcdServerStorageBuffer,
 		etcdServerStorageIncrement: etcdServerStorageIncrement,
+		etcdClient:                 etcdClient,
+		s3Client:                   s3Client,
 		componentLabel:             componentLabel,
 		apiServerComponentLabel:    apiServerComponentLabel,
 		controllerComponent:        systemControllerComponent,
@@ -93,6 +90,8 @@ type etcdClusterReconciler struct {
 	etcdPeerPort               int32
 	etcdServerStorageBuffer    resource.Quantity
 	etcdServerStorageIncrement resource.Quantity
+	etcdClient                 etcd_client.EtcdClient
+	s3Client                   s3_client.S3Client
 	componentLabel             string
 	apiServerComponentLabel    string
 	controllerComponent        string
@@ -163,12 +162,12 @@ func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 				return "etcd StatefulSet is not ready", nil
 			}
 
-			if err := er.reconcileETCDSpaceUsage(ctx, hostedControlPlane, cluster); err != nil {
+			if err := er.reconcileETCDSpaceUsage(ctx, hostedControlPlane); err != nil {
 				return "", fmt.Errorf("failed to reconcile etcd space usage: %w", err)
 			}
 
 			if hostedControlPlane.Spec.ETCD.Backup != nil {
-				if err := er.reconcileETCDBackup(ctx, hostedControlPlane, cluster); err != nil {
+				if err := er.reconcileETCDBackup(ctx, hostedControlPlane); err != nil {
 					return "", fmt.Errorf("failed to reconcile etcd backup: %w", err)
 				}
 			}
@@ -224,7 +223,7 @@ func (er *etcdClusterReconciler) reconcilePVCSizes(
 					er.recorder.Eventf(
 						hostedControlPlane,
 						corev1.EventTypeNormal,
-						"EtcdVolumeResize",
+						etcdVolumeResizeEvent,
 						"Resized etcd volume %s/%s from %s to %s",
 						pvc.Namespace, pvc.Name,
 						pvc.Spec.Resources.Requests.Storage().String(),
@@ -248,8 +247,8 @@ func (er *etcdClusterReconciler) getETCDVolumeSize(hostedControlPlane *v1alpha1.
 			er.recorder.Eventf(
 				hostedControlPlane,
 				corev1.EventTypeNormal,
-				etcdVolumeResizeEvent,
-				"Auto-resized etcd volume from %s to %s",
+				etcdVolumeSizeReCalculatedEvent,
+				"Calculated new etcd volume size: from %s to %s",
 				hostedControlPlane.Status.ETCDVolumeSize.String(),
 				newValue.String(),
 			)
@@ -264,10 +263,9 @@ func (er *etcdClusterReconciler) getETCDVolumeSize(hostedControlPlane *v1alpha1.
 func (er *etcdClusterReconciler) reconcileETCDBackup(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv2.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, er.Tracer, "ReconcileETCDBackup",
-		func(ctx context.Context, span trace.Span) error {
+		func(ctx context.Context, span trace.Span) (err error) {
 			schedule, err := cron.ParseStandard(hostedControlPlane.Spec.ETCD.Backup.Schedule)
 			if err != nil {
 				return fmt.Errorf("failed to parse etcd backup schedule: %w", err)
@@ -275,66 +273,15 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 
 			lastBackupTime := hostedControlPlane.Status.ETCDLastBackupTime
 			if lastBackupTime.IsZero() || schedule.Next(lastBackupTime.Time).Before(time.Now()) {
-				snapshotResponse, err := callETCDFuncOnAnyMember(
-					ctx,
-					er.KubernetesClient,
-					hostedControlPlane,
-					cluster,
-					er.etcdServerPort,
-					clientv3.Client.SnapshotWithVersion,
-				)
+				snapshotResponse, err := er.etcdClient.CreateSnapshot(ctx)
 				if err != nil {
 					return fmt.Errorf("failed to create etcd snapshot: %w", err)
 				}
 
-				etcdBackupSecretConfig := hostedControlPlane.Spec.ETCD.Backup.Secret
-				secretNamespace := etcdBackupSecretConfig.Namespace
-				secretName := etcdBackupSecretConfig.Name
-				accessKeyIDKey := etcdBackupSecretConfig.AccessKeyIDKey
-				secretAccessKeyKey := etcdBackupSecretConfig.SecretAccessKeyKey
-				span.SetAttributes(
-					attribute.String("etcd.backup.s3.secret.namespace", secretNamespace),
-					attribute.String("etcd.backup.s3.secret.name", secretName),
-					attribute.String("etcd.backup.s3.secret.accessKeyIDKey", accessKeyIDKey),
-					attribute.String("etcd.backup.s3.secret.secretAccessKey", secretAccessKeyKey),
-					attribute.String("etcd.backup.s3.bucket", hostedControlPlane.Spec.ETCD.Backup.Bucket),
-					attribute.String("etcd.backup.s3.region", hostedControlPlane.Spec.ETCD.Backup.Region),
-					attribute.String("etcd.backup.s3.key", fmt.Sprintf("%s/<timestamp>.etcd", cluster.Name)),
-					attribute.String("etcd.backup.schedule", hostedControlPlane.Spec.ETCD.Backup.Schedule),
-				)
-				s3Secret, err := er.KubernetesClient.CoreV1().Secrets(secretNamespace).
-					Get(ctx, secretName, metav1.GetOptions{})
-				if err != nil {
-					return fmt.Errorf("failed to get S3 credentials secret: %w", err)
-				}
-				accessKeyID, ok := s3Secret.Data[accessKeyIDKey]
-				if !ok {
-					return fmt.Errorf("s3 credentials secret is missing %s key", accessKeyIDKey)
-				}
-				secretAccessKey, ok := s3Secret.Data[secretAccessKeyKey]
-				if !ok {
-					return fmt.Errorf("s3 credentials secret is missing %s key", secretAccessKeyKey)
-				}
-
-				defaultConfig, err := config.LoadDefaultConfig(ctx,
-					config.WithRegion(hostedControlPlane.Spec.ETCD.Backup.Region),
-					config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-						string(accessKeyID),
-						string(secretAccessKey),
-						"",
-					)),
-				)
-				if err != nil {
-					return fmt.Errorf("failed to load AWS config: %w", err)
-				}
-				uploader := manager.NewUploader(s3.NewFromConfig(defaultConfig))
-				if _, err := uploader.Upload(ctx, &s3.PutObjectInput{
-					Bucket: aws.String(hostedControlPlane.Spec.ETCD.Backup.Bucket),
-					Key:    aws.String(fmt.Sprintf("%s/%s.etcd", cluster.Name, time.Now().Format(time.RFC3339))),
-					Body:   snapshotResponse.Snapshot,
-				}); err != nil {
+				if err := er.s3Client.Upload(ctx, snapshotResponse.Snapshot); err != nil {
 					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", err)
 				}
+
 				hostedControlPlane.Status.ETCDLastBackupTime = metav1.NewTime(time.Now())
 				hostedControlPlane.Status.ETCDNextBackupTime = metav1.NewTime(
 					schedule.Next(hostedControlPlane.Status.ETCDLastBackupTime.Time),
@@ -354,18 +301,10 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 func (er *etcdClusterReconciler) reconcileETCDSpaceUsage(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv2.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, er.Tracer, "ReconcileETCDSpaceUsage",
 		func(ctx context.Context, span trace.Span) (err error) {
-			statuses, err := callETCDFuncOnAllMembers(
-				ctx,
-				er.KubernetesClient,
-				hostedControlPlane,
-				cluster,
-				er.etcdServerPort,
-				clientv3.Client.Status,
-			)
+			statuses, err := er.etcdClient.GetStatuses(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to get etcd member statuses: %w", err)
 			}
@@ -388,149 +327,6 @@ func (er *etcdClusterReconciler) reconcileETCDSpaceUsage(
 			)
 
 			return nil
-		},
-	)
-}
-
-func callETCDFuncOnAllMembers[R any](
-	ctx context.Context,
-	kubernetesClient kubernetes.Interface,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv2.Cluster,
-	etcdServerPort int32,
-	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (*R, error),
-) (map[string]*R, error) {
-	return tracing.WithSpan(ctx, "EtcdCluster", "CallETCDFuncOnAllMembers",
-		func(ctx context.Context, span trace.Span) (map[string]*R, error) {
-			caPool, clientCertificate, err := getETCDConnectionTLS(ctx, kubernetesClient, hostedControlPlane, cluster)
-			if err != nil {
-				return nil, err
-			}
-			endpoints := slices.MapValues(names.GetEtcdDNSNames(cluster), func(endpoint string, _ string) string {
-				return fmt.Sprintf("https://%s", net.JoinHostPort(endpoint, strconv.Itoa(int(etcdServerPort))))
-			})
-			results := make(map[string]*R, len(endpoints))
-			var errs error
-			for _, endpoint := range endpoints {
-				result, err := callETCDFuncOnMember(ctx, endpoint, caPool, clientCertificate, etcdFunc)
-				errs = errors.Join(errs, err)
-				results[endpoint] = result
-			}
-
-			return results, errs
-		},
-	)
-}
-
-func getETCDConnectionTLS(
-	ctx context.Context,
-	kubernetesClient kubernetes.Interface,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv2.Cluster,
-) (*x509.CertPool, tls.Certificate, error) {
-	return tracing.WithSpan3(ctx, "EtcdCluster", "GetETCDConnectionTLS",
-		func(ctx context.Context, span trace.Span) (*x509.CertPool, tls.Certificate, error) {
-			secrets := kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace)
-			etcdCASecret, err := secrets.
-				Get(ctx, names.GetEtcdCASecretName(cluster), metav1.GetOptions{})
-			if err != nil {
-				return nil, tls.Certificate{}, fmt.Errorf("failed to get etcd CA secret: %w", err)
-			}
-
-			caPool := x509.NewCertPool()
-			if !caPool.AppendCertsFromPEM(etcdCASecret.Data[corev1.TLSCertKey]) {
-				return nil, tls.Certificate{}, errETCDCAFailedToAppend
-			}
-
-			clientCertificateSecret, err := secrets.
-				Get(ctx, names.GetEtcdControllerClientCertificateSecretName(cluster), metav1.GetOptions{})
-			if err != nil {
-				return nil, tls.Certificate{}, fmt.Errorf(
-					"failed to get etcd API server client certificate secret: %w",
-					err,
-				)
-			}
-			clientCertificate, err := tls.X509KeyPair(
-				clientCertificateSecret.Data[corev1.TLSCertKey],
-				clientCertificateSecret.Data[corev1.TLSPrivateKeyKey],
-			)
-			if err != nil {
-				return nil, tls.Certificate{}, fmt.Errorf("failed to load etcd API server client certificate: %w", err)
-			}
-			return caPool, clientCertificate, nil
-		},
-	)
-}
-
-func callETCDFuncOnMember[R any](
-	ctx context.Context,
-	endpoint string,
-	caPool *x509.CertPool,
-	clientCertificate tls.Certificate,
-	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (R, error),
-) (R, error) {
-	return tracing.WithSpan(ctx, "EtcdCluster", "CallETCDFuncOnMember",
-		func(ctx context.Context, span trace.Span) (R, error) {
-			span.SetAttributes(
-				attribute.String("etcd.endpoint", endpoint),
-			)
-			etcdConfig := clientv3.Config{
-				Endpoints: []string{endpoint},
-				Logger:    zap.NewNop(),
-				TLS: &tls.Config{
-					InsecureSkipVerify: false,
-					RootCAs:            caPool,
-					Certificates:       []tls.Certificate{clientCertificate},
-					MinVersion:         tls.VersionTLS12,
-				},
-				DialTimeout: 10 * time.Second,
-			}
-			etcdClient, err := clientv3.New(etcdConfig)
-			if err != nil {
-				return *new(R), fmt.Errorf("failed to create etcd client for endpoint %s: %w", endpoint, err)
-			}
-			defer func() {
-				if closeErr := etcdClient.Close(); closeErr != nil {
-					err = errors.Join(
-						err,
-						fmt.Errorf("failed to close etcd client for endpoint %s: %w", endpoint, closeErr),
-					)
-				}
-			}()
-
-			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-
-			return etcdFunc(*etcdClient, ctx, endpoint)
-		},
-	)
-}
-
-func callETCDFuncOnAnyMember[R any](
-	ctx context.Context,
-	kubernetesClient kubernetes.Interface,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv2.Cluster,
-	etcdServerPort int32,
-	etcdFunc func(client clientv3.Client, ctx context.Context) (R, error),
-) (R, error) {
-	return tracing.WithSpan(ctx, "EtcdCluster", "CallETCDFuncOnAnyMember",
-		func(ctx context.Context, span trace.Span) (R, error) {
-			caPool, clientCertificate, err := getETCDConnectionTLS(ctx, kubernetesClient, hostedControlPlane, cluster)
-			if err != nil {
-				return *new(R), err
-			}
-
-			endpoint := fmt.Sprintf("https://%s", net.JoinHostPort(
-				names.GetEtcdClientServiceDNSName(cluster),
-				strconv.Itoa(int(etcdServerPort)),
-			))
-
-			return callETCDFuncOnMember(ctx, endpoint, caPool, clientCertificate,
-				func(client clientv3.Client, ctx context.Context, _ string) (R, error) {
-					return etcdFunc(client, ctx)
-				},
-			)
 		},
 	)
 }
@@ -665,7 +461,7 @@ func (er *etcdClusterReconciler) reconcileStatefulSet(
 				return false, nil
 			}
 
-			return true, er.etcdIsHealthy(ctx, hostedControlPlane, cluster)
+			return true, er.etcdIsHealthy(ctx, hostedControlPlane)
 		},
 	)
 }
@@ -673,51 +469,33 @@ func (er *etcdClusterReconciler) reconcileStatefulSet(
 func (er *etcdClusterReconciler) etcdIsHealthy(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv2.Cluster,
 ) error {
-	alarmResponse, err := callETCDFuncOnAnyMember(
-		ctx,
-		er.KubernetesClient,
-		hostedControlPlane,
-		cluster,
-		er.etcdServerPort,
-		clientv3.Client.AlarmList,
-	)
+	alarmResponse, err := er.etcdClient.ListAlarms(ctx)
 	if err != nil {
 		return err
 	}
 	if len(alarmResponse.Alarms) > 0 {
-		var outOfSpaceAlarms []*etcdserverpb.AlarmMember
+		var ignoredAlarms []*etcdserverpb.AlarmMember
 		if hostedControlPlane.Spec.ETCD.AutoGrow {
 			// Disarm NOSPACE, as we automatically upscale the storage and the alarm is not relevant anymore.
-			outOfSpaceAlarms = slices.Filter(alarmResponse.Alarms, func(alarm *etcdserverpb.AlarmMember, _ int) bool {
+			ignoredAlarms = slices.Filter(alarmResponse.Alarms, func(alarm *etcdserverpb.AlarmMember, _ int) bool {
 				return alarm.Alarm == etcdserverpb.AlarmType_NOSPACE
 			})
-			for _, outdatedAlarm := range outOfSpaceAlarms {
-				_, err := callETCDFuncOnAnyMember(
-					ctx,
-					er.KubernetesClient,
-					hostedControlPlane,
-					cluster,
-					er.etcdServerPort,
-					func(client clientv3.Client, ctx context.Context) (*clientv3.AlarmResponse, error) {
-						er.recorder.Eventf(
-							hostedControlPlane,
-							corev1.EventTypeNormal,
-							"EtcdAlarmDisarm",
-							"Disarmed etcd alarm %s for member %d",
-							outdatedAlarm.Alarm.String(),
-							outdatedAlarm.MemberID,
-						)
-						return client.AlarmDisarm(ctx, (*clientv3.AlarmMember)(outdatedAlarm))
-					},
-				)
-				if err != nil {
-					return fmt.Errorf("failed to disarm etcd alarm for non-existent member: %w", err)
+			for _, outdatedAlarm := range ignoredAlarms {
+				if err := er.etcdClient.DisarmAlarm(ctx, (*clientv3.AlarmMember)(outdatedAlarm)); err != nil {
+					return err
 				}
+				er.recorder.Eventf(
+					hostedControlPlane,
+					corev1.EventTypeNormal,
+					"EtcdAlarmDisarm",
+					"Disarmed etcd alarm %s for member %d",
+					outdatedAlarm.Alarm.String(),
+					outdatedAlarm.MemberID,
+				)
 			}
 		}
-		activeAlarms, _ := slices.Difference(alarmResponse.Alarms, outOfSpaceAlarms)
+		activeAlarms, _ := slices.Difference(alarmResponse.Alarms, ignoredAlarms)
 		if len(activeAlarms) > 0 {
 			return fmt.Errorf("etcd cluster has active alarms: %w", errors.Join(slices.Map(activeAlarms,
 				func(alarm *etcdserverpb.AlarmMember, _ int) error {
