@@ -34,7 +34,7 @@ type KonnectivityReconciler interface {
 }
 
 func NewKonnectivityReconciler(
-	kubernetesClient *alias.WorkloadClusterClient,
+	kubernetesClient alias.WorkloadClusterClient,
 	konnectivityNamespace string,
 	konnectivityServiceAccount string,
 	konnectivityServerAudience string,

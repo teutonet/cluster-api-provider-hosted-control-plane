@@ -27,7 +27,7 @@ type CoreDNSReconciler interface {
 }
 
 func NewCoreDNSReconciler(
-	kubernetesClient *alias.WorkloadClusterClient,
+	kubernetesClient alias.WorkloadClusterClient,
 	serviceDomain string,
 	dnsIP net.IP,
 ) CoreDNSReconciler {

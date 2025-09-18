@@ -21,7 +21,7 @@ import (
 
 type WorkloadResourceReconciler struct {
 	Tracer           string
-	KubernetesClient *alias.WorkloadClusterClient
+	KubernetesClient alias.WorkloadClusterClient
 }
 
 func (wr *WorkloadResourceReconciler) convertToPeerApplyConfigurations(

@@ -19,7 +19,7 @@ import (
 )
 
 type ManagementCluster interface {
-	GetWorkloadClusterClient(ctx context.Context, cluster *capiv2.Cluster) (*alias.WorkloadClusterClient, error)
+	GetWorkloadClusterClient(ctx context.Context, cluster *capiv2.Cluster) (alias.WorkloadClusterClient, error)
 }
 
 func NewManagementCluster(
@@ -47,9 +47,9 @@ var _ ManagementCluster = &management{}
 func (m *management) GetWorkloadClusterClient(
 	ctx context.Context,
 	cluster *capiv2.Cluster,
-) (*alias.WorkloadClusterClient, error) {
+) (alias.WorkloadClusterClient, error) {
 	return tracing.WithSpan(ctx, "managementCluster", "GetWorkloadClusterClient",
-		func(ctx context.Context, span trace.Span) (*alias.WorkloadClusterClient, error) {
+		func(ctx context.Context, span trace.Span) (alias.WorkloadClusterClient, error) {
 			span.SetAttributes(
 				attribute.String(
 					"kubeconfig.secret.name",
@@ -71,7 +71,8 @@ func (m *management) GetWorkloadClusterClient(
 			restConfig.Timeout = 10 * time.Second
 			restConfig.Wrap(m.tracingWrapper)
 
-			workloadClusterClient, err := kubernetes.NewForConfig(restConfig)
+			var workloadClusterClient kubernetes.Interface
+			workloadClusterClient, err = kubernetes.NewForConfig(restConfig)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create Kubernetes client for workload cluster: %w", err)
 			}

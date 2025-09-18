@@ -43,7 +43,7 @@ type KubeProxyReconciler interface {
 }
 
 func NewKubeProxyReconciler(
-	kubernetesClient *alias.WorkloadClusterClient,
+	kubernetesClient alias.WorkloadClusterClient,
 	podCIDR string,
 ) KubeProxyReconciler {
 	return &kubeProxyReconciler{

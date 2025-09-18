@@ -46,7 +46,7 @@ type ConfigReconciler interface {
 }
 
 func NewConfigReconciler(
-	kubernetesClient *alias.WorkloadClusterClient,
+	kubernetesClient alias.WorkloadClusterClient,
 	caCertificateDuration time.Duration,
 	certificateDuration time.Duration,
 	serviceDomain string,

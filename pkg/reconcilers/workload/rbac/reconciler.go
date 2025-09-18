@@ -26,7 +26,7 @@ type RBACReconciler interface {
 }
 
 func NewRBACReconciler(
-	kubernetesClient *alias.WorkloadClusterClient,
+	kubernetesClient alias.WorkloadClusterClient,
 	kubeadmKubeletConfigMapNamespace string,
 	kubeadmConfigConfigMapName string,
 	kubeletConfigMapName string,
@@ -45,7 +45,7 @@ func NewRBACReconciler(
 }
 
 type rbacReconciler struct {
-	kubernetesClient                 *alias.WorkloadClusterClient
+	kubernetesClient                 alias.WorkloadClusterClient
 	tracer                           string
 	kubeadmConfigConfigMapName       string
 	kubeletConfigMapName             string
