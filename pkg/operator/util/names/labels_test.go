@@ -85,23 +85,23 @@ func TestGetControlPlaneLabels(t *testing.T) {
 			cluster.Name = tt.clusterName
 			result := GetControlPlaneLabels(cluster, tt.component)
 
-			g.Expect(result).To(Equal(tt.expected), "GetControlPlaneLabels() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 
 			// Verify the cluster name label is always present
 			clusterLabel, exists := result["cluster.x-k8s.io/cluster-name"]
-			g.Expect(exists).To(BeTrue(), "GetControlPlaneLabels() missing required cluster-name label")
+			g.Expect(exists).To(BeTrue())
 			g.Expect(clusterLabel).
-				To(Equal(tt.clusterName), "GetControlPlaneLabels() cluster-name label = %v, want %v", clusterLabel, tt.clusterName)
+				To(Equal(tt.clusterName))
 
 			// Verify component label is only present when component is not empty
 			if tt.component == "" {
 				_, exists := result["app.kubernetes.io/component"]
 				g.Expect(exists).
-					To(BeFalse(), "GetControlPlaneLabels() should not include component label when component is empty")
+					To(BeFalse())
 			} else {
 				componentLabel, exists := result["app.kubernetes.io/component"]
-				g.Expect(exists).To(BeTrue(), "GetControlPlaneLabels() missing component label when component is provided")
-				g.Expect(componentLabel).To(Equal(tt.component), "GetControlPlaneLabels() component label = %v, want %v", componentLabel, tt.component)
+				g.Expect(exists).To(BeTrue())
+				g.Expect(componentLabel).To(Equal(tt.component))
 			}
 		})
 	}
@@ -150,13 +150,13 @@ func TestGetControlPlaneSelector(t *testing.T) {
 			result := GetControlPlaneSelector(cluster, tt.component)
 
 			// Verify the selector is not nil
-			g.Expect(result).NotTo(BeNil(), "GetControlPlaneSelector() returned nil")
+			g.Expect(result).NotTo(BeNil())
 
 			// Verify MatchLabels is set correctly
-			g.Expect(result.MatchLabels).NotTo(BeNil(), "GetControlPlaneSelector() MatchLabels is nil")
+			g.Expect(result.MatchLabels).NotTo(BeNil())
 
 			g.Expect(result.MatchLabels).
-				To(Equal(tt.expected), "GetControlPlaneSelector() MatchLabels = %v, want %v", result.MatchLabels, tt.expected)
+				To(Equal(tt.expected))
 		})
 	}
 }
@@ -182,8 +182,8 @@ func TestGetControlPlaneLabelsSelectorConsistency(t *testing.T) {
 			labels := GetControlPlaneLabels(cluster, tc.component)
 			selector := GetControlPlaneSelector(cluster, tc.component)
 
-			g.Expect(selector).NotTo(BeNil(), "GetControlPlaneSelector() returned nil selector")
-			g.Expect(selector.MatchLabels).NotTo(BeNil(), "GetControlPlaneSelector() returned invalid selector")
+			g.Expect(selector).NotTo(BeNil())
+			g.Expect(selector.MatchLabels).NotTo(BeNil())
 
 			g.Expect(labels).To(
 				Equal(selector.MatchLabels),

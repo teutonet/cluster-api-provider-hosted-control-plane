@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	. "github.com/onsi/gomega"
 	slices "github.com/samber/lo"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	corev1 "k8s.io/api/core/v1"
@@ -22,6 +21,7 @@ func getConcreteReconciler(r KubeconfigReconciler) *kubeconfigReconciler {
 }
 
 func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name               string
 		hostedControlPlane *v1alpha1.HostedControlPlane
@@ -135,13 +135,13 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 					"admin",
 					"test-cluster-admin",
 				)
-				require.NoError(t, err)
+				g.Expect(err).NotTo(HaveOccurred())
 
 				expectedServer := fmt.Sprintf("https://%s", tt.cluster.Spec.ControlPlaneEndpoint.String())
-				assert.Equal(t, expectedServer, kubeconfig.Clusters[tt.cluster.Name].Server)
-				assert.NotEmpty(t, kubeconfig.Clusters[tt.cluster.Name].CertificateAuthorityData)
-				assert.NotEmpty(t, kubeconfig.AuthInfos["admin"].ClientCertificateData)
-				assert.NotEmpty(t, kubeconfig.AuthInfos["admin"].ClientKeyData)
+				g.Expect(kubeconfig.Clusters[tt.cluster.Name].Server).To(Equal(expectedServer))
+				g.Expect(kubeconfig.Clusters[tt.cluster.Name].CertificateAuthorityData).ToNot(BeEmpty())
+				g.Expect(kubeconfig.AuthInfos["admin"].ClientCertificateData).ToNot(BeEmpty())
+				g.Expect(kubeconfig.AuthInfos["admin"].ClientKeyData).ToNot(BeEmpty())
 			} else {
 				_, err := getConcreteReconciler(reconciler).generateKubeconfig(
 					ctx,
@@ -150,13 +150,14 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 					"admin",
 					"test-cluster-admin",
 				)
-				assert.Error(t, err)
+				g.Expect(err).To(HaveOccurred())
 			}
 		})
 	}
 }
 
 func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
+	g := NewWithT(t)
 	tests := []struct {
 		name            string
 		cluster         *capiv2.Cluster
@@ -250,26 +251,27 @@ func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
 			kubeconfig, err := getConcreteReconciler(
 				reconciler,
 			).generateKubeconfig(ctx, tt.cluster, endpoint, userName, certSecretName)
-			require.NoError(t, err)
+			g.Expect(err).NotTo(HaveOccurred())
 
-			assert.Contains(t, kubeconfig.Clusters, tt.cluster.Name)
+			g.Expect(kubeconfig.Clusters).To(HaveKey(tt.cluster.Name))
 			cluster := kubeconfig.Clusters[tt.cluster.Name]
-			assert.Equal(t, tt.expectedServer, cluster.Server)
+			g.Expect(cluster.Server).To(Equal(tt.expectedServer))
 
-			assert.Equal(t, tt.expectedContext, kubeconfig.CurrentContext)
-			assert.Contains(t, kubeconfig.Contexts, tt.expectedContext)
+			g.Expect(kubeconfig.CurrentContext).To(Equal(tt.expectedContext))
+			g.Expect(kubeconfig.Contexts).To(HaveKey(tt.expectedContext))
 
-			assert.Contains(t, kubeconfig.AuthInfos, userName)
+			g.Expect(kubeconfig.AuthInfos).To(HaveKey(userName))
 			authInfo := kubeconfig.AuthInfos[userName]
-			assert.NotEmpty(t, authInfo.ClientCertificateData)
-			assert.NotEmpty(t, authInfo.ClientKeyData)
+			g.Expect(authInfo.ClientCertificateData).ToNot(BeEmpty())
+			g.Expect(authInfo.ClientKeyData).ToNot(BeEmpty())
 
-			assert.NotEmpty(t, cluster.CertificateAuthorityData)
+			g.Expect(cluster.CertificateAuthorityData).ToNot(BeEmpty())
 		})
 	}
 }
 
 func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
+	g := NewWithT(t)
 	cluster := &capiv2.Cluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
@@ -294,7 +296,7 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 	ctx := t.Context()
 	endpoint := capiv2.APIEndpoint{Host: "api.example.com", Port: 443}
 	kubeconfig1, err := reconciler.generateKubeconfig(ctx, cluster, endpoint, "admin", "test-cluster-admin-kubeconfig")
-	require.NoError(t, err)
+	g.Expect(err).NotTo(HaveOccurred())
 
 	updatedCertSecret := oldCertSecret.DeepCopy()
 	updatedCertSecret.Data[corev1.TLSCertKey] = []byte("new-cert-data")
@@ -302,25 +304,26 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 
 	_, err = kubeClient.CoreV1().Secrets(cluster.Namespace).Update(
 		ctx, updatedCertSecret, metav1.UpdateOptions{})
-	require.NoError(t, err)
+	g.Expect(err).NotTo(HaveOccurred())
 
 	kubeconfig2, err := reconciler.generateKubeconfig(ctx, cluster, endpoint, "admin", "test-cluster-admin-kubeconfig")
-	require.NoError(t, err)
+	g.Expect(err).NotTo(HaveOccurred())
 
 	authInfo1 := kubeconfig1.AuthInfos["admin"]
 	authInfo2 := kubeconfig2.AuthInfos["admin"]
 
-	assert.Equal(t, []byte("old-cert-data"), authInfo1.ClientCertificateData)
-	assert.Equal(t, []byte("old-key-data"), authInfo1.ClientKeyData)
+	g.Expect(authInfo1.ClientCertificateData).To(Equal([]byte("old-cert-data")))
+	g.Expect(authInfo1.ClientKeyData).To(Equal([]byte("old-key-data")))
 
-	assert.Equal(t, []byte("new-cert-data"), authInfo2.ClientCertificateData)
-	assert.Equal(t, []byte("new-key-data"), authInfo2.ClientKeyData)
+	g.Expect(authInfo2.ClientCertificateData).To(Equal([]byte("new-cert-data")))
+	g.Expect(authInfo2.ClientKeyData).To(Equal([]byte("new-key-data")))
 
-	assert.Equal(t, kubeconfig1.CurrentContext, kubeconfig2.CurrentContext)
-	assert.Equal(t, kubeconfig1.Clusters[cluster.Name].Server, kubeconfig2.Clusters[cluster.Name].Server)
+	g.Expect(kubeconfig1.CurrentContext).To(Equal(kubeconfig2.CurrentContext))
+	g.Expect(kubeconfig1.Clusters[cluster.Name].Server).To(Equal(kubeconfig2.Clusters[cluster.Name].Server))
 }
 
 func TestKubeconfigReconciler_MultiUserScenarios(t *testing.T) {
+	g := NewWithT(t)
 	cluster := &capiv2.Cluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
@@ -362,7 +365,7 @@ func TestKubeconfigReconciler_MultiUserScenarios(t *testing.T) {
 		kubeconfig, err := getConcreteReconciler(
 			reconciler,
 		).generateKubeconfig(ctx, cluster, endpoint, user.name, user.secretName)
-		require.NoError(t, err, "Failed to generate kubeconfig for user %s", user.name)
+		g.Expect(err).NotTo(HaveOccurred())
 		kubeconfigs[user.name] = kubeconfig
 	}
 
@@ -370,22 +373,21 @@ func TestKubeconfigReconciler_MultiUserScenarios(t *testing.T) {
 		kubeconfig := kubeconfigs[user.name]
 
 		expectedContext := fmt.Sprintf("%s@%s", user.name, cluster.Name)
-		assert.Equal(t, expectedContext, kubeconfig.CurrentContext)
+		g.Expect(kubeconfig.CurrentContext).To(Equal(expectedContext))
 
-		assert.Contains(t, kubeconfig.AuthInfos, user.name)
-		assert.NotEmpty(t, kubeconfig.AuthInfos[user.name].ClientCertificateData)
-		assert.NotEmpty(t, kubeconfig.AuthInfos[user.name].ClientKeyData)
+		g.Expect(kubeconfig.AuthInfos).To(HaveKey(user.name))
+		g.Expect(kubeconfig.AuthInfos[user.name].ClientCertificateData).ToNot(BeEmpty())
+		g.Expect(kubeconfig.AuthInfos[user.name].ClientKeyData).ToNot(BeEmpty())
 
-		assert.Contains(t, kubeconfig.Clusters, cluster.Name)
+		g.Expect(kubeconfig.Clusters).To(HaveKey(cluster.Name))
 		clusterInfo := kubeconfig.Clusters[cluster.Name]
-		assert.Equal(t, "https://api.example.com:443", clusterInfo.Server)
-		assert.NotEmpty(t, clusterInfo.CertificateAuthorityData)
+		g.Expect(clusterInfo.Server).To(Equal("https://api.example.com:443"))
+		g.Expect(clusterInfo.CertificateAuthorityData).ToNot(BeEmpty())
 	}
 
 	caData := kubeconfigs["admin"].Clusters[cluster.Name].CertificateAuthorityData
 	for _, user := range users {
-		assert.Equal(t, caData, kubeconfigs[user.name].Clusters[cluster.Name].CertificateAuthorityData,
-			"All kubeconfigs should use the same CA data")
+		g.Expect(kubeconfigs[user.name].Clusters[cluster.Name].CertificateAuthorityData).To(Equal(caData))
 	}
 }
 

@@ -1,0 +1,74 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      upload_url: ${{ steps.release.outputs.upload_url }}
+    steps:
+      - uses: google-github-actions/release-please-action@v4
+        id: release
+        with:
+          release-type: go
+          token: ${{ secrets.ACTIONS_BOT_TOKEN }}
+          config-file: .github/release-please/config.json
+          manifest-file: .github/release-please/manifest.json
+
+  build-and-release:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ./go.mod
+
+      - env:
+          IMAGE: ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}
+        run: task build
+
+      - name: Log in to Container Registry
+        run: |
+          echo ${{ secrets.ACTIONS_BOT_TOKEN }} | buildah login --username ${{ github.actor }} --password-stdin ghcr.io
+
+      - env:
+          IMAGE: ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}
+        run: |          
+          buildah manifest push --all ${IMAGE}
+
+      - name: Upload manifests
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACTIONS_BOT_TOKEN }}
+        with:
+          upload_url: ${{ needs.release-please.outputs.upload_url }}
+          asset_path: ./build/control-plane-components.yaml
+          asset_name: control-plane-components.yaml
+          asset_content_type: application/yaml
+
+      - name: Release draft
+        run: |
+          gh release edit ${{ needs.release-please.outputs.tag_name }} --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.ACTIONS_BOT_TOKEN }}

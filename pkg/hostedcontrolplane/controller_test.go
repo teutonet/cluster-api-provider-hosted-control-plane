@@ -275,20 +275,13 @@ func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
 
 		ctx := t.Context()
 
-		g.Expect(hostedControlPlane.Finalizers).To(BeEmpty())
-
 		result, err := reconciler.Reconcile(ctx, req)
-		// The controller should handle the resource gracefully even if the full
-		// reconcile doesn't complete due to missing infrastructure
 		if err != nil {
-			// If there's an error, it should be a reasonable error (not a panic or nil pointer)
-			g.Expect(err.Error()).NotTo(BeEmpty())
+			g.Expect(err).To(MatchError(Not(BeEmpty())))
 		}
 
-		// Should requeue in some form (either immediate or timed)
 		g.Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
-		// Get the updated resource to see what the controller did
 		updatedHCP := &v1alpha1.HostedControlPlane{}
 		err = fakeClient.Get(ctx, types.NamespacedName{
 			Name:      hostedControlPlane.Name,
@@ -296,8 +289,6 @@ func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
 		}, updatedHCP)
 		g.Expect(err).NotTo(HaveOccurred())
 
-		// Test that the controller at least processed the resource
-		// (Status conditions should be updated even if finalizer isn't added due to paused state)
 		g.Expect(len(updatedHCP.Status.Conditions)).To(BeNumerically(">=", 0)) // Should have some status
 	})
 
@@ -491,6 +482,6 @@ func TestHostedControlPlaneReconciler_NonExistentResource(t *testing.T) {
 	ctx := t.Context()
 	result, err := reconciler.Reconcile(ctx, req)
 
-	g.Expect(err).NotTo(HaveOccurred(), "Should handle non-existent resources gracefully")
-	g.Expect(result).To(Equal(ctrl.Result{}), "Should return empty result for non-existent resources")
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result).To(Equal(ctrl.Result{}))
 }

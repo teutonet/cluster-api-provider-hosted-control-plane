@@ -41,7 +41,7 @@ func TestGetRootIssuerName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetRootIssuerName(cluster)
-			g.Expect(result).To(Equal(tt.expected), "GetRootIssuerName() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
@@ -70,7 +70,7 @@ func TestGetCAIssuerName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetCAIssuerName(cluster)
-			g.Expect(result).To(Equal(tt.expected), "GetCAIssuerName() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
@@ -99,7 +99,7 @@ func TestGetServiceName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetServiceName(cluster)
-			g.Expect(result).To(Equal(tt.expected), "GetServiceName() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
@@ -138,7 +138,7 @@ func TestGetInternalServiceHost(t *testing.T) {
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
 			result := GetInternalServiceHost(cluster)
-			g.Expect(result).To(Equal(tt.expected), "GetInternalServiceHost() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
@@ -171,7 +171,7 @@ func TestGetEtcdClientServiceDNSName(t *testing.T) {
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
 			result := GetEtcdClientServiceDNSName(cluster)
-			g.Expect(result).To(Equal(tt.expected), "GetEtcdClientServiceDNSName() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
@@ -212,10 +212,10 @@ func TestGetEtcdDNSNames(t *testing.T) {
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
 			result := GetEtcdDNSNames(cluster)
-			g.Expect(result).To(Equal(tt.expected), "GetEtcdDNSNames() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 
 			// Verify we always get exactly 3 entries
-			g.Expect(result).To(HaveLen(3), "GetEtcdDNSNames() returned %d entries, want 3", len(result))
+			g.Expect(result).To(HaveLen(3))
 		})
 	}
 }
@@ -259,7 +259,7 @@ func TestGetKubeconfigSecretName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetKubeconfigSecretName(cluster, tt.kubeconfigName)
-			g.Expect(result).To(Equal(tt.expected), "GetKubeconfigSecretName() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
@@ -298,7 +298,7 @@ func TestGetKonnectivityServerHost(t *testing.T) {
 			cluster.Name = tt.clusterName
 			cluster.Spec.ControlPlaneEndpoint.Host = tt.controlPlaneEndpointHost
 			result := GetKonnectivityServerHost(cluster)
-			g.Expect(result).To(Equal(tt.expected), "GetKonnectivityServerHost() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
@@ -327,7 +327,7 @@ func TestGetTLSRouteName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetTLSRouteName(cluster)
-			g.Expect(result).To(Equal(tt.expected), "GetTLSRouteName() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
@@ -356,7 +356,7 @@ func TestGetKonnectivityTLSRouteName(t *testing.T) {
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetKonnectivityTLSRouteName(cluster)
-			g.Expect(result).To(Equal(tt.expected), "GetKonnectivityTLSRouteName() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
@@ -395,7 +395,7 @@ func TestCertificateNames(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.function(cluster)
-			g.Expect(result).To(Equal(tt.expected), "%s() = %v, want %v", tt.name, result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }

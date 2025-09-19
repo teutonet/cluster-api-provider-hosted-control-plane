@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"testing"
 	"time"
 
@@ -192,18 +191,13 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 			}
 
 			result := reconciler.getETCDVolumeSize(tt.hostedControlPlane)
-			close(recorder.Events)
 
-			g.Expect(result.Cmp(tt.expectedSize)).
-				To(Equal(0), "Expected volume size %s, got %s", tt.expectedSize.String(), result.String())
+			g.Expect(result.Cmp(tt.expectedSize)).To(Equal(0))
 
 			if tt.hostedControlPlane.Spec.ETCD.AutoGrow && result.Cmp(tt.hostedControlPlane.Status.ETCDVolumeSize) > 0 {
-				events := slices.ChannelToSlice(recorder.Events)
-				g.Expect(events).NotTo(BeEmpty(), "Expected event to be recorded for volume auto-resize")
-
-				g.Expect(slices.SomeBy(events, func(event string) bool {
-					return strings.Contains(event, etcdVolumeSizeReCalculatedEvent)
-				})).To(BeTrue(), "Expected auto-resize event, got: %v", events)
+				g.Expect(recorder.Events).To(Receive(
+					ContainSubstring(etcdVolumeSizeReCalculatedEvent),
+				))
 			}
 		})
 	}
@@ -267,14 +261,14 @@ func TestEtcdClusterReconciler_ErrorHandling_InvalidVolumeData(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			defer func() {
 				if r := recover(); r != nil && !tt.expectPanicRecovery {
-					g.Expect(r).To(BeNil(), "Unexpected panic: %v", r)
+					g.Expect(r).To(BeNil())
 				}
 			}()
 
 			result := reconciler.getETCDVolumeSize(tt.hostedControlPlane)
 
 			g.Expect(result.Cmp(tt.expectedVolumeSize)).
-				To(Equal(0), "%s: expected %s, got %s", tt.description, tt.expectedVolumeSize.String(), result.String())
+				To(Equal(0))
 		})
 	}
 }
@@ -349,19 +343,16 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 			result := reconciler.getETCDVolumeSize(hcp)
 			expectedQuantity := resource.MustParse(tt.expectedSize)
 
-			g.Expect(result.Cmp(expectedQuantity)).
-				To(Equal(0), "%s: expected %s, got %s", tt.description, tt.expectedSize, result.String())
+			g.Expect(result.Cmp(expectedQuantity)).To(Equal(0))
 
-			close(recorder.Events)
-			events := slices.ChannelToSlice(recorder.Events)
-
-			hasGrowthEvent := slices.SomeBy(events, func(event string) bool {
-				return strings.Contains(event, etcdVolumeSizeReCalculatedEvent)
-			})
 			if tt.expectedGrowth {
-				g.Expect(hasGrowthEvent).To(BeTrue(), "%s: expected growth event to be recorded", tt.description)
+				g.Expect(recorder.Events).To(Receive(
+					ContainSubstring(etcdVolumeSizeReCalculatedEvent),
+				))
 			} else {
-				g.Expect(hasGrowthEvent).To(BeFalse(), "%s: unexpected growth event recorded", tt.description)
+				g.Expect(recorder.Events).ToNot(Receive(
+					ContainSubstring(etcdVolumeSizeReCalculatedEvent),
+				))
 			}
 		})
 	}
@@ -392,8 +383,7 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 
 		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp)
 
-		g.Expect(err).To(HaveOccurred(), "Should return error when etcd status fails")
-		g.Expect(err.Error()).To(ContainSubstring("connection refused"), "Error should include original etcd error")
+		g.Expect(err).To(MatchError(ContainSubstring("connection refused")))
 	})
 
 	t.Run("should update volume usage from etcd status", func(t *testing.T) {
@@ -454,8 +444,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 
 		err := reconciler.etcdIsHealthy(ctx, hcp)
 
-		g.Expect(err).To(HaveOccurred())
-		g.Expect(err.Error()).To(ContainSubstring("failed to list alarms"))
+		g.Expect(err).To(MatchError(ContainSubstring("failed to list alarms")))
 	})
 
 	t.Run("should disarm NOSPACE alarms when autogrow is enabled", func(t *testing.T) {
@@ -486,9 +475,9 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 		err := reconciler.etcdIsHealthy(ctx, hcp)
 
 		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(slices.SomeBy(stub.ActiveAlarms, func(a *etcdserverpb.AlarmMember) bool {
-			return a.Alarm == etcdserverpb.AlarmType_NOSPACE
-		})).To(BeFalse(), "NOSPACE alarm should be disarmed")
+		g.Expect(stub.ActiveAlarms).ToNot(ContainElement(
+			HaveField("Alarm", etcdserverpb.AlarmType_NOSPACE),
+		))
 	})
 
 	t.Run("should return error for active NOSPACE alarms when autogrow is disabled", func(t *testing.T) {
@@ -518,12 +507,10 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 
 		err := reconciler.etcdIsHealthy(ctx, hcp)
 
-		g.Expect(err).To(HaveOccurred())
-		g.Expect(err.Error()).
-			To(ContainSubstring(etcdserverpb.AlarmType_NOSPACE.String()), "Error should mention NOSPACE alarm")
-		g.Expect(slices.SomeBy(stub.ActiveAlarms, func(a *etcdserverpb.AlarmMember) bool {
-			return a.Alarm == etcdserverpb.AlarmType_NOSPACE
-		})).To(BeTrue(), "NOSPACE alarm should remain active")
+		g.Expect(err).To(MatchError(ContainSubstring(etcdserverpb.AlarmType_NOSPACE.String())))
+		g.Expect(stub.ActiveAlarms).To(ContainElement(
+			HaveField("Alarm", etcdserverpb.AlarmType_NOSPACE),
+		))
 	})
 
 	t.Run("should return error for active non-NOSPACE alarms", func(t *testing.T) {
@@ -553,8 +540,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 
 		err := reconciler.etcdIsHealthy(ctx, hcp)
 
-		g.Expect(err).To(HaveOccurred())
-		g.Expect(err.Error()).To(ContainSubstring(etcdserverpb.AlarmType_CORRUPT.String()))
+		g.Expect(err).To(MatchError(ContainSubstring(etcdserverpb.AlarmType_CORRUPT.String())))
 	})
 
 	t.Run("should pass when no alarms present", func(t *testing.T) {
@@ -608,17 +594,18 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
-		g.Expect(err).NotTo(HaveOccurred(), "Backup reconciliation should succeed")
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(1), "S3 upload should be called exactly once")
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(s3ClientStub.UploadCallCount).To(Equal(1))
 		g.Expect(string(s3ClientStub.LastUploadedBody)).To(Equal(etcdSnapshotData))
-		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero(), "Last backup time should be updated")
-		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero(), "Next backup time should be calculated")
+		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
+		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
 
-		close(recorder.Events)
-		events := slices.ChannelToSlice(recorder.Events)
-		g.Expect(slices.SomeBy(events, func(event string) bool {
-			return strings.Contains(event, "EtcdBackup") && strings.Contains(event, "Created etcd backup")
-		})).To(BeTrue(), "Backup event should be recorded")
+		g.Expect(recorder.Events).To(Receive(
+			And(
+				ContainSubstring("EtcdBackup"),
+				ContainSubstring("Created etcd backup"),
+			),
+		))
 	})
 
 	t.Run("should not create backup when not scheduled", func(t *testing.T) {
@@ -649,8 +636,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
-		g.Expect(err).NotTo(HaveOccurred(), "Backup reconciliation should succeed")
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(0), "S3 upload should not be called")
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(s3ClientStub.UploadCallCount).To(Equal(0))
 	})
 
 	t.Run("should handle etcd snapshot creation failure", func(t *testing.T) {
@@ -682,13 +669,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
-		g.Expect(err).To(HaveOccurred(), "Should return error when snapshot creation fails")
-		g.Expect(err.Error()).
-			To(
-				ContainSubstring("failed to create etcd snapshot"),
-				"Error should mention snapshot creation failure",
-			)
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(0), "S3 upload should not be called when snapshot fails")
+		g.Expect(err).To(MatchError(ContainSubstring("failed to create etcd snapshot")))
+		g.Expect(s3ClientStub.UploadCallCount).To(Equal(0))
 	})
 
 	t.Run("should handle S3 upload failure", func(t *testing.T) {
@@ -720,13 +702,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
-		g.Expect(err).To(HaveOccurred(), "Should return error when S3 upload fails")
-		g.Expect(err.Error()).
-			To(
-				ContainSubstring("failed to upload etcd snapshot to S3"),
-				"Error should mention S3 upload failure",
-			)
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(1), "S3 upload should be attempted once")
+		g.Expect(err).To(MatchError(ContainSubstring("failed to upload etcd snapshot to S3")))
+		g.Expect(s3ClientStub.UploadCallCount).To(Equal(1))
 	})
 
 	t.Run("should handle invalid cron schedule", func(t *testing.T) {
@@ -757,13 +734,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
-		g.Expect(err).To(HaveOccurred(), "Should return error for invalid cron schedule")
-		g.Expect(err.Error()).
-			To(
-				ContainSubstring("failed to parse etcd backup schedule"),
-				"Error should mention schedule parsing failure",
-			)
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(0), "S3 upload should not be called when schedule is invalid")
+		g.Expect(err).To(MatchError(ContainSubstring("failed to parse etcd backup schedule")))
+		g.Expect(s3ClientStub.UploadCallCount).To(Equal(0))
 	})
 
 	t.Run("should create first backup when ETCDLastBackupTime is zero", func(t *testing.T) {
@@ -802,10 +774,9 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
-		g.Expect(err).NotTo(HaveOccurred(), "First backup should succeed")
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(1), "S3 upload should be called for first backup")
-		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero(), "Last backup time should be set after first backup")
-		g.Expect(hcp.Status.ETCDNextBackupTime).
-			NotTo(BeZero(), "Next backup time should be calculated after first backup")
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(s3ClientStub.UploadCallCount).To(Equal(1))
+		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
+		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
 	})
 }

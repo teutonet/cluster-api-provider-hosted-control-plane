@@ -16,7 +16,6 @@ require (
 	github.com/onsi/gomega v1.38.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/lo v1.51.0
-	github.com/stretchr/testify v1.11.1
 	go.etcd.io/etcd/api/v3 v3.6.4
 	go.etcd.io/etcd/client/v3 v3.6.4
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0
@@ -109,7 +108,6 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.22.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.65.0 // indirect

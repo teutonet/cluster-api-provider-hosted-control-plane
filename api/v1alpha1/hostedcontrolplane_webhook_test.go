@@ -1,9 +1,9 @@
 package v1alpha1
 
 import (
-	"strings"
 	"testing"
 
+	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,6 +14,7 @@ import (
 func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 	webhook := &hostedControlPlaneWebhook{}
 	ctx := t.Context()
+	g := NewWithT(t)
 
 	tests := []struct {
 		name      string
@@ -30,7 +31,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 				},
 				Spec: HostedControlPlaneSpec{
 					Version:  "v1.28.0",
-					Replicas: ptr.To(int32(3)),
+					Replicas: ptr.To[int32](3),
 					HostedControlPlaneInlineSpec: HostedControlPlaneInlineSpec{
 						Gateway: GatewayReference{
 							Name:      "test-gateway",
@@ -53,7 +54,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 				},
 				Spec: HostedControlPlaneSpec{
 					Version:  "1.28.0",
-					Replicas: ptr.To(int32(1)),
+					Replicas: ptr.To[int32](1),
 					HostedControlPlaneInlineSpec: HostedControlPlaneInlineSpec{
 						Gateway: GatewayReference{
 							Name:      "test-gateway",
@@ -142,24 +143,12 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			warnings, err := webhook.ValidateCreate(ctx, tt.hcp)
+			_, err := webhook.ValidateCreate(ctx, tt.hcp)
 
 			if tt.expectErr {
-				if err == nil {
-					t.Errorf("expected error but got none")
-					return
-				}
-				if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("expected error message to contain %q, got %q", tt.errMsg, err.Error())
-				}
+				g.Expect(err).To(MatchError(ContainSubstring(tt.errMsg)))
 			} else {
-				if err != nil {
-					t.Errorf("expected no error but got: %v", err)
-				}
-			}
-
-			if len(warnings) > 0 {
-				t.Logf("got warnings: %v", warnings)
+				g.Expect(err).NotTo(HaveOccurred())
 			}
 		})
 	}
@@ -168,6 +157,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 	webhook := &hostedControlPlaneWebhook{}
 	ctx := t.Context()
+	g := NewWithT(t)
 
 	createValidHCP := func(version string, autoGrow bool, volumeSize string) *HostedControlPlane {
 		hcp := &HostedControlPlane{
@@ -286,24 +276,12 @@ func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			warnings, err := webhook.ValidateUpdate(ctx, tt.oldHCP, tt.newHCP)
+			_, err := webhook.ValidateUpdate(ctx, tt.oldHCP, tt.newHCP)
 
 			if tt.expectErr {
-				if err == nil {
-					t.Errorf("expected error but got none")
-					return
-				}
-				if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("expected error message to contain %q, got %q", tt.errMsg, err.Error())
-				}
+				g.Expect(err).To(MatchError(ContainSubstring(tt.errMsg)))
 			} else {
-				if err != nil {
-					t.Errorf("expected no error but got: %v", err)
-				}
-			}
-
-			if len(warnings) > 0 {
-				t.Logf("got warnings: %v", warnings)
+				g.Expect(err).NotTo(HaveOccurred())
 			}
 		})
 	}
@@ -312,6 +290,7 @@ func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 func TestHostedControlPlaneWebhook_ValidateDelete(t *testing.T) {
 	webhook := &hostedControlPlaneWebhook{}
 	ctx := t.Context()
+	g := NewWithT(t)
 
 	hcp := &HostedControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
@@ -320,17 +299,13 @@ func TestHostedControlPlaneWebhook_ValidateDelete(t *testing.T) {
 		},
 	}
 
-	warnings, err := webhook.ValidateDelete(ctx, hcp)
-	if err != nil {
-		t.Errorf("ValidateDelete should never return an error, got: %v", err)
-	}
-	if len(warnings) > 0 {
-		t.Logf("got warnings: %v", warnings)
-	}
+	_, err := webhook.ValidateDelete(ctx, hcp)
+	g.Expect(err).NotTo(HaveOccurred())
 }
 
 func TestHostedControlPlaneWebhook_CastObjectToHostedControlPlane(t *testing.T) {
 	webhook := &hostedControlPlaneWebhook{}
+	g := NewWithT(t)
 
 	tests := []struct {
 		name      string
@@ -358,19 +333,11 @@ func TestHostedControlPlaneWebhook_CastObjectToHostedControlPlane(t *testing.T) 
 			result, err := webhook.castObjectToHostedControlPlane(tt.obj)
 
 			if tt.expectErr {
-				if err == nil {
-					t.Errorf("expected error but got none")
-				}
-				if result != nil {
-					t.Errorf("expected nil result when error occurs, got: %v", result)
-				}
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(result).To(BeNil())
 			} else {
-				if err != nil {
-					t.Errorf("expected no error but got: %v", err)
-				}
-				if result == nil {
-					t.Errorf("expected valid result but got nil")
-				}
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(result).NotTo(BeNil())
 			}
 		})
 	}
@@ -378,6 +345,7 @@ func TestHostedControlPlaneWebhook_CastObjectToHostedControlPlane(t *testing.T) 
 
 func TestHostedControlPlaneWebhook_ParseVersion(t *testing.T) {
 	webhook := &hostedControlPlaneWebhook{}
+	g := NewWithT(t)
 
 	tests := []struct {
 		name      string
@@ -427,19 +395,11 @@ func TestHostedControlPlaneWebhook_ParseVersion(t *testing.T) {
 			result, err := webhook.parseVersion(hcp)
 
 			if tt.expectErr {
-				if err == nil {
-					t.Errorf("expected error but got none")
-				}
-				if result != nil {
-					t.Errorf("expected nil result when error occurs, got: %v", result)
-				}
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(result).To(BeNil())
 			} else {
-				if err != nil {
-					t.Errorf("expected no error but got: %v", err)
-				}
-				if result == nil {
-					t.Errorf("expected valid result but got nil")
-				}
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(result).NotTo(BeNil())
 			}
 		})
 	}

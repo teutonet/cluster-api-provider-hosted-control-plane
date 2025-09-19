@@ -5,10 +5,12 @@ import (
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	certmanagermetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
+	. "github.com/onsi/gomega"
 )
 
 func TestCertificateReconciler_isIssuerReady(t *testing.T) {
 	reconciler := &certificateReconciler{}
+	g := NewWithT(t)
 
 	tests := []struct {
 		name     string
@@ -72,15 +74,14 @@ func TestCertificateReconciler_isIssuerReady(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := reconciler.isIssuerReady(tt.issuer)
 
-			if result != tt.expected {
-				t.Errorf("expected %v, got %v", tt.expected, result)
-			}
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
 
 func TestCertificateReconciler_isCertificateReady(t *testing.T) {
 	reconciler := &certificateReconciler{}
+	g := NewWithT(t)
 
 	tests := []struct {
 		name        string
@@ -135,15 +136,14 @@ func TestCertificateReconciler_isCertificateReady(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := reconciler.isCertificateReady(tt.certificate)
 
-			if result != tt.expected {
-				t.Errorf("expected %v, got %v", tt.expected, result)
-			}
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
 
 func TestCertificateReconciler_ErrorHandling_EdgeCases(t *testing.T) {
 	reconciler := &certificateReconciler{}
+	g := NewWithT(t)
 
 	emptyIssuer := &certmanagerv1.Issuer{
 		Status: certmanagerv1.IssuerStatus{
@@ -151,9 +151,7 @@ func TestCertificateReconciler_ErrorHandling_EdgeCases(t *testing.T) {
 		},
 	}
 
-	if reconciler.isIssuerReady(emptyIssuer) {
-		t.Error("expected issuer with nil conditions to not be ready")
-	}
+	g.Expect(reconciler.isIssuerReady(emptyIssuer)).To(BeFalse())
 
 	emptyConditionsIssuer := &certmanagerv1.Issuer{
 		Status: certmanagerv1.IssuerStatus{
@@ -161,9 +159,7 @@ func TestCertificateReconciler_ErrorHandling_EdgeCases(t *testing.T) {
 		},
 	}
 
-	if reconciler.isIssuerReady(emptyConditionsIssuer) {
-		t.Error("expected issuer with empty conditions to not be ready")
-	}
+	g.Expect(reconciler.isIssuerReady(emptyConditionsIssuer)).To(BeFalse())
 
 	inconsistentCertificate := &certmanagerv1.Certificate{
 		Status: certmanagerv1.CertificateStatus{
@@ -177,7 +173,5 @@ func TestCertificateReconciler_ErrorHandling_EdgeCases(t *testing.T) {
 		},
 	}
 
-	if reconciler.isCertificateReady(inconsistentCertificate) {
-		t.Error("expected certificate with unknown condition to not be ready")
-	}
+	g.Expect(reconciler.isCertificateReady(inconsistentCertificate)).To(BeFalse())
 }

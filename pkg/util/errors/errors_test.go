@@ -3,9 +3,12 @@ package errors
 import (
 	"errors"
 	"testing"
+
+	. "github.com/onsi/gomega"
 )
 
 func TestErrorfIfErr(t *testing.T) {
+	g := NewWithT(t)
 	type args struct {
 		format string
 		args   []any
@@ -59,14 +62,12 @@ func TestErrorfIfErr(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := IfErrErrorf(tt.args.format, tt.args.args...)
-			if (err == nil) != (tt.expectedErr == nil) {
-				if err == nil {
-					t.Errorf("IfErrErrorf() error = nil, wanted error %v", tt.expectedErr)
-				} else if tt.expectedErr == nil {
-					t.Errorf("IfErrErrorf() error = %v, wanted nil", err)
-				}
-			} else if err != nil && err.Error() != tt.expectedErr.Error() {
-				t.Errorf("IfErrErrorf() error = %v, wanted error %v", err, tt.expectedErr)
+
+			if tt.expectedErr == nil {
+				g.Expect(err).To(BeNil())
+			} else {
+				// check the error message itself, as err is a wrapped error
+				g.Expect(err).To(MatchError(tt.expectedErr.Error()))
 			}
 		})
 	}

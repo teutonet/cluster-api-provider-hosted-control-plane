@@ -130,12 +130,12 @@ func TestGetMinorVersion(t *testing.T) {
 			result, err := GetMinorVersion(hcp)
 
 			if tt.expectError {
-				g.Expect(err).To(HaveOccurred(), "GetMinorVersion() expected error but got nil")
+				g.Expect(err).To(HaveOccurred())
 				return
 			}
 
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(result).To(Equal(tt.expected), "GetMinorVersion() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
 }
@@ -146,7 +146,7 @@ func TestGetMinorVersionNilHostedControlPlane(t *testing.T) {
 	// since it indicates a programming error
 	defer func() {
 		if r := recover(); r == nil {
-			g.Expect(r).NotTo(BeNil(), "GetMinorVersion() with nil HostedControlPlane should panic")
+			g.Expect(r).NotTo(BeNil())
 		}
 	}()
 

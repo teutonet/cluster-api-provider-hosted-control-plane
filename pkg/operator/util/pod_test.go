@@ -1,7 +1,6 @@
 package util
 
 import (
-	"errors"
 	"testing"
 
 	. "github.com/onsi/gomega"
@@ -219,30 +218,18 @@ func validateMountTest(g Gomega, tt validateMountTestCase) {
 	if tt.expectError {
 		validateExpectedError(g, err, tt.errorMsg)
 	} else {
-		g.Expect(err).NotTo(HaveOccurred(), "ValidateMounts() unexpected error: %v", err)
+		g.Expect(err).NotTo(HaveOccurred())
 	}
 }
 
 func validateExpectedError(g Gomega, err error, expectedMsg string) {
-	g.Expect(err).To(HaveOccurred(), "ValidateMounts() expected error but got nil")
+	g.Expect(err).To(MatchError(ErrInvalidMount))
 
-	// Check that the error is the expected type
-	g.Expect(errors.Is(err, ErrInvalidMount)).
-		To(BeTrue(), "ValidateMounts() error type mismatch: expected ErrInvalidMount, got %T", err)
-
-	// Check that the error message contains the expected volume names
 	if expectedMsg != "" {
-		g.Expect(err.Error()).To(
-			ContainSubstring(expectedMsg),
-			"ValidateMounts() error message %q does not contain expected text %q",
-			err.Error(),
-			expectedMsg,
-		)
+		g.Expect(err).To(MatchError(ContainSubstring(expectedMsg)))
 	}
 
-	// Verify the error message mentions volume mounts
-	g.Expect(err.Error()).
-		To(ContainSubstring("VolumeMounts"), "ValidateMounts() error message should mention VolumeMounts: %s", err.Error())
+	g.Expect(err).To(MatchError(ContainSubstring("VolumeMounts")))
 }
 
 func TestValidateMountsErrorMessage(t *testing.T) {
@@ -259,20 +246,12 @@ func TestValidateMountsErrorMessage(t *testing.T) {
 		)
 
 	err := ValidateMounts(podSpec)
-	g.Expect(err).To(HaveOccurred(), "Expected error but got nil")
-
-	errorMsg := err.Error()
-
-	// Should contain both missing volume names
-	g.Expect(errorMsg).To(ContainSubstring("missing1"), "Error message should contain 'missing1': %s", errorMsg)
-	g.Expect(errorMsg).To(ContainSubstring("missing2"), "Error message should contain 'missing2': %s", errorMsg)
-
-	// Should contain "VolumeMounts"
-	g.Expect(errorMsg).To(ContainSubstring("VolumeMounts"), "Error message should contain 'VolumeMounts': %s", errorMsg)
-
-	// Should mention non-existent volume
-	g.Expect(errorMsg).
-		To(ContainSubstring("non-existent"), "Error message should mention non-existent volume: %s", errorMsg)
+	g.Expect(err).To(MatchError(And(
+		ContainSubstring("missing1"),
+		ContainSubstring("missing2"),
+		ContainSubstring("VolumeMounts"),
+		ContainSubstring("non-existent"),
+	)))
 }
 
 func TestValidateMountsNilPodSpec(t *testing.T) {
@@ -281,7 +260,7 @@ func TestValidateMountsNilPodSpec(t *testing.T) {
 	// since it indicates a programming error
 	defer func() {
 		if r := recover(); r == nil {
-			g.Expect(r).NotTo(BeNil(), "ValidateMounts() with nil PodSpec should panic")
+			g.Expect(r).NotTo(BeNil())
 		}
 	}()
 

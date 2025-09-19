@@ -1,11 +1,9 @@
 package util
 
 import (
-	"strings"
 	"testing"
 
 	. "github.com/onsi/gomega"
-	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -96,10 +94,10 @@ func TestArgsToSlice(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := ArgsToSlice(tt.args...)
 
-			g.Expect(result).To(Equal(tt.expected), "ArgsToSlice() = %v, want %v", result, tt.expected)
+			g.Expect(result).To(Equal(tt.expected))
 
 			for i := 1; i < len(result); i++ {
-				g.Expect(result[i-1] <= result[i]).To(BeTrue(), "Result is not sorted: %s > %s", result[i-1], result[i])
+				g.Expect(result[i-1] <= result[i]).To(BeTrue())
 			}
 		})
 	}
@@ -118,10 +116,10 @@ func TestArgsToSlice_Ordering(t *testing.T) {
 	result2 := ArgsToSlice(input2...)
 
 	g.Expect(result1).
-		To(Equal(result2), "ArgsToSlice() should produce consistent sorted output regardless of input order. Input1 result: %v, Input2 result: %v", result1, result2)
+		To(Equal(result2))
 
 	expected := []string{"--a=1", "--m=13", "--z=26"}
-	g.Expect(result1).To(Equal(expected), "Expected sorted output %v, got %v", expected, result1)
+	g.Expect(result1).To(Equal(expected))
 }
 
 func TestArgsToSliceWithObservability(t *testing.T) {
@@ -284,22 +282,17 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 				tt.userArgs,
 				tt.controllerArgs,
 			)
-			close(eventRecorder.Events)
 
-			g.Expect(result).
-				To(Equal(tt.expectedArgs), "ArgsToSliceWithObservability() = %v, want %v", result, tt.expectedArgs)
+			g.Expect(result).To(Equal(tt.expectedArgs))
 
-			events := slices.ChannelToSlice(eventRecorder.Events)
-
-			eventsWithOverride := slices.Filter(events, func(event string, _ int) bool {
-				return strings.Contains(event, argumentOverriddenEvent)
-			})
 			if tt.expectEvent {
-				g.Expect(eventsWithOverride).
-					NotTo(BeEmpty(), "Expected event to contain 'ArgumentsOverridden', but got events: %v", events)
+				g.Expect(eventRecorder.Events).To(Receive(
+					ContainSubstring(argumentOverriddenEvent),
+				))
 			} else {
-				g.Expect(eventsWithOverride).
-					To(BeEmpty(), "Expected no event, but got: %v", eventsWithOverride)
+				g.Expect(eventRecorder.Events).ToNot(Receive(
+					ContainSubstring(argumentOverriddenEvent),
+				))
 			}
 		})
 	}
@@ -319,7 +312,7 @@ func TestArgsToSliceWithObservabilityNilInputs(t *testing.T) {
 
 	expected := []string{"--test=value"}
 	g.Expect(result).
-		To(Equal(expected), "ArgsToSliceWithObservability() with nil inputs = %v, want %v", result, expected)
+		To(Equal(expected))
 }
 
 func TestOverriddenArgStruct(t *testing.T) {
@@ -330,10 +323,10 @@ func TestOverriddenArgStruct(t *testing.T) {
 		ControllerValue: "controller-value",
 	}
 
-	g.Expect(arg.Key).To(Equal("test-key"), "Expected Key to be 'test-key', got %s", arg.Key)
-	g.Expect(arg.UserValue).To(Equal("user-value"), "Expected UserValue to be 'user-value', got %s", arg.UserValue)
+	g.Expect(arg.Key).To(Equal("test-key"))
+	g.Expect(arg.UserValue).To(Equal("user-value"))
 	g.Expect(arg.ControllerValue).
-		To(Equal("controller-value"), "Expected ControllerValue to be 'controller-value', got %s", arg.ControllerValue)
+		To(Equal("controller-value"))
 }
 
 func TestArgsToSliceWithObservabilityBackwardCompatibility(t *testing.T) {
@@ -361,5 +354,5 @@ func TestArgsToSliceWithObservabilityBackwardCompatibility(t *testing.T) {
 	)
 
 	g.Expect(newResult).
-		To(Equal(originalResult), "Backward compatibility test failed. ArgsToSlice() = %v, ArgsToSliceWithObservability() = %v", originalResult, newResult)
+		To(Equal(originalResult))
 }

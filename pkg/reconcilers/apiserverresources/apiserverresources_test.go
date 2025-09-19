@@ -3,6 +3,7 @@ package apiserverresources
 import (
 	"testing"
 
+	. "github.com/onsi/gomega"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -11,6 +12,7 @@ import (
 
 func TestApiServerResourcesReconciler_extractAdditionalVolumesAndMounts(t *testing.T) {
 	reconciler := &apiServerResourcesReconciler{}
+	g := NewWithT(t)
 
 	configMapMountName := "custom-config"
 	configMapMountPath := "/etc/custom"
@@ -49,13 +51,9 @@ func TestApiServerResourcesReconciler_extractAdditionalVolumesAndMounts(t *testi
 		hostedControlPlane.Spec.Deployment.APIServer.Mounts,
 	)
 
-	if len(volumes) != 2 {
-		t.Errorf("expected 2 additional volumes, got %d", len(volumes))
-	}
+	g.Expect(volumes).To(HaveLen(2))
 
-	if len(volumeMounts) != 2 {
-		t.Errorf("expected 2 additional volume mounts, got %d", len(volumeMounts))
-	}
+	g.Expect(volumeMounts).To(HaveLen(2))
 
 	volumeMap := slices.SliceToMap(volumes,
 		func(vol *corev1ac.VolumeApplyConfiguration) (string, *corev1ac.VolumeApplyConfiguration) {
@@ -69,41 +67,33 @@ func TestApiServerResourcesReconciler_extractAdditionalVolumesAndMounts(t *testi
 		},
 	)
 
-	if configVolume, exists := volumeMap[configMapMountName]; !exists {
-		t.Error("expected custom-config volume not found")
-	} else {
-		if configVolume.ConfigMap == nil {
-			t.Error("expected custom-config volume to be a ConfigMap volume")
-		} else if *configVolume.ConfigMap.Name != configMapName {
-			t.Errorf("expected ConfigMap name 'custom-config-map', got %s", *configVolume.ConfigMap.Name)
-		}
-	}
+	configVolume, exists := volumeMap[configMapMountName]
+	g.Expect(exists).To(BeTrue())
 
-	if configMount, exists := mountMap[configMapMountName]; !exists {
-		t.Error("expected custom-config volume mount not found")
-	} else if *configMount.MountPath != configMapMountPath {
-		t.Errorf("expected mount path '/etc/custom', got %s", *configMount.MountPath)
-	}
+	g.Expect(configVolume.ConfigMap).NotTo(BeNil())
+	g.Expect(*configVolume.ConfigMap.Name).To(Equal(configMapName))
 
-	if secretVolume, exists := volumeMap[secretMountName]; !exists {
-		t.Error("expected custom-secret volume not found")
-	} else {
-		if secretVolume.Secret == nil {
-			t.Error("expected custom-secret volume to be a Secret volume")
-		} else if *secretVolume.Secret.SecretName != secretName {
-			t.Errorf("expected secret name 'custom-secret', got %s", *secretVolume.Secret.SecretName)
-		}
-	}
+	configMount, exists := mountMap[configMapMountName]
+	g.Expect(exists).To(BeTrue())
 
-	if secretMount, exists := mountMap[secretMountName]; !exists {
-		t.Error("expected custom-secret volume mount not found")
-	} else if *secretMount.MountPath != secretMountPath {
-		t.Errorf("expected mount path '/etc/secret', got %s", *secretMount.MountPath)
-	}
+	g.Expect(*configMount.MountPath).To(Equal(configMapMountPath))
+
+	secretVolume, exists := volumeMap[secretMountName]
+	g.Expect(exists).To(BeTrue())
+
+	g.Expect(secretVolume.Secret).NotTo(BeNil())
+	g.Expect(*secretVolume.Secret.SecretName).To(Equal(secretName))
+
+	secretMount, exists := mountMap[secretMountName]
+	g.Expect(exists).To(BeTrue())
+
+	g.Expect(secretMount).NotTo(BeNil())
+	g.Expect(*secretMount.MountPath).To(Equal(secretMountPath))
 }
 
 func TestApiServerResourcesReconciler_ResourceLifecycle_MountConfiguration(t *testing.T) {
 	reconciler := &apiServerResourcesReconciler{}
+	g := NewWithT(t)
 
 	tests := []struct {
 		name                string
@@ -163,33 +153,19 @@ func TestApiServerResourcesReconciler_ResourceLifecycle_MountConfiguration(t *te
 		t.Run(tt.name, func(t *testing.T) {
 			volumes, mounts := reconciler.extractAdditionalVolumesAndMounts(tt.mounts)
 
-			if len(volumes) != tt.expectedVolumeCount {
-				t.Errorf("%s: expected %d volumes, got %d",
-					tt.description, tt.expectedVolumeCount, len(volumes))
-			}
+			g.Expect(volumes).To(HaveLen(tt.expectedVolumeCount))
 
-			if len(mounts) != tt.expectedMountCount {
-				t.Errorf("%s: expected %d mounts, got %d",
-					tt.description, tt.expectedMountCount, len(mounts))
-			}
+			g.Expect(mounts).To(HaveLen(tt.expectedMountCount))
 
-			// Verify volume and mount correlation
-			if len(volumes) != len(mounts) {
-				t.Errorf("%s: volume count (%d) should match mount count (%d)",
-					tt.description, len(volumes), len(mounts))
-			}
+			g.Expect(volumes).To(HaveLen(len(mounts)))
 
-			// Verify each volume has a corresponding mount
 			volumeNames := make(map[string]bool)
 			for _, vol := range volumes {
 				volumeNames[*vol.Name] = true
 			}
 
 			for _, mount := range mounts {
-				if !volumeNames[*mount.Name] {
-					t.Errorf("%s: mount references non-existent volume: %s",
-						tt.description, *mount.Name)
-				}
+				g.Expect(volumeNames).To(HaveKey(*mount.Name))
 			}
 		})
 	}

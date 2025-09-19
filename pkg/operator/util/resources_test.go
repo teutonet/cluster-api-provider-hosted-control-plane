@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -35,23 +36,20 @@ func validateResourceLimitsAndRequests(
 ) {
 	if expectedLimits == nil {
 		if result.Limits != nil {
-			g.Expect(*result.Limits).To(BeEmpty(), "Expected empty Limits, got %v", result.Limits)
+			g.Expect(*result.Limits).To(BeEmpty())
 		}
 	} else {
-		g.Expect(result.Limits).NotTo(BeNil(), "Expected non-nil Limits")
-		g.Expect(*result.Limits).To(Equal(expectedLimits), "Limits mismatch: got %v, want %v", *result.Limits, expectedLimits)
+		g.Expect(result.Limits).NotTo(BeNil())
+		g.Expect(*result.Limits).To(Equal(expectedLimits))
 	}
 
 	if expectedRequests == nil {
 		if result.Requests != nil {
-			g.Expect(*result.Requests).To(BeEmpty(), "Expected empty Requests, got %v", result.Requests)
+			g.Expect(*result.Requests).To(BeEmpty())
 		}
 	} else {
-		g.Expect(result.Requests).NotTo(BeNil(), "Expected non-nil Requests")
-		g.Expect(*result.Requests).To(
-			Equal(expectedRequests),
-			"Requests mismatch: got %v, want %v", *result.Requests, expectedRequests,
-		)
+		g.Expect(result.Requests).NotTo(BeNil())
+		g.Expect(*result.Requests).To(Equal(expectedRequests))
 	}
 }
 
@@ -61,9 +59,9 @@ func getBasicResourceTestCases() []resourceTestCase {
 			name:  "empty resource requirements",
 			input: corev1.ResourceRequirements{},
 			validate: func(g Gomega, result *corev1ac.ResourceRequirementsApplyConfiguration) {
-				g.Expect(result).NotTo(BeNil(), "Expected non-nil result")
+				g.Expect(result).NotTo(BeNil())
 				validateResourceLimitsAndRequests(g, result, nil, nil)
-				g.Expect(result.Claims).To(BeEmpty(), "Expected empty Claims, got %v", result.Claims)
+				g.Expect(result.Claims).To(BeEmpty())
 			},
 		},
 		{
@@ -75,12 +73,11 @@ func getBasicResourceTestCases() []resourceTestCase {
 				},
 			},
 			validate: func(g Gomega, result *corev1ac.ResourceRequirementsApplyConfiguration) {
-				g.Expect(result).NotTo(BeNil(), "Expected non-nil result")
-				expectedLimits := corev1.ResourceList{
+				g.Expect(result).NotTo(BeNil())
+				validateResourceLimitsAndRequests(g, result, corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("100m"),
 					corev1.ResourceMemory: resource.MustParse("256Mi"),
-				}
-				validateResourceLimitsAndRequests(g, result, expectedLimits, nil)
+				}, nil)
 			},
 		},
 		{
@@ -92,12 +89,11 @@ func getBasicResourceTestCases() []resourceTestCase {
 				},
 			},
 			validate: func(g Gomega, result *corev1ac.ResourceRequirementsApplyConfiguration) {
-				g.Expect(result).NotTo(BeNil(), "Expected non-nil result")
-				expectedRequests := corev1.ResourceList{
+				g.Expect(result).NotTo(BeNil())
+				validateResourceLimitsAndRequests(g, result, nil, corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("50m"),
 					corev1.ResourceMemory: resource.MustParse("128Mi"),
-				}
-				validateResourceLimitsAndRequests(g, result, nil, expectedRequests)
+				})
 			},
 		},
 		{
@@ -113,21 +109,17 @@ func getBasicResourceTestCases() []resourceTestCase {
 				},
 			},
 			validate: func(g Gomega, result *corev1ac.ResourceRequirementsApplyConfiguration) {
-				g.Expect(result).NotTo(BeNil(), "Expected non-nil result")
+				g.Expect(result).NotTo(BeNil())
 
-				expectedLimits := corev1.ResourceList{
+				g.Expect(*result.Limits).To(Equal(corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("200m"),
 					corev1.ResourceMemory: resource.MustParse("512Mi"),
-				}
-				g.Expect(*result.Limits).
-					To(Equal(expectedLimits), "Limits mismatch: got %v, want %v", *result.Limits, expectedLimits)
+				}))
 
-				expectedRequests := corev1.ResourceList{
+				g.Expect(*result.Requests).To(Equal(corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("100m"),
 					corev1.ResourceMemory: resource.MustParse("256Mi"),
-				}
-				g.Expect(*result.Requests).
-					To(Equal(expectedRequests), "Requests mismatch: got %v, want %v", *result.Requests, expectedRequests)
+				}))
 			},
 		},
 	}
@@ -150,33 +142,22 @@ func getAdvancedResourceTestCases() []resourceTestCase {
 				},
 			},
 			validate: func(g Gomega, result *corev1ac.ResourceRequirementsApplyConfiguration) {
-				g.Expect(result).NotTo(BeNil(), "Expected non-nil result")
-				g.Expect(result.Claims).NotTo(BeNil(), "Expected non-nil Claims")
-				g.Expect(result.Claims).To(HaveLen(2), "Expected 2 claims, got %d", len(result.Claims))
+				g.Expect(result).NotTo(BeNil())
 
-				// Check first claim
-				g.Expect(result.Claims[0].Name).NotTo(BeNil())
-				g.Expect(*result.Claims[0].Name).
-					To(Equal("gpu-claim-1"), "First claim name mismatch: got %v, want %s", result.Claims[0].Name, "gpu-claim-1")
-				g.Expect(result.Claims[0].Request).NotTo(BeNil())
-				g.Expect(*result.Claims[0].Request).To(
-					Equal("nvidia.com/gpu"),
-					"First claim request mismatch: got %v, want %s",
-					result.Claims[0].Request,
-					"nvidia.com/gpu",
-				)
-
-				// Check second claim
-				g.Expect(result.Claims[1].Name).NotTo(BeNil())
-				g.Expect(*result.Claims[1].Name).
-					To(Equal("storage-claim"), "Second claim name mismatch: got %v, want %s", result.Claims[1].Name, "storage-claim")
-				g.Expect(result.Claims[1].Request).NotTo(BeNil())
-				g.Expect(*result.Claims[1].Request).To(
-					Equal("example.com/storage"),
-					"Second claim request mismatch: got %v, want %s",
-					result.Claims[1].Request,
-					"example.com/storage",
-				)
+				g.Expect(result.Claims).To(ConsistOf(
+					MatchFields(IgnoreExtras,
+						Fields{
+							"Name":    PointTo(Equal("gpu-claim-1")),
+							"Request": PointTo(Equal("nvidia.com/gpu")),
+						},
+					),
+					MatchFields(IgnoreExtras,
+						Fields{
+							"Name":    PointTo(Equal("storage-claim")),
+							"Request": PointTo(Equal("example.com/storage")),
+						},
+					),
+				))
 			},
 		},
 		{
@@ -199,37 +180,27 @@ func getAdvancedResourceTestCases() []resourceTestCase {
 				},
 			},
 			validate: func(g Gomega, result *corev1ac.ResourceRequirementsApplyConfiguration) {
-				g.Expect(result).NotTo(BeNil(), "Expected non-nil result")
+				g.Expect(result).NotTo(BeNil())
 
-				// Check limits
-				expectedLimits := corev1.ResourceList{
+				g.Expect(*result.Limits).To(Equal(corev1.ResourceList{
 					corev1.ResourceCPU:              resource.MustParse("1000m"),
 					corev1.ResourceMemory:           resource.MustParse("1Gi"),
 					corev1.ResourceEphemeralStorage: resource.MustParse("10Gi"),
-				}
-				g.Expect(*result.Limits).
-					To(Equal(expectedLimits), "Limits mismatch: got %v, want %v", *result.Limits, expectedLimits)
+				}))
 
-				// Check requests
-				expectedRequests := corev1.ResourceList{
+				g.Expect(*result.Requests).To(Equal(corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("500m"),
 					corev1.ResourceMemory: resource.MustParse("512Mi"),
-				}
-				g.Expect(*result.Requests).
-					To(Equal(expectedRequests), "Requests mismatch: got %v, want %v", *result.Requests, expectedRequests)
+				}))
 
-				// Check claims
-				g.Expect(result.Claims).To(HaveLen(1), "Expected 1 claim, got %d", len(result.Claims))
-				g.Expect(result.Claims[0].Name).NotTo(BeNil())
-				g.Expect(*result.Claims[0].Name).
-					To(Equal("special-device"), "Claim name mismatch: got %v, want %s", result.Claims[0].Name, "special-device")
-				g.Expect(result.Claims[0].Request).NotTo(BeNil())
-				g.Expect(*result.Claims[0].Request).To(
-					Equal("vendor.com/special-device"),
-					"Claim request mismatch: got %v, want %s",
-					result.Claims[0].Request,
-					"vendor.com/special-device",
-				)
+				g.Expect(result.Claims).To(ConsistOf(
+					MatchFields(IgnoreExtras,
+						Fields{
+							"Name":    PointTo(Equal("special-device")),
+							"Request": PointTo(Equal("vendor.com/special-device")),
+						},
+					),
+				))
 			},
 		},
 		{
@@ -244,20 +215,16 @@ func getAdvancedResourceTestCases() []resourceTestCase {
 				},
 			},
 			validate: func(g Gomega, result *corev1ac.ResourceRequirementsApplyConfiguration) {
-				g.Expect(result).NotTo(BeNil(), "Expected non-nil result")
+				g.Expect(result).NotTo(BeNil())
 
-				expectedLimits := corev1.ResourceList{
+				g.Expect(*result.Limits).To(Equal(corev1.ResourceList{
 					"example.com/custom-resource": resource.MustParse("5"),
 					"nvidia.com/gpu":              resource.MustParse("1"),
-				}
-				g.Expect(*result.Limits).
-					To(Equal(expectedLimits), "Limits mismatch: got %v, want %v", *result.Limits, expectedLimits)
+				}))
 
-				expectedRequests := corev1.ResourceList{
+				g.Expect(*result.Requests).To(Equal(corev1.ResourceList{
 					"example.com/custom-resource": resource.MustParse("2"),
-				}
-				g.Expect(*result.Requests).
-					To(Equal(expectedRequests), "Requests mismatch: got %v, want %v", *result.Requests, expectedRequests)
+				}))
 			},
 		},
 	}
@@ -265,7 +232,6 @@ func getAdvancedResourceTestCases() []resourceTestCase {
 
 func TestResourceRequirementsToResourcesApplyConfigurationReturnType(t *testing.T) {
 	g := NewWithT(t)
-	// Test that the function returns the correct type
 	input := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
 			corev1.ResourceCPU: resource.MustParse("100m"),
@@ -274,9 +240,7 @@ func TestResourceRequirementsToResourcesApplyConfigurationReturnType(t *testing.
 
 	result := ResourceRequirementsToResourcesApplyConfiguration(input)
 
-	// Verify the return type is correct
-	g.Expect(result).NotTo(BeNil(), "Expected non-nil result")
+	g.Expect(result).NotTo(BeNil())
 
-	// The result should be assignable to the correct type
 	_ = result
 }
