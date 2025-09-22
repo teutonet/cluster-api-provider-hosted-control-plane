@@ -50,6 +50,8 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}:latest
     steps:
       - uses: actions/checkout@v5
 
@@ -62,3 +64,11 @@ jobs:
           version: 3.x
 
       - run: task build
+
+      - name: Log in to Container Registry
+        if: github.event_name == 'push' && github.ref == github.event.repository.default_branch
+        run: |
+          echo ${{ github.token }} | buildah login --username ${{ github.repository_owner }} --password-stdin ghcr.io
+
+      - if: github.event_name == 'push' && github.ref == github.event.repository.default_branch
+        run: buildah manifest push --all ${IMAGE}

@@ -29,6 +29,8 @@ jobs:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -42,17 +44,13 @@ jobs:
         with:
           go-version-file: ./go.mod
 
-      - env:
-          IMAGE: ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}
-        run: task build
+      - run: task build
 
       - name: Log in to Container Registry
         run: |
           echo ${{ github.token }} | buildah login --username ${{ github.repository_owner }} --password-stdin ghcr.io
 
-      - env:
-          IMAGE: ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}
-        run: buildah manifest push --all ${IMAGE}
+      - run: buildah manifest push --all ${IMAGE}
 
       - name: Upload manifests
         uses: actions/upload-release-asset@v1
