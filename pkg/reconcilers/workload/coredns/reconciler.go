@@ -311,7 +311,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 			container := corev1ac.Container().
 				WithName("coredns").
 				WithImage(operatorutil.ResolveCoreDNSImage(hostedControlPlane.Spec.CoreDNS.Image)).
-				WithImagePullPolicy(corev1.PullAlways).
+				WithImagePullPolicy(hostedControlPlane.Spec.CoreDNS.ImagePullPolicy).
 				WithArgs(operatorutil.ArgsToSliceWithObservability(
 					ctx,
 					hostedControlPlane.Spec.CoreDNS.Args,

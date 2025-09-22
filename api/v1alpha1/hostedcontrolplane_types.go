@@ -109,6 +109,9 @@ type Container struct {
 	//+kubebuilder:validation:Optional
 	Image *ImageSpec `json:"image,omitempty"`
 	//+kubebuilder:validation:Optional
+	//+kubebuilder:default="Always"
+	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
+	//+kubebuilder:validation:Optional
 	Args map[string]string `json:"args,omitempty"`
 	//+kubebuilder:validation:Optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`

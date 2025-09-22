@@ -351,6 +351,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 					hostedControlPlane.Spec.KubeProxy.Image,
 					hostedControlPlane.Spec.Version,
 				)).
+				WithImagePullPolicy(hostedControlPlane.Spec.KubeProxy.ImagePullPolicy).
 				WithCommand("/usr/local/bin/kube-proxy").
 				WithArgs(kr.buildArgs(ctx, hostedControlPlane, kubeProxyConfigVolumeMount)...).
 				WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(

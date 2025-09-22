@@ -589,7 +589,7 @@ func (er *etcdClusterReconciler) createEtcdContainer(
 			hostedControlPlane.Spec.ETCD.Image,
 			version.Version,
 		)).
-		WithImagePullPolicy(corev1.PullAlways).
+		WithImagePullPolicy(hostedControlPlane.Spec.ETCD.ImagePullPolicy).
 		WithCommand("etcd").
 		WithArgs(er.buildEtcdArgs(
 			ctx,

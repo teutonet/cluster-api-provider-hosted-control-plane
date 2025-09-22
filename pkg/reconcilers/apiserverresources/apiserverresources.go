@@ -888,7 +888,7 @@ func (arr *apiServerResourcesReconciler) createKonnectivityContainer(
 			"proxy-server",
 			minorVersion,
 		)).
-		WithImagePullPolicy(corev1.PullAlways).
+		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.APIServer.Konnectivity.ImagePullPolicy).
 		WithArgs(arr.buildKonnectivityServerArgs(
 			ctx,
 			hostedControlPlane,
@@ -923,7 +923,7 @@ func (arr *apiServerResourcesReconciler) createAuditWebhookSidecarContainer(
 	return corev1ac.Container().
 		WithName("audit-webhook").
 		WithImage(operatorutil.ResolveAuditWebhookImage(auditConfig.Webhook.Image)).
-		WithImagePullPolicy(corev1.PullAlways).
+		WithImagePullPolicy(auditConfig.Webhook.ImagePullPolicy).
 		WithArgs(operatorutil.ArgsToSliceWithObservability(
 			ctx,
 			auditConfig.Webhook.Args,
@@ -1022,7 +1022,7 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 			"kube-apiserver",
 			hostedControlPlane.Spec.Version,
 		)).
-		WithImagePullPolicy(corev1.PullAlways).
+		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.APIServer.ImagePullPolicy).
 		WithCommand("kube-apiserver").
 		WithArgs(arr.buildAPIServerArgs(
 			ctx, hostedControlPlane, cluster,
@@ -1065,7 +1065,7 @@ func (arr *apiServerResourcesReconciler) createSchedulerContainer(
 			"kube-scheduler",
 			hostedControlPlane.Spec.Version,
 		)).
-		WithImagePullPolicy(corev1.PullAlways).
+		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.Scheduler.ImagePullPolicy).
 		WithCommand("kube-scheduler").
 		WithArgs(arr.buildSchedulerArgs(ctx, hostedControlPlane, schedulerKubeconfigVolumeMount)...).
 		WithPorts(probePort).
@@ -1096,7 +1096,7 @@ func (arr *apiServerResourcesReconciler) createControllerManagerContainer(
 			"kube-controller-manager",
 			hostedControlPlane.Spec.Version,
 		)).
-		WithImagePullPolicy(corev1.PullAlways).
+		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.ControllerManager.ImagePullPolicy).
 		WithCommand("kube-controller-manager").
 		WithArgs(arr.buildControllerManagerArgs(
 			ctx,

@@ -205,6 +205,7 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 					"proxy-agent",
 					minorVersion,
 				)).
+				WithImagePullPolicy(hostedControlPlane.Spec.KonnectivityClient.ImagePullPolicy).
 				WithArgs(kr.buildKonnectivityClientArgs(
 					ctx,
 					hostedControlPlane,
@@ -212,7 +213,6 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 					serviceAccountTokenVolumeMount,
 					healthPort,
 				)...).
-				WithImagePullPolicy(corev1.PullAlways).
 				WithEnv(corev1ac.EnvVar().
 					WithName("NODE_NAME").
 					WithValueFrom(corev1ac.EnvVarSource().
