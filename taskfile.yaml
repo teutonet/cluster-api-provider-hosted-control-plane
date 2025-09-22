@@ -62,7 +62,7 @@ tasks:
       - mkdir -p {{ .buildDir }}/config
       - rm -f {{ .buildDir }}/config/kustomization.yaml
       - env -C {{ .buildDir }}/config {{ .kustomizeCmd }} create --resources ../../config
-      - env -C {{ .buildDir }}/config {{ .kustomizeCmd }} edit set image controller-manager=ghcr.io/teutonet/cluster-api-provider-hosted-control-plane:{{ .version }}
+      - env -C {{ .buildDir }}/config {{ .kustomizeCmd }} edit set image controller-manager={{ .IMAGE }}
       - "{{ .kustomizeCmd }} build {{ .buildDir }}/config > {{ .buildDir }}/control-plane-components.yaml"
     generates:
       - "{{ .buildDir }}/control-plane-components.yaml"
