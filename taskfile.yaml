@@ -112,6 +112,7 @@ tasks:
       - task: test
       - task: manifests
       - task: compile
+      - task: check-diff
   check-diff:
     deps:
       - manifests

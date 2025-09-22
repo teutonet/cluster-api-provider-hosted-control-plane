@@ -12,7 +12,7 @@ on:
 
 jobs:
   build:
-    name: Lint
+    name: Test, lint, build and push (if on main)
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -29,13 +29,12 @@ jobs:
         with:
           version: 3.x
 
+      - name: Check for uncommitted changes
+        run: task check-diff
+
       - run: task test
 
       - run: task lint
-      - run: task lint fix=true
-
-      - name: Check for uncommitted changes
-        run: task check-diff
 
       - run: task build
 
