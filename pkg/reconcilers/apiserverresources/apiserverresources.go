@@ -2,6 +2,7 @@ package apiserverresources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"path"
@@ -21,11 +22,14 @@ import (
 	"k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd/api"
 	kubenames "k8s.io/kubernetes/cmd/kube-controller-manager/names"
 	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
+	"sigs.k8s.io/yaml"
 )
 
 type ApiServerResourcesReconciler interface {
@@ -77,6 +81,10 @@ func NewApiServerResourcesReconciler(
 		konnectivityUDSMountPath:            "/run/konnectivity",
 		konnectivityUDSSocketName:           "konnectivity-agent.sock",
 		egressSelectorConfigurationFileName: "egress-selector-configuration.yaml",
+		envoyConfigFileName:                 "envoy.yaml",
+		envoyPort:                           8090,
+		auditPolicyFileName:                 "audit-policy.yaml",
+		auditWebhookConfigFileName:          "webhook-target.conf",
 		componentAPIServer:                  apiServerComponentLabel,
 		componentControllerManager:          "controller-manager",
 		componentScheduler:                  "scheduler",
@@ -104,6 +112,10 @@ type apiServerResourcesReconciler struct {
 	konnectivityUDSSocketName           string
 	egressSelectorConfigMountPath       string
 	egressSelectorConfigurationFileName string
+	envoyConfigFileName                 string
+	envoyPort                           int32
+	auditPolicyFileName                 string
+	auditWebhookConfigFileName          string
 	componentAPIServer                  string
 	componentControllerManager          string
 	componentScheduler                  string
@@ -124,6 +136,11 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerDeployments(
 		func(ctx context.Context, span trace.Span) (string, error) {
 			if err := arr.reconcileKonnectivityConfig(ctx, hostedControlPlane, cluster); err != nil {
 				return "", fmt.Errorf("failed to reconcile konnectivity config: %w", err)
+			}
+			if hostedControlPlane.Spec.Deployment.APIServer.Audit != nil {
+				if err := arr.reconcileAuditConfig(ctx, hostedControlPlane, cluster); err != nil {
+					return "", fmt.Errorf("failed to reconcile audit config: %w", err)
+				}
 			}
 			if ready, err := arr.reconcileAPIServerDeployment(ctx, hostedControlPlane, cluster); err != nil {
 				return "", fmt.Errorf("failed to reconcile API server deployment: %w", err)
@@ -155,8 +172,6 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerDeployments(
 	)
 }
 
-//+kubebuilder:rbac:groups=core,resources=configmaps,verbs=create;update;patch
-
 func (arr *apiServerResourcesReconciler) reconcileKonnectivityConfig(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
@@ -187,7 +202,7 @@ func (arr *apiServerResourcesReconciler) reconcileKonnectivityConfig(
 				},
 			}
 
-			buf, err := operatorutil.ToYaml(egressSelectorConfig)
+			egressYaml, err := operatorutil.ToYaml(egressSelectorConfig)
 			if err != nil {
 				return fmt.Errorf("failed to marshal egress selector configuration: %w", err)
 			}
@@ -200,11 +215,47 @@ func (arr *apiServerResourcesReconciler) reconcileKonnectivityConfig(
 				hostedControlPlane.Namespace,
 				names.GetKonnectivityConfigMapName(cluster),
 				map[string]string{
-					arr.egressSelectorConfigurationFileName: buf.String(),
+					arr.egressSelectorConfigurationFileName: egressYaml,
 				},
 			)
 		},
 	)
+}
+
+func (arr *apiServerResourcesReconciler) reconcileAuditConfig(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv2.Cluster,
+) error {
+	return tracing.WithSpan1(ctx, arr.Tracer, "ReconcileAuditWebhookConfig",
+		func(ctx context.Context, span trace.Span) error {
+			data := make(map[string]string)
+
+			auditConfig := hostedControlPlane.Spec.Deployment.APIServer.Audit
+			if auditConfig.Webhook != nil {
+				if err := arr.setWebhookConfigs(auditConfig, data); err != nil {
+					return err
+				}
+			}
+
+			policyYaml, err := operatorutil.PolicyToYaml(
+				auditConfig.Policy,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to marshal audit policy: %w", err)
+			}
+			data[arr.auditPolicyFileName] = policyYaml
+
+			return arr.ReconcileConfigmap(
+				ctx,
+				hostedControlPlane,
+				cluster,
+				"audit",
+				hostedControlPlane.Namespace,
+				names.GetAuditWebhookConfigMapName(cluster),
+				data,
+			)
+		})
 }
 
 func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
@@ -219,6 +270,7 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 			konnectivityUDSVolume := arr.createKonnectivityUDSVolume()
 			konnectivityCertificatesVolume := arr.createKonnectivityCertificatesVolume(cluster)
 			konnectivityKubeconfigVolume := arr.createKonnectivityKubeconfigVolume(cluster)
+			var auditConfigVolume *corev1ac.VolumeApplyConfiguration
 
 			konnectivityUDSMount := corev1ac.VolumeMount().
 				WithName(*konnectivityUDSVolume.Name).
@@ -230,6 +282,12 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				konnectivityUDSVolume,
 				konnectivityCertificatesVolume,
 				konnectivityKubeconfigVolume,
+			}
+
+			auditConfig := hostedControlPlane.Spec.Deployment.APIServer.Audit
+			if auditConfig != nil {
+				auditConfigVolume = arr.createAuditConfigVolume(cluster)
+				volumes = append(volumes, auditConfigVolume)
 			}
 
 			additionalVolumes, additionalApiServerVolumeMounts := arr.extractAdditionalVolumesAndMounts(
@@ -244,6 +302,7 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				cluster,
 				apiServerCertificatesVolume,
 				egressSelectorConfigVolume,
+				auditConfigVolume,
 				konnectivityUDSMount,
 				additionalApiServerVolumeMounts,
 			)
@@ -258,6 +317,28 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				return false, fmt.Errorf("failed to create konnectivity container: %w", err)
 			}
 
+			var initContainers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]
+			if auditConfig != nil && auditConfig.Webhook != nil && len(auditConfig.Webhook.Targets) > 1 {
+				initContainers = append(
+					initContainers,
+					slices.T2(
+						arr.createAuditWebhookSidecarContainer(auditConfigVolume),
+						reconcilers.ContainerOptions{},
+					),
+				)
+			}
+
+			egressPortComponents := map[int32][]string{
+				arr.etcdServerPort: {arr.etcdComponentLabel},
+				443:                {arr.worldComponent}, // for stuff like OIDC
+			}
+
+			if auditConfig != nil && auditConfig.Webhook != nil {
+				if err := arr.setAuditWebhookPorts(auditConfig, egressPortComponents); err != nil {
+					return false, err
+				}
+			}
+
 			if deployment, ready, err := arr.ReconcileDeployment(
 				ctx,
 				hostedControlPlane,
@@ -266,11 +347,9 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				hostedControlPlane.Spec.Deployment.APIServer.PriorityClassName,
 				arr.componentAPIServer,
 				nil,
-				map[int32][]string{
-					arr.etcdServerPort:       {arr.etcdComponentLabel},
-					arr.apiServerServicePort: {arr.worldComponent}, // for stuff like OIDC
-				},
+				egressPortComponents,
 				arr.etcdComponentLabel,
+				initContainers,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(apiServerContainer, reconcilers.ContainerOptions{
 						Capabilities: []corev1.Capability{"NET_BIND_SERVICE"},
@@ -299,10 +378,10 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 }
 
 func (arr *apiServerResourcesReconciler) extractAdditionalVolumesAndMounts(
-	mounts map[string]v1alpha1.HostedControlPlaneMount,
+	mounts map[string]v1alpha1.Mount,
 ) ([]*corev1ac.VolumeApplyConfiguration, []*corev1ac.VolumeMountApplyConfiguration) {
 	entries := slices.MapEntries(mounts, func(
-		name string, mount v1alpha1.HostedControlPlaneMount,
+		name string, mount v1alpha1.Mount,
 	) (*corev1ac.VolumeApplyConfiguration, *corev1ac.VolumeMountApplyConfiguration) {
 		convertItems := func(items []corev1.KeyToPath) []*corev1ac.KeyToPathApplyConfiguration {
 			return slices.Map(items, func(item corev1.KeyToPath, _ int) *corev1ac.KeyToPathApplyConfiguration {
@@ -377,6 +456,7 @@ func (arr *apiServerResourcesReconciler) reconcileControllerManagerDeployment(
 					arr.apiContainerPort: {arr.componentAPIServer},
 				},
 				arr.componentAPIServer,
+				nil,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(container, reconcilers.ContainerOptions{}),
 				},
@@ -418,6 +498,7 @@ func (arr *apiServerResourcesReconciler) reconcileSchedulerDeployment(
 					arr.apiContainerPort: {arr.componentAPIServer},
 				},
 				arr.componentAPIServer,
+				nil,
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(container, reconcilers.ContainerOptions{}),
 				},
@@ -527,6 +608,16 @@ func (arr *apiServerResourcesReconciler) createKonnectivityUDSVolume() *corev1ac
 	return corev1ac.Volume().
 		WithName("konnectivity-uds").
 		WithEmptyDir(corev1ac.EmptyDirVolumeSource().WithMedium(corev1.StorageMediumMemory))
+}
+
+func (arr *apiServerResourcesReconciler) createAuditConfigVolume(
+	cluster *capiv2.Cluster,
+) *corev1ac.VolumeApplyConfiguration {
+	return corev1ac.Volume().
+		WithName("audit-webhook-config").
+		WithConfigMap(corev1ac.ConfigMapVolumeSource().
+			WithName(names.GetAuditWebhookConfigMapName(cluster)),
+		)
 }
 
 func (arr *apiServerResourcesReconciler) createEgressSelectorConfigVolume(
@@ -683,6 +774,7 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 	cluster *capiv2.Cluster,
 	apiServerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	egressSelectorConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
+	auditConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	apiPort *corev1ac.ContainerPortApplyConfiguration,
 ) []string {
 	certificatesDir := *apiServerCertificatesVolumeMount.MountPath
@@ -729,6 +821,23 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 		"etcd-cafile":   path.Join(certificatesDir, konstants.EtcdCACertName),
 		"etcd-certfile": path.Join(certificatesDir, konstants.APIServerEtcdClientCertName),
 		"etcd-keyfile":  path.Join(certificatesDir, konstants.APIServerEtcdClientKeyName),
+	}
+
+	if auditConfig := hostedControlPlane.Spec.Deployment.APIServer.Audit; auditConfig != nil {
+		args["audit-policy-file"] = path.Join(
+			*auditConfigVolumeMount.MountPath,
+			arr.auditPolicyFileName,
+		)
+		if auditConfig.Webhook != nil {
+			args["audit-webhook-mode"] = auditConfig.Mode
+			args["audit-webhok-config-file"] = path.Join(
+				*auditConfigVolumeMount.MountPath,
+				arr.auditWebhookConfigFileName,
+			)
+		} else {
+			args["audit-log-mode"] = auditConfig.Mode
+			args["audit-log-path"] = "-"
+		}
 	}
 
 	return operatorutil.ArgsToSliceWithObservability(
@@ -798,6 +907,26 @@ func (arr *apiServerResourcesReconciler) createKonnectivityContainer(
 		), nil
 }
 
+func (arr *apiServerResourcesReconciler) createAuditWebhookSidecarContainer(
+	webhookConfigVolume *corev1ac.VolumeApplyConfiguration,
+) *corev1ac.ContainerApplyConfiguration {
+	webhookConfigVolumeMount := corev1ac.VolumeMount().
+		WithName(*webhookConfigVolume.Name).
+		WithMountPath("/etc/kubernetes/audit")
+
+	return corev1ac.Container().
+		WithName("audit-webhook").
+		WithImage("envoyproxy/envoy:v1.33.9").
+		WithImagePullPolicy(corev1.PullAlways).
+		WithArgs(operatorutil.ArgsToSlice(
+			map[string]string{
+				"config-path": path.Join(*webhookConfigVolumeMount.MountPath, arr.envoyConfigFileName),
+			},
+		)...).
+		WithRestartPolicy(corev1.ContainerRestartPolicyAlways).
+		WithVolumeMounts(webhookConfigVolumeMount)
+}
+
 func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
@@ -840,6 +969,7 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 	cluster *capiv2.Cluster,
 	apiServerCertificatesVolume *corev1ac.VolumeApplyConfiguration,
 	egressSelectorConfigVolume *corev1ac.VolumeApplyConfiguration,
+	auditConfigVolume *corev1ac.VolumeApplyConfiguration,
 	konnectivityUDSVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	additionalVolumeMounts []*corev1ac.VolumeMountApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
@@ -863,6 +993,15 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 		konnectivityUDSVolumeMount,
 	}
 
+	var auditConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration
+	if auditConfigVolume != nil {
+		auditConfigVolumeMount = corev1ac.VolumeMount().
+			WithName(*auditConfigVolume.Name).
+			WithMountPath("/etc/kubernetes/audit").
+			WithReadOnly(true)
+		volumeMounts = append(volumeMounts, auditConfigVolumeMount)
+	}
+
 	volumeMounts = append(volumeMounts, additionalVolumeMounts...)
 
 	return corev1ac.Container().
@@ -872,7 +1011,7 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 		WithCommand("kube-apiserver").
 		WithArgs(arr.buildAPIServerArgs(
 			ctx, hostedControlPlane, cluster,
-			apiServerCertificatesVolumeMount, egressSelectorConfigVolumeMount,
+			apiServerCertificatesVolumeMount, egressSelectorConfigVolumeMount, auditConfigVolumeMount,
 			apiPort,
 		)...).
 		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
@@ -886,11 +1025,11 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 }
 
 func (arr *apiServerResourcesReconciler) createProbePort(
-	port int,
+	port int32,
 ) *corev1ac.ContainerPortApplyConfiguration {
 	containerPort := corev1ac.ContainerPort().
-		WithName("probe-port").         // TODO: use konstants.probePort when available
-		WithContainerPort(int32(port)). //nolint:gosec // port is expected to be within int32 range
+		WithName("probe-port"). // TODO: use konstants.probePort when available
+		WithContainerPort(port).
 		WithProtocol(corev1.ProtocolTCP)
 	return containerPort
 }
@@ -1016,4 +1155,167 @@ func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 		hostedControlPlane.Spec.Deployment.ControllerManager.Args,
 		args,
 	)
+}
+
+func (arr *apiServerResourcesReconciler) setAuditWebhookPorts(
+	auditConfig *v1alpha1.Audit,
+	egressPortComponents map[int32][]string,
+) error {
+	ports := slices.SliceToMap(auditConfig.Webhook.Targets,
+		func(target v1alpha1.AuditWebhookTarget) (int32, error) {
+			_, portStr, err := net.SplitHostPort(target.Server)
+			if err != nil {
+				return 0, fmt.Errorf("failed to parse audit webhook target server %q: %w", target.Server, err)
+			}
+			port, err := strconv.ParseInt(portStr, 10, 32)
+			if err != nil {
+				return 0, fmt.Errorf("failed to parse audit webhook target server port %q: %w", portStr, err)
+			}
+			return int32(port), nil
+		})
+	if errs := slices.Values(ports); len(errs) > 0 {
+		return fmt.Errorf("failed to parse audit webhook target servers: %w", errors.Join(errs...))
+	}
+	for port := range ports {
+		if egressPortComponents[port] == nil {
+			egressPortComponents[port] = []string{arr.worldComponent}
+		} else if !slices.Contains(egressPortComponents[port], arr.worldComponent) {
+			// vanilla network policies do not support DNS names.
+			egressPortComponents[port] = append(egressPortComponents[port], arr.worldComponent)
+		}
+	}
+	return nil
+}
+
+func (arr *apiServerResourcesReconciler) setWebhookConfigs(
+	auditConfig *v1alpha1.Audit,
+	data map[string]string,
+) error {
+	targetCount := len(auditConfig.Webhook.Targets)
+	targetConfigTargetName := "webhook"
+	targetServer := auditConfig.Webhook.Targets[0].Server
+
+	if targetCount > 1 {
+		route := map[string]any{
+			"cluster": "webhook_service_0",
+			"request_mirror_policies": slices.RepeatBy(targetCount-1, func(i int) map[string]any {
+				return map[string]any{
+					"cluster":                           fmt.Sprintf("webhook_service_%d", i+1),
+					"disable_shadow_host_suffix_append": true,
+				}
+			}),
+		}
+
+		envoyConfig := map[string]any{
+			"static_resources": map[string]any{
+				"listeners": []map[string]any{
+					{
+						"address": map[string]any{
+							"socket_address": map[string]any{
+								"address":    "127.0.0.1",
+								"port_value": arr.envoyPort,
+							},
+						},
+						"filter_chains": []map[string]any{
+							{
+								"filters": []map[string]any{
+									{
+										"name": "envoy.filters.network.http_connection_manager",
+										"typed_config": map[string]any{
+											"@type": "type.googleapis.com/envoy.extensions.filters.network." +
+												"http_connection_manager.v3.HttpConnectionManager",
+											"stat_prefix": "ingress_http",
+											"route_config": map[string]any{
+												"name": "local_route",
+												"virtual_hosts": []map[string]any{
+													{
+														"name":    "local_service",
+														"domains": []string{"*"},
+														"routes": []map[string]any{
+															{
+																"match": map[string]any{
+																	"path": "/",
+																},
+																"route": route,
+															},
+														},
+													},
+												},
+											},
+											"http_filters": []map[string]any{
+												{
+													"name": "envoy.filters.http.router",
+													"typed_config": map[string]any{
+														"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				"clusters": slices.Map(
+					auditConfig.Webhook.Targets,
+					func(target v1alpha1.AuditWebhookTarget, index int) map[string]any {
+						host, portStr, _ := net.SplitHostPort(target.Server)
+						port, _ := strconv.Atoi(portStr)
+						return map[string]any{
+							"name": fmt.Sprintf("webhook_service_%d", index),
+							"load_assignment": map[string]any{
+								"cluster_name": fmt.Sprintf("webhook_service_%d", index),
+								"endpoints": []map[string]any{
+									{
+										"lb_endpoints": []map[string]any{
+											{
+												"endpoint": map[string]any{
+													"address": map[string]any{
+														"socket_address": map[string]any{
+															"address":    host,
+															"port_value": port,
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						}
+					},
+				),
+			},
+		}
+
+		if envoyYaml, err := yaml.Marshal(envoyConfig); err != nil {
+			return fmt.Errorf("failed to marshal envoy config: %w", err)
+		} else {
+			data[arr.envoyConfigFileName] = string(envoyYaml)
+		}
+
+		targetServer = fmt.Sprintf("http://%s", net.JoinHostPort("localhost", strconv.Itoa(int(arr.envoyPort))))
+	}
+
+	targetConfig := api.Config{
+		Clusters: map[string]*api.Cluster{
+			targetConfigTargetName: {
+				Server: targetServer,
+			},
+		},
+		CurrentContext: targetConfigTargetName,
+		Contexts: map[string]*api.Context{
+			targetConfigTargetName: {
+				Cluster:  targetConfigTargetName,
+				AuthInfo: "kube-apiserver",
+			},
+		},
+	}
+	kubeconfigBytes, err := clientcmd.Write(targetConfig)
+	if err != nil {
+		return fmt.Errorf("failed to marshal audit webhook kubeconfig: %w", err)
+	}
+	data[arr.auditWebhookConfigFileName] = string(kubeconfigBytes)
+	return nil
 }

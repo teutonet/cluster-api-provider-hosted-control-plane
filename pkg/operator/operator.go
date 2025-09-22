@@ -3,6 +3,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -27,7 +28,6 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"google.golang.org/grpc/grpclog"
-	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -100,7 +100,7 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (err 
 	}
 	defer func() {
 		if shutdownErr := tp.Shutdown(ctx); shutdownErr != nil {
-			err = kerrors.NewAggregate([]error{err, fmt.Errorf("shutting down trace provider: %w", shutdownErr)})
+			err = errors.Join(err, fmt.Errorf("shutting down trace provider: %w", shutdownErr))
 		}
 	}()
 

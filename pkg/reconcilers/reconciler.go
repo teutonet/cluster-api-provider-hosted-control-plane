@@ -772,6 +772,7 @@ func createStatefulsetMutator(
 
 func createPodTemplateSpec(
 	options PodOptions,
+	initContainers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	containers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	volumes []*corev1ac.VolumeApplyConfiguration,
 ) *corev1ac.PodTemplateSpecApplyConfiguration {
@@ -784,31 +785,8 @@ func createPodTemplateSpec(
 		WithAffinity(options.Affinity).
 		WithDNSPolicy(slices.Ternary(options.DNSPolicy == "", corev1.DNSClusterFirst, options.DNSPolicy)).
 		WithHostNetwork(options.HostNetwork).
-		WithContainers(
-			slices.Map(containers, func(
-				containerSetting slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
-				_ int,
-			) *corev1ac.ContainerApplyConfiguration {
-				container, options := containerSetting.Unpack()
-				user := int64(1000)
-				if options.Root {
-					user = 0
-				}
-				return container.
-					WithSecurityContext(corev1ac.SecurityContext().
-						WithPrivileged(options.Root).
-						WithAllowPrivilegeEscalation(options.Root).
-						WithReadOnlyRootFilesystem(!options.ReadWriteRootFilesystem).
-						WithRunAsUser(user).
-						WithRunAsGroup(user).
-						WithRunAsNonRoot(!options.Root).
-						WithCapabilities(corev1ac.Capabilities().
-							WithDrop("ALL").
-							WithAdd(options.Capabilities...),
-						),
-					)
-			})...,
-		).
+		WithInitContainers(convertToContainerApplyConfiguration(initContainers)...).
+		WithContainers(convertToContainerApplyConfiguration(containers)...).
 		WithSecurityContext(corev1ac.PodSecurityContext().
 			WithRunAsUser(1000).
 			WithRunAsGroup(1000).
@@ -820,4 +798,32 @@ func createPodTemplateSpec(
 	return corev1ac.PodTemplateSpec().
 		WithAnnotations(options.Annotations).
 		WithSpec(spec)
+}
+
+func convertToContainerApplyConfiguration(
+	containers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
+) []*corev1ac.ContainerApplyConfiguration {
+	return slices.Map(containers, func(
+		containerSetting slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
+		_ int,
+	) *corev1ac.ContainerApplyConfiguration {
+		container, options := containerSetting.Unpack()
+		user := int64(1000)
+		if options.Root {
+			user = 0
+		}
+		return container.
+			WithSecurityContext(corev1ac.SecurityContext().
+				WithPrivileged(options.Root).
+				WithAllowPrivilegeEscalation(options.Root).
+				WithReadOnlyRootFilesystem(!options.ReadWriteRootFilesystem).
+				WithRunAsUser(user).
+				WithRunAsGroup(user).
+				WithRunAsNonRoot(!options.Root).
+				WithCapabilities(corev1ac.Capabilities().
+					WithDrop("ALL").
+					WithAdd(options.Capabilities...),
+				),
+			)
+	})
 }

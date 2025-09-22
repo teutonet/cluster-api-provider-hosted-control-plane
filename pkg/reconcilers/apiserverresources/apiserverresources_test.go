@@ -25,7 +25,7 @@ func TestApiServerResourcesReconciler_extractAdditionalVolumesAndMounts(t *testi
 			HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 				Deployment: v1alpha1.HostedControlPlaneDeployment{
 					APIServer: v1alpha1.APIServerPod{
-						Mounts: map[string]v1alpha1.HostedControlPlaneMount{
+						Mounts: map[string]v1alpha1.Mount{
 							configMapMountName: {
 								Path: configMapMountPath,
 								ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -97,21 +97,21 @@ func TestApiServerResourcesReconciler_ResourceLifecycle_MountConfiguration(t *te
 
 	tests := []struct {
 		name                string
-		mounts              map[string]v1alpha1.HostedControlPlaneMount
+		mounts              map[string]v1alpha1.Mount
 		expectedVolumeCount int
 		expectedMountCount  int
 		description         string
 	}{
 		{
 			name:                "empty mounts - should handle gracefully",
-			mounts:              map[string]v1alpha1.HostedControlPlaneMount{},
+			mounts:              map[string]v1alpha1.Mount{},
 			expectedVolumeCount: 0,
 			expectedMountCount:  0,
 			description:         "Empty mount configuration should not create volumes",
 		},
 		{
 			name: "mixed mount types - should handle all types",
-			mounts: map[string]v1alpha1.HostedControlPlaneMount{
+			mounts: map[string]v1alpha1.Mount{
 				"config-mount": {
 					Path: "/etc/config",
 					ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -133,7 +133,7 @@ func TestApiServerResourcesReconciler_ResourceLifecycle_MountConfiguration(t *te
 		},
 		{
 			name: "mount with invalid path - should still extract resources",
-			mounts: map[string]v1alpha1.HostedControlPlaneMount{
+			mounts: map[string]v1alpha1.Mount{
 				"weird-mount": {
 					Path: "", // Empty path
 					ConfigMap: &corev1.ConfigMapVolumeSource{

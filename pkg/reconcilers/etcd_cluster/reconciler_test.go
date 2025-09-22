@@ -1,116 +1,20 @@
 package etcd_cluster
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"testing"
 	"time"
 
 	. "github.com/onsi/gomega"
-	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 )
-
-var etcdSnapshotData = "etcd snapshot data"
-
-type etcdClientStub struct {
-	// Configurable behavior
-	StatusError     error
-	SnapshotError   error
-	AlarmError      error
-	DisarmError     error
-	StatusResponses map[string]*clientv3.StatusResponse
-	ActiveAlarms    []*etcdserverpb.AlarmMember
-}
-
-func newEtcdClientStub() *etcdClientStub {
-	return &etcdClientStub{
-		StatusResponses: make(map[string]*clientv3.StatusResponse),
-		ActiveAlarms:    make([]*etcdserverpb.AlarmMember, 0),
-	}
-}
-
-func (s *etcdClientStub) GetStatuses(_ context.Context) (map[string]*clientv3.StatusResponse, error) {
-	if s.StatusError != nil {
-		return nil, s.StatusError
-	}
-	return s.StatusResponses, nil
-}
-
-func (s *etcdClientStub) CreateSnapshot(_ context.Context) (*clientv3.SnapshotResponse, error) {
-	if s.SnapshotError != nil {
-		return nil, s.SnapshotError
-	}
-	return &clientv3.SnapshotResponse{
-		Header:   &etcdserverpb.ResponseHeader{ClusterId: 1},
-		Snapshot: io.NopCloser(bytes.NewReader([]byte(etcdSnapshotData))),
-	}, nil
-}
-
-func (s *etcdClientStub) ListAlarms(_ context.Context) (*clientv3.AlarmResponse, error) {
-	if s.AlarmError != nil {
-		return nil, s.AlarmError
-	}
-	return &clientv3.AlarmResponse{
-		Header: &etcdserverpb.ResponseHeader{ClusterId: 1},
-		Alarms: s.ActiveAlarms,
-	}, nil
-}
-
-func (s *etcdClientStub) DisarmAlarm(_ context.Context, alarm *clientv3.AlarmMember) error {
-	if s.DisarmError != nil {
-		return s.DisarmError
-	}
-
-	s.ActiveAlarms = slices.Filter(s.ActiveAlarms, func(a *etcdserverpb.AlarmMember, _ int) bool {
-		return !(a.MemberID == alarm.MemberID && a.Alarm == alarm.Alarm)
-	})
-
-	return nil
-}
-
-type s3ClientStub struct {
-	UploadError      error
-	UploadCallCount  int
-	LastUploadedBody []byte
-}
-
-var _ s3_client.S3Client = &s3ClientStub{}
-
-func newS3ClientStub() *s3ClientStub {
-	return &s3ClientStub{}
-}
-
-func (s *s3ClientStub) Upload(_ context.Context, body io.ReadCloser) (err error) {
-	defer func() {
-		if closeErr := body.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("failed to close body reader: %w", closeErr))
-		}
-	}()
-	s.UploadCallCount++
-	if s.UploadError != nil {
-		return s.UploadError
-	}
-
-	if body != nil {
-		data, err := io.ReadAll(body)
-		if err != nil {
-			return err
-		}
-		s.LastUploadedBody = data
-	}
-
-	return nil
-}
 
 func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 	g := NewWithT(t)
@@ -363,7 +267,7 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("should handle etcd status error gracefully", func(t *testing.T) {
-		stub := newEtcdClientStub()
+		stub := test.NewEtcdClientStub()
 		stub.StatusError = errors.New("connection refused")
 
 		hcp := &v1alpha1.HostedControlPlane{
@@ -387,7 +291,7 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 	})
 
 	t.Run("should update volume usage from etcd status", func(t *testing.T) {
-		stub := newEtcdClientStub()
+		stub := test.NewEtcdClientStub()
 		highestMemberDBSize := int64(5368709120)
 		stub.StatusResponses = map[string]*clientv3.StatusResponse{
 			"etcd-0": {
@@ -431,7 +335,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("should handle etcd alarm errors", func(t *testing.T) {
-		stub := newEtcdClientStub()
+		stub := test.NewEtcdClientStub()
 		stub.AlarmError = errors.New("failed to list alarms")
 
 		hcp := &v1alpha1.HostedControlPlane{}
@@ -448,7 +352,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 	})
 
 	t.Run("should disarm NOSPACE alarms when autogrow is enabled", func(t *testing.T) {
-		stub := newEtcdClientStub()
+		stub := test.NewEtcdClientStub()
 		stub.ActiveAlarms = []*etcdserverpb.AlarmMember{
 			{
 				MemberID: 12345,
@@ -481,7 +385,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 	})
 
 	t.Run("should return error for active NOSPACE alarms when autogrow is disabled", func(t *testing.T) {
-		stub := newEtcdClientStub()
+		stub := test.NewEtcdClientStub()
 		stub.ActiveAlarms = []*etcdserverpb.AlarmMember{
 			{
 				MemberID: 12345,
@@ -514,7 +418,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 	})
 
 	t.Run("should return error for active non-NOSPACE alarms", func(t *testing.T) {
-		stub := newEtcdClientStub()
+		stub := test.NewEtcdClientStub()
 		stub.ActiveAlarms = []*etcdserverpb.AlarmMember{
 			{
 				MemberID: 12345,
@@ -544,7 +448,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 	})
 
 	t.Run("should pass when no alarms present", func(t *testing.T) {
-		stub := newEtcdClientStub()
+		stub := test.NewEtcdClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{}
 
@@ -567,8 +471,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	yesterday := metav1.Time{Time: time.Now().Add(-25 * time.Hour)}
 	cronAt2AM := "0 2 * * *"
 	t.Run("should create snapshot and upload to S3 when scheduled", func(t *testing.T) {
-		etcdClientStub := newEtcdClientStub()
-		s3ClientStub := newS3ClientStub()
+		etcdClientStub := test.NewEtcdClientStub()
+		s3ClientStub := test.NewS3ClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -595,8 +499,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
 		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(1))
-		g.Expect(string(s3ClientStub.LastUploadedBody)).To(Equal(etcdSnapshotData))
+		g.Expect(s3ClientStub.LastUploadedBody).To(Equal(test.EtcdSnapshotData))
 		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
 		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
 
@@ -609,8 +512,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should not create backup when not scheduled", func(t *testing.T) {
-		etcdClientStub := newEtcdClientStub()
-		s3ClientStub := newS3ClientStub()
+		etcdClientStub := test.NewEtcdClientStub()
+		s3ClientStub := test.NewS3ClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -637,13 +540,13 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
 		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(0))
+		g.Expect(s3ClientStub.LastUploadedBody).To(BeEmpty())
 	})
 
 	t.Run("should handle etcd snapshot creation failure", func(t *testing.T) {
-		etcdClientStub := newEtcdClientStub()
+		etcdClientStub := test.NewEtcdClientStub()
 		etcdClientStub.SnapshotError = errors.New("failed to create snapshot")
-		s3ClientStub := newS3ClientStub()
+		s3ClientStub := test.NewS3ClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -670,12 +573,12 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
 		g.Expect(err).To(MatchError(ContainSubstring("failed to create etcd snapshot")))
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(0))
+		g.Expect(s3ClientStub.LastUploadedBody).To(BeEmpty())
 	})
 
 	t.Run("should handle S3 upload failure", func(t *testing.T) {
-		etcdClientStub := newEtcdClientStub()
-		s3ClientStub := newS3ClientStub()
+		etcdClientStub := test.NewEtcdClientStub()
+		s3ClientStub := test.NewS3ClientStub()
 		s3ClientStub.UploadError = errors.New("failed to upload to S3")
 
 		hcp := &v1alpha1.HostedControlPlane{
@@ -703,12 +606,12 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
 		g.Expect(err).To(MatchError(ContainSubstring("failed to upload etcd snapshot to S3")))
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(1))
+		g.Expect(s3ClientStub.LastUploadedBody).To(BeEmpty())
 	})
 
 	t.Run("should handle invalid cron schedule", func(t *testing.T) {
-		etcdClientStub := newEtcdClientStub()
-		s3ClientStub := newS3ClientStub()
+		etcdClientStub := test.NewEtcdClientStub()
+		s3ClientStub := test.NewS3ClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -735,12 +638,12 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
 		g.Expect(err).To(MatchError(ContainSubstring("failed to parse etcd backup schedule")))
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(0))
+		g.Expect(s3ClientStub.LastUploadedBody).To(BeEmpty())
 	})
 
 	t.Run("should create first backup when ETCDLastBackupTime is zero", func(t *testing.T) {
-		etcdClientStub := newEtcdClientStub()
-		s3ClientStub := newS3ClientStub()
+		etcdClientStub := test.NewEtcdClientStub()
+		s3ClientStub := test.NewS3ClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -775,7 +678,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		err := reconciler.reconcileETCDBackup(ctx, hcp)
 
 		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(s3ClientStub.UploadCallCount).To(Equal(1))
+		g.Expect(s3ClientStub.LastUploadedBody).To(Equal(test.EtcdSnapshotData))
 		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
 		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
 	})

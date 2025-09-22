@@ -2,6 +2,7 @@
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/teutonet/cluster-api-provider-hosted-control-plane)](https://goreportcard.com/report/github.com/teutonet/cluster-api-provider-hosted-control-plane)
 [![License](https://img.shields.io/badge/license-AGPL%20v3-blue.svg)](LICENSE)
+[![CLA assistant](https://cla-assistant.io/readme/badge/teutonet/cluster-api-provider-hosted-control-plane)](https://cla-assistant.io/teutonet/cluster-api-provider-hosted-control-plane)
 
 A Kubernetes Cluster API control plane provider that enables management of hosted control planes as first-class
 Kubernetes resources. This provider allows you to create and manage highly available Kubernetes control plane components
@@ -145,7 +146,7 @@ spec:
 ### Environment Variables
 
 | Variable                      | Description                      | Default                               |
-|-------------------------------|----------------------------------|---------------------------------------|
+| ----------------------------- | -------------------------------- | ------------------------------------- |
 | `LEADER_ELECTION`             | Enable leader election           | true                                  |
 | `WEBHOOK_CERT_DIR`            | Directory for webhook certs      | /tmp/k8s-webhook-server/serving-certs |
 | `MAX_CONCURRENT_RECONCILES`   | Max concurrent reconciles        | 10                                    |
@@ -214,7 +215,7 @@ for details on:
 ## 📋 Compatibility
 
 | Component    | Version          |
-|--------------|------------------|
+| ------------ | ---------------- |
 | Kubernetes   | v1.28+           |
 | Cluster API  | v1.10+           |
 | cert-manager | v1.18+           |

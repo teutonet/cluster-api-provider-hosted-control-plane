@@ -64,7 +64,7 @@ func TestErrorfIfErr(t *testing.T) {
 			err := IfErrErrorf(tt.args.format, tt.args.args...)
 
 			if tt.expectedErr == nil {
-				g.Expect(err).To(BeNil())
+				g.Expect(err).ToNot(HaveOccurred())
 			} else {
 				// check the error message itself, as err is a wrapped error
 				g.Expect(err).To(MatchError(tt.expectedErr.Error()))

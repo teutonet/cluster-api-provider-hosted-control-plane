@@ -160,12 +160,12 @@ func callETCDFuncOnAllMembers[R any](
 ) (map[string]*R, error) {
 	return tracing.WithSpan(ctx, tracer, "CallETCDFuncOnAllMembers",
 		func(ctx context.Context, span trace.Span) (map[string]*R, error) {
-			endpoints := slices.MapValues(endpoints, func(endpoint string, _ string) string {
+			endpointMap := slices.MapValues(endpoints, func(endpoint string, _ string) string {
 				return fmt.Sprintf("https://%s", net.JoinHostPort(endpoint, strconv.Itoa(int(etcdServerPort))))
 			})
-			results := make(map[string]*R, len(endpoints))
+			results := make(map[string]*R, len(endpointMap))
 			var errs error
-			for _, endpoint := range endpoints {
+			for _, endpoint := range endpointMap {
 				result, err := callETCDFuncOnMember(ctx, endpoint, caPool, clientCertificate, etcdFunc)
 				errs = errors.Join(errs, err)
 				results[endpoint] = result

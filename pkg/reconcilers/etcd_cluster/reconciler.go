@@ -472,7 +472,7 @@ func (er *etcdClusterReconciler) etcdIsHealthy(
 ) error {
 	alarmResponse, err := er.etcdClient.ListAlarms(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to list etcd alarms: %w", err)
 	}
 	if len(alarmResponse.Alarms) > 0 {
 		var ignoredAlarms []*etcdserverpb.AlarmMember
@@ -483,7 +483,10 @@ func (er *etcdClusterReconciler) etcdIsHealthy(
 			})
 			for _, outdatedAlarm := range ignoredAlarms {
 				if err := er.etcdClient.DisarmAlarm(ctx, (*clientv3.AlarmMember)(outdatedAlarm)); err != nil {
-					return err
+					return fmt.Errorf(
+						"failed to disarm etcd alarm %s for member %d: %w",
+						outdatedAlarm.Alarm.String(), outdatedAlarm.MemberID, err,
+					)
 				}
 				er.recorder.Eventf(
 					hostedControlPlane,

@@ -140,7 +140,7 @@ func (wr *WorkloadResourceReconciler) ReconcileDeployment(
 				wr.convertToPeerApplyConfigurations(ingressPortLabels),
 				wr.convertToPeerApplyConfigurations(egressPortLabels),
 				replicas,
-				createPodTemplateSpec(podOptions, containers, volumes),
+				createPodTemplateSpec(podOptions, nil, containers, volumes),
 			)
 		},
 	)
@@ -186,7 +186,7 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 				(*appsv1ac.DaemonSetApplyConfiguration).WithLabels,
 				(*appsv1ac.DaemonSetSpecApplyConfiguration).WithSelector,
 				(*appsv1ac.DaemonSetSpecApplyConfiguration).WithTemplate,
-				createPodTemplateSpec(podOptions, containers, volumes),
+				createPodTemplateSpec(podOptions, nil, containers, volumes),
 				func(daemonSet *appsv1.DaemonSet) bool {
 					return arePodsReady(
 						daemonSet.Status.DesiredNumberScheduled,

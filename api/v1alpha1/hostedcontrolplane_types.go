@@ -8,6 +8,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	auditv1 "k8s.io/apiserver/pkg/apis/audit/v1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/paused"
 )
@@ -64,7 +65,7 @@ type HostedControlPlaneInlineSpec struct {
 	Gateway GatewayReference `json:"gateway"`
 
 	//+kubebuilder:validation:Optional
-	KonnectivityClient HostedControlPlaneContainer `json:"konnectivityClient,omitempty"`
+	KonnectivityClient Container `json:"konnectivityClient,omitempty"`
 	//+kubebuilder:validation:Optional
 	KubeProxy KubeProxyComponent `json:"kubeProxy,omitempty"`
 	//+kubebuilder:default={}
@@ -82,33 +83,33 @@ type HostedControlPlaneDeployment struct {
 	//+kubebuilder:validation:Optional
 	APIServer APIServerPod `json:"apiServer,omitempty"`
 	//+kubebuilder:validation:Optional
-	ControllerManager ScalableHostedControlPlanePod `json:"controllerManager,omitempty"`
+	ControllerManager ScalablePod `json:"controllerManager,omitempty"`
 	//+kubebuilder:validation:Optional
-	Scheduler ScalableHostedControlPlanePod `json:"scheduler,omitempty"`
+	Scheduler ScalablePod `json:"scheduler,omitempty"`
 }
 
-type HostedControlPlanePod struct {
-	HostedControlPlaneContainer `json:",inline"`
+type Pod struct {
+	Container `json:",inline"`
 	//+kubebuilder:validation:Optional
 	PriorityClassName string `json:"priorityClassName,omitempty"`
 }
 
-type HostedControlPlaneContainer struct {
+type Container struct {
 	//+kubebuilder:validation:Optional
 	Args map[string]string `json:"args,omitempty"`
 	//+kubebuilder:validation:Optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-type ScalableHostedControlPlanePod struct {
-	HostedControlPlanePod `json:",inline"`
+type ScalablePod struct {
+	Pod `json:",inline"`
 	//+kubebuilder:validation:Optional
 	//+kubebuilder:default=1
 	Replicas *int32 `json:"replicas,omitempty"`
 }
 
 type KubeProxyComponent struct {
-	HostedControlPlanePod `json:",inline"`
+	Pod `json:",inline"`
 	//+kubebuilder:validation:Optional
 	Disabled bool `json:"enabled,omitempty"`
 }
@@ -150,17 +151,42 @@ type ETCDBackupSecret struct {
 }
 
 type APIServerPod struct {
-	HostedControlPlanePod `json:",inline"`
+	Pod `json:",inline"`
 	//+kubebuilder:validation:Optional
-	Mounts map[string]HostedControlPlaneMount `json:"mounts,omitempty"`
+	Mounts map[string]Mount `json:"mounts,omitempty"`
 	//+kubebuilder:validation:Optional
-	Konnectivity HostedControlPlaneContainer `json:"konnectivity,omitempty"`
+	Konnectivity Container `json:"konnectivity,omitempty"`
+	//+kubebuilder:validation:Optional
+	Audit *Audit `json:"audit,omitempty"`
+}
+
+type Audit struct {
+	//+kubebuilder:validation:Required
+	Policy auditv1.Policy `json:"policy"`
+	//+kubebuilder:validation:Optional
+	//+kubebuilder:validation:Enum=batch;blocking;blocking-strict
+	//+kubebuilder:default="batch"
+	Mode string `json:"mode,omitempty"`
+	//+kubebuilder:validation:Optional
+	Webhook *AuditWebhook `json:"webhook,omitempty"`
+}
+
+type AuditWebhook struct {
+	//+kubebuilder:validation:Required
+	//+kubebuilder:validation:MinItems=1
+	//+kubebuilder:validation:UniqueItems=true
+	Targets []AuditWebhookTarget `json:"targets"`
+}
+
+type AuditWebhookTarget struct {
+	//+kubebuilder:validation:Required
+	Server string `json:"server"`
 }
 
 //+kubebuilder:validation:MinProperties=2
 //+kubebuilder:validation:MaxProperties=2
 
-type HostedControlPlaneMount struct {
+type Mount struct {
 	//+kubebuilder:validation:Required
 	Path string `json:"path"`
 	//+kubebuilder:validation:Optional

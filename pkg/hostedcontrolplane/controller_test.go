@@ -10,6 +10,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -31,7 +32,7 @@ var (
 		_ *v1alpha1.HostedControlPlane,
 		_ *capiv2.Cluster,
 	) (s3_client.S3Client, error) {
-		return nil, nil
+		return test.NewS3ClientStub(), nil
 	}
 	nilEtcdClientFactory = func(
 		_ context.Context,
@@ -40,7 +41,7 @@ var (
 		_ *capiv2.Cluster,
 		_ int32,
 	) (etcd_client.EtcdClient, error) {
-		return nil, nil
+		return test.NewEtcdClientStub(), nil
 	}
 )
 
@@ -450,7 +451,7 @@ func TestHostedControlPlaneReconciler_StatusConditions(t *testing.T) {
 		g.Expect(err).NotTo(HaveOccurred())
 
 		// Should have a paused condition
-		g.Expect(len(updatedHCP.Status.Conditions)).To(BeNumerically(">", 0))
+		g.Expect(updatedHCP.Status.Conditions).ToNot(BeEmpty())
 		for _, condition := range updatedHCP.Status.Conditions {
 			if condition.Type == capiv2.PausedCondition {
 				g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))

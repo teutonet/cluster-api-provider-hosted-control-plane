@@ -109,9 +109,9 @@ tasks:
   ci:
     cmds:
       - task: lint
-        vars:
-          fix: "false"
       - task: test
+      - task: manifests
+      - task: compile
   check-diff:
     deps:
       - manifests

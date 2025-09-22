@@ -4,6 +4,7 @@ package hostedcontrolplane
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -36,7 +37,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	utilNet "k8s.io/utils/net"
@@ -250,7 +250,7 @@ func (r *hostedControlPlaneReconciler) secretToHostedControlPlane(
 
 	for _, hostedControlPlane := range hostedControlPlanes.Items {
 		if slices.SomeBy(slices.Entries(hostedControlPlane.Spec.Deployment.APIServer.Mounts),
-			func(mount slices.Entry[string, v1alpha1.HostedControlPlaneMount]) bool {
+			func(mount slices.Entry[string, v1alpha1.Mount]) bool {
 				return mount.Value.Secret != nil && mount.Value.Secret.SecretName == secret.Name
 			},
 		) {
@@ -282,7 +282,7 @@ func (r *hostedControlPlaneReconciler) configMapToHostedControlPlane(
 
 	for _, hostedControlPlane := range hostedControlPlanes.Items {
 		if slices.SomeBy(slices.Entries(hostedControlPlane.Spec.Deployment.APIServer.Mounts),
-			func(mount slices.Entry[string, v1alpha1.HostedControlPlaneMount]) bool {
+			func(mount slices.Entry[string, v1alpha1.Mount]) bool {
 				return mount.Value.ConfigMap != nil && mount.Value.ConfigMap.Name == configMap.Name
 			},
 		) {
@@ -331,7 +331,7 @@ func (r *hostedControlPlaneReconciler) resolveOwnerRefsToHostedControlPlanes(
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=get
 //+kubebuilder:rbac:groups="",resources=events,verbs=create
 
-func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
+func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, err error) {
 	return tracing.WithSpan(ctx, r.tracer, "Reconcile",
 		func(ctx context.Context, span trace.Span) (ctrl.Result, error) {
 			span.SetAttributes(
@@ -356,8 +356,8 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 			}
 
 			defer func() {
-				if err := r.patch(ctx, patchHelper, hostedControlPlane); err != nil {
-					reterr = kerrors.NewAggregate([]error{reterr, err})
+				if patchErr := r.patch(ctx, patchHelper, hostedControlPlane); patchErr != nil {
+					err = errors.Join(err, patchErr)
 				}
 			}()
 

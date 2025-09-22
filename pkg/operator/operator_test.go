@@ -41,7 +41,7 @@ func Test_newResource(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := newResource(tt.args.serviceName, tt.args.version)
 			if tt.wantErr {
-				g.Expect(err).ToNot(BeNil())
+				g.Expect(err).To(HaveOccurred())
 			}
 		})
 	}

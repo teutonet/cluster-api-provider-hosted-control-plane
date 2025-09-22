@@ -199,7 +199,7 @@ func (cr *configReconciler) ReconcileKubeletConfig(
 			kubeletConfiguration.Logging.FlushFrequency.SerializeAsString = false
 			kubeletConfiguration.ResolverConfig = nil
 
-			content, err := operatorutil.ToYaml(&kubeletConfiguration)
+			configYaml, err := operatorutil.ToYaml(&kubeletConfiguration)
 			if err != nil {
 				return fmt.Errorf("failed to marshal kubelet configuration: %w", err)
 			}
@@ -211,7 +211,7 @@ func (cr *configReconciler) ReconcileKubeletConfig(
 				false,
 				nil,
 				map[string]string{
-					konstants.KubeletBaseConfigurationConfigMapKey: content.String(),
+					konstants.KubeletBaseConfigurationConfigMapKey: configYaml,
 				},
 			)
 		},

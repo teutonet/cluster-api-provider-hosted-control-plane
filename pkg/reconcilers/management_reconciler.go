@@ -173,6 +173,7 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 	ingressPortComponents map[int32][]string,
 	egressPortComponents map[int32][]string,
 	targetComponent string,
+	initContainers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	containers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	volumes []*corev1ac.VolumeApplyConfiguration,
 ) (*appsv1.Deployment, bool, error) {
@@ -183,6 +184,7 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 				attribute.String("deployment.component", component),
 				attribute.String("deployment.targetComponent", targetComponent),
 				attribute.String("deployment.priorityClass", priorityClassName),
+				attribute.Int("deployment.initContainers.count", len(initContainers)),
 				attribute.Int("deployment.containers.count", len(containers)),
 				attribute.Int("deployment.volumes.count", len(volumes)),
 			)
@@ -212,7 +214,7 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 				mr.convertToPeerApplyConfigurations(ingressPortComponents, cluster),
 				mr.convertToPeerApplyConfigurations(egressPortComponents, cluster),
 				replicas,
-				createPodTemplateSpec(podOptions, containers, volumes),
+				createPodTemplateSpec(podOptions, initContainers, containers, volumes),
 			)
 		},
 	)
@@ -262,6 +264,7 @@ func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 				replicas,
 				createPodTemplateSpec(
 					podOptions,
+					nil,
 					containers,
 					volumes,
 				),

@@ -160,6 +160,8 @@ linters:
           alias: networkingv1ac
         - pkg: k8s.io/utils/net
           alias: utilNet
+        - pkg: k8s.io/apiserver/pkg/apis/audit/v1
+          alias: auditv1
 
         # Gateway API
         - pkg: sigs.k8s.io/gateway-api/apis/v1
@@ -281,14 +283,6 @@ linters:
       - linters:
           - govet
         text: 'shadow: declaration of "(err|ctx)" shadows declaration at'
-      - linters:
-          - errcheck
-        text: Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*print(f|ln)?|os\.(Un)?Setenv). is not checked
-      # Exclude some packages or code to require comments, for example test code, or fake clients.
-      - linters:
-          - godot
-          - revive
-        path: "e2e/.*.go"
       # Disable unparam "always receives" which might not be really
       # useful when building libraries.
       - linters:
@@ -297,11 +291,11 @@ linters:
       # Dot imports for gomega or ginkgo are allowed
       # within test files.
       - text: should not use dot imports
-        path: _test\.go
-      - text: should not use dot imports
-        path: e2e/.*.go
+        path: &testFiles _test\.go|test/.*\.go
       - text: cyclomatic complexity
-        path: _test\.go
+        path: *testFiles
+      - text: 'shadow:'
+        path: *testFiles
       - linters:
           - err113
           - varnamelen
@@ -310,7 +304,7 @@ linters:
           - importas
           - gosec
           - wrapcheck
-        path: _test\.go
+        path: *testFiles
       # Append should be able to assign to a different var/slice.
       #- linters:
       #    - gocritic
@@ -319,17 +313,7 @@ linters:
       - linters:
           - gocritic
         text: "deferInLoop: Possible resource leak, 'defer' is called in the 'for' loop"
-        path: _test\.go
-      # These two are very similar but so intricate, that it's hard to deduplicate them.
-      # At the same time, they're quite short and easy to understand.
-      - linters:
-          - dupl
-        text: 1-44 lines are duplicate of `pkg/cloud/user/storage.go:1-43
-        path: pkg/cloud/user/loadBalancer.go
-      - linters:
-          - dupl
-        text: 1-43 lines are duplicate of `pkg/cloud/user/loadBalancer.go:1-44
-        path: pkg/cloud/user/storage.go
+        path: *testFiles
 
 run:
   timeout: 10m

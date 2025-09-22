@@ -96,6 +96,10 @@ func GetKonnectivityConfigMapName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-konnectivity"
 }
 
+func GetAuditWebhookConfigMapName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-audit-webhook"
+}
+
 func GetKonnectivityClientKubeconfigCertificateName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-konnectivity-client"
 }

@@ -22,7 +22,10 @@ import (
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
-var tracer = tracing.GetTracer("S3Client")
+var (
+	tracer                    = tracing.GetTracer("S3Client")
+	errCredentialIsMissingKey = errors.New("S3 credential is missing key")
+)
 
 type S3Client interface {
 	Upload(ctx context.Context, body io.ReadCloser) error
@@ -74,11 +77,11 @@ func NewS3Client(
 		}
 		accessKeyID, ok := s3Secret.Data[accessKeyIDKey]
 		if !ok {
-			return nil, fmt.Errorf("s3 credentials secret is missing %s key", accessKeyIDKey)
+			return nil, fmt.Errorf("missing %s: %w", accessKeyIDKey, errCredentialIsMissingKey)
 		}
 		secretAccessKey, ok := s3Secret.Data[secretAccessKeyKey]
 		if !ok {
-			return nil, fmt.Errorf("s3 credentials secret is missing %s key", secretAccessKeyKey)
+			return nil, fmt.Errorf("missing %s: %w", secretAccessKeyKey, errCredentialIsMissingKey)
 		}
 
 		defaultConfig, err := config.LoadDefaultConfig(ctx,
