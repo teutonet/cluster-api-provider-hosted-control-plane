@@ -9,6 +9,7 @@ import (
 	"github.com/coredns/corefile-migration/migration/corefile"
 	"github.com/go-logr/logr"
 	slices "github.com/samber/lo"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
@@ -23,7 +24,7 @@ import (
 )
 
 type CoreDNSReconciler interface {
-	ReconcileCoreDNS(ctx context.Context) (string, error)
+	ReconcileCoreDNS(ctx context.Context, hostedControlPlane *v1alpha1.HostedControlPlane) (string, error)
 }
 
 func NewCoreDNSReconciler(
@@ -73,7 +74,10 @@ type coreDNSReconciler struct {
 
 var _ CoreDNSReconciler = &coreDNSReconciler{}
 
-func (cr *coreDNSReconciler) ReconcileCoreDNS(ctx context.Context) (string, error) {
+func (cr *coreDNSReconciler) ReconcileCoreDNS(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) (string, error) {
 	return tracing.WithSpan(ctx, cr.Tracer, "ReconcileCoreDNS",
 		func(ctx context.Context, span trace.Span) (string, error) {
 			phases := []struct {
@@ -93,8 +97,10 @@ func (cr *coreDNSReconciler) ReconcileCoreDNS(ctx context.Context) (string, erro
 					},
 				},
 				{
-					Name:      "Deployment",
-					Reconcile: cr.reconcileCoreDNSDeployment,
+					Name: "Deployment",
+					Reconcile: func(ctx context.Context) (string, error) {
+						return cr.reconcileCoreDNSDeployment(ctx, hostedControlPlane)
+					},
 				},
 				{
 					Name:      "Service",
@@ -273,7 +279,10 @@ func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context) erro
 	)
 }
 
-func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) (string, error) {
+func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) (string, error) {
 	return tracing.WithSpan(ctx, cr.Tracer, "ReconcileCoreDNSDeployment",
 		func(ctx context.Context, span trace.Span) (string, error) {
 			coreDNSConfigVolume := corev1ac.Volume().
@@ -301,9 +310,18 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(ctx context.Context) (st
 				WithProtocol(corev1.ProtocolTCP)
 			container := corev1ac.Container().
 				WithName("coredns").
-				WithImage("registry.k8s.io/coredns/coredns:v1.12.0").
+				WithImage(operatorutil.ResolveCoreDNSImage(hostedControlPlane.Spec.CoreDNS.Image)).
 				WithImagePullPolicy(corev1.PullAlways).
-				WithArgs("-conf", path.Join(*corednsConfigVolumeMount.MountPath, cr.coreDNSCorefileFileName)).
+				WithArgs(operatorutil.ArgsToSliceWithObservability(
+					ctx,
+					hostedControlPlane.Spec.CoreDNS.Args,
+					map[string]string{
+						"-conf": path.Join(*corednsConfigVolumeMount.MountPath, cr.coreDNSCorefileFileName),
+					},
+				)...).
+				WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
+					hostedControlPlane.Spec.CoreDNS.Resources,
+				)).
 				WithPorts(
 					corev1ac.ContainerPort().
 						WithName(cr.coreDNSDNSPortName).

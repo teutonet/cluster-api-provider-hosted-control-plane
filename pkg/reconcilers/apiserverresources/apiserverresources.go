@@ -322,7 +322,7 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				initContainers = append(
 					initContainers,
 					slices.T2(
-						arr.createAuditWebhookSidecarContainer(auditConfigVolume),
+						arr.createAuditWebhookSidecarContainer(ctx, auditConfig, auditConfigVolume),
 						reconcilers.ContainerOptions{},
 					),
 				)
@@ -883,7 +883,11 @@ func (arr *apiServerResourcesReconciler) createKonnectivityContainer(
 
 	return corev1ac.Container().
 		WithName("konnectivity-server").
-		WithImage(fmt.Sprintf("registry.k8s.io/kas-network-proxy/proxy-server:v0.%d.0", minorVersion)).
+		WithImage(operatorutil.ResolveKonnectivityImage(
+			hostedControlPlane.Spec.Deployment.APIServer.Konnectivity.Image,
+			"proxy-server",
+			minorVersion,
+		)).
 		WithImagePullPolicy(corev1.PullAlways).
 		WithArgs(arr.buildKonnectivityServerArgs(
 			ctx,
@@ -908,6 +912,8 @@ func (arr *apiServerResourcesReconciler) createKonnectivityContainer(
 }
 
 func (arr *apiServerResourcesReconciler) createAuditWebhookSidecarContainer(
+	ctx context.Context,
+	auditConfig *v1alpha1.Audit,
 	webhookConfigVolume *corev1ac.VolumeApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
 	webhookConfigVolumeMount := corev1ac.VolumeMount().
@@ -916,13 +922,18 @@ func (arr *apiServerResourcesReconciler) createAuditWebhookSidecarContainer(
 
 	return corev1ac.Container().
 		WithName("audit-webhook").
-		WithImage("envoyproxy/envoy:v1.33.9").
+		WithImage(operatorutil.ResolveAuditWebhookImage(auditConfig.Webhook.Image)).
 		WithImagePullPolicy(corev1.PullAlways).
-		WithArgs(operatorutil.ArgsToSlice(
+		WithArgs(operatorutil.ArgsToSliceWithObservability(
+			ctx,
+			auditConfig.Webhook.Args,
 			map[string]string{
 				"config-path": path.Join(*webhookConfigVolumeMount.MountPath, arr.envoyConfigFileName),
 			},
 		)...).
+		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
+			auditConfig.Webhook.Resources,
+		)).
 		WithRestartPolicy(corev1.ContainerRestartPolicyAlways).
 		WithVolumeMounts(webhookConfigVolumeMount)
 }
@@ -1006,7 +1017,11 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 
 	return corev1ac.Container().
 		WithName(konstants.KubeAPIServer).
-		WithImage(fmt.Sprintf("registry.k8s.io/kube-apiserver:%s", hostedControlPlane.Spec.Version)).
+		WithImage(operatorutil.ResolveKubernetesComponentImage(
+			hostedControlPlane.Spec.Deployment.APIServer.Image,
+			"kube-apiserver",
+			hostedControlPlane.Spec.Version,
+		)).
 		WithImagePullPolicy(corev1.PullAlways).
 		WithCommand("kube-apiserver").
 		WithArgs(arr.buildAPIServerArgs(
@@ -1045,7 +1060,11 @@ func (arr *apiServerResourcesReconciler) createSchedulerContainer(
 	probePort := arr.createProbePort(konstants.KubeSchedulerPort)
 	return corev1ac.Container().
 		WithName(konstants.KubeScheduler).
-		WithImage(fmt.Sprintf("registry.k8s.io/kube-scheduler:%s", hostedControlPlane.Spec.Version)).
+		WithImage(operatorutil.ResolveKubernetesComponentImage(
+			hostedControlPlane.Spec.Deployment.Scheduler.Image,
+			"kube-scheduler",
+			hostedControlPlane.Spec.Version,
+		)).
 		WithImagePullPolicy(corev1.PullAlways).
 		WithCommand("kube-scheduler").
 		WithArgs(arr.buildSchedulerArgs(ctx, hostedControlPlane, schedulerKubeconfigVolumeMount)...).
@@ -1072,7 +1091,11 @@ func (arr *apiServerResourcesReconciler) createControllerManagerContainer(
 	probePort := arr.createProbePort(konstants.KubeControllerManagerPort)
 	return corev1ac.Container().
 		WithName(konstants.KubeControllerManager).
-		WithImage(fmt.Sprintf("registry.k8s.io/kube-controller-manager:%s", hostedControlPlane.Spec.Version)).
+		WithImage(operatorutil.ResolveKubernetesComponentImage(
+			hostedControlPlane.Spec.Deployment.ControllerManager.Image,
+			"kube-controller-manager",
+			hostedControlPlane.Spec.Version,
+		)).
 		WithImagePullPolicy(corev1.PullAlways).
 		WithCommand("kube-controller-manager").
 		WithArgs(arr.buildControllerManagerArgs(

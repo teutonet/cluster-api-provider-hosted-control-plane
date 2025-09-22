@@ -200,9 +200,11 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDaemonSet(
 
 			container := corev1ac.Container().
 				WithName("konnectivity-agent").
-				WithImage(
-					fmt.Sprintf("registry.k8s.io/kas-network-proxy/proxy-agent:v0.%d.0", minorVersion),
-				).
+				WithImage(operatorutil.ResolveKonnectivityImage(
+					hostedControlPlane.Spec.KonnectivityClient.Image,
+					"proxy-agent",
+					minorVersion,
+				)).
 				WithArgs(kr.buildKonnectivityClientArgs(
 					ctx,
 					hostedControlPlane,

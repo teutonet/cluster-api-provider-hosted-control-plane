@@ -347,9 +347,15 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 
 			container := corev1ac.Container().
 				WithName(konstants.KubeProxy).
-				WithImage(fmt.Sprintf("k8s.gcr.io/kube-proxy:%s", hostedControlPlane.Spec.Version)).
+				WithImage(operatorutil.ResolveKubeProxyImage(
+					hostedControlPlane.Spec.KubeProxy.Image,
+					hostedControlPlane.Spec.Version,
+				)).
 				WithCommand("/usr/local/bin/kube-proxy").
-				WithArgs(kr.buildArgs(kubeProxyConfigVolumeMount)...).
+				WithArgs(kr.buildArgs(ctx, hostedControlPlane, kubeProxyConfigVolumeMount)...).
+				WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
+					hostedControlPlane.Spec.KubeProxy.Resources,
+				)).
 				WithEnv(corev1ac.EnvVar().
 					WithName("NODE_NAME").
 					WithValueFrom(corev1ac.EnvVarSource().
@@ -404,12 +410,16 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 	)
 }
 
-func (kr *kubeProxyReconciler) buildArgs(kubeProxyConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration) []string {
+func (kr *kubeProxyReconciler) buildArgs(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	kubeProxyConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
+) []string {
 	args := map[string]string{
 		"config":             path.Join(*kubeProxyConfigVolumeMount.MountPath, kr.kubeProxyConfigMapKey),
 		"hostname-override":  "$(NODE_NAME)",
 		"nodeport-addresses": "primary",
 		"bind-address":       "$(NODE_IP)",
 	}
-	return operatorutil.ArgsToSlice(args)
+	return operatorutil.ArgsToSliceWithObservability(ctx, hostedControlPlane.Spec.KubeProxy.Args, args)
 }
