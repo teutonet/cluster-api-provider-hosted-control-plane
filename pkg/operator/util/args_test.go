@@ -92,7 +92,7 @@ func TestArgsToSlice(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ArgsToSlice(tt.args...)
+			result := argsToSlice(tt.args...)
 
 			g.Expect(result).To(Equal(tt.expected))
 
@@ -112,8 +112,8 @@ func TestArgsToSlice_Ordering(t *testing.T) {
 		{"a": "1", "m": "13", "z": "26"},
 	}
 
-	result1 := ArgsToSlice(input1...)
-	result2 := ArgsToSlice(input2...)
+	result1 := argsToSlice(input1...)
+	result2 := argsToSlice(input2...)
 
 	g.Expect(result1).
 		To(Equal(result2))
@@ -343,8 +343,8 @@ func TestArgsToSliceWithObservabilityBackwardCompatibility(t *testing.T) {
 		"controller-arg2": "value4",
 	}
 
-	// Test with ArgsToSlice (original function)
-	originalResult := ArgsToSlice(userArgs, controllerArgs)
+	// Test with argsToSlice (original function)
+	originalResult := argsToSlice(userArgs, controllerArgs)
 
 	// Test with ArgsToSliceWithObservability (new function)
 	newResult := ArgsToSliceWithObservability(

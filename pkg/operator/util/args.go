@@ -15,7 +15,7 @@ import (
 
 var argumentOverriddenEvent = "ArgumentOverridden"
 
-func ArgsToSlice(args ...map[string]string) []string {
+func argsToSlice(args ...map[string]string) []string {
 	argsSlice := slices.MapToSlice(slices.Assign(args...), func(key string, value string) string {
 		return fmt.Sprintf("--%s=%s", key, value)
 	})
@@ -24,14 +24,13 @@ func ArgsToSlice(args ...map[string]string) []string {
 }
 
 // ArgsToSliceWithObservability merges user and controller arguments with observability for overrides.
-// Controller args override user args (the same behavior as ArgsToSlice), but overrides are logged, traced, and
-// emitted as events.
+// Controller args override user args, but overrides are logged, traced, and emitted as events.
 func ArgsToSliceWithObservability(
 	ctx context.Context,
 	userArgs map[string]string,
 	controllerArgs map[string]string,
 ) []string {
-	args := ArgsToSlice(userArgs, controllerArgs)
+	args := argsToSlice(userArgs, controllerArgs)
 
 	if overriddenKeys := slices.Filter(slices.Keys(userArgs), func(key string, _ int) bool {
 		return slices.HasKey(controllerArgs, key)

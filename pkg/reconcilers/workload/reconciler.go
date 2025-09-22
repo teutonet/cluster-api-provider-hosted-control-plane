@@ -208,7 +208,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				{
 					Name: "coredns",
 					Reconcile: func(ctx context.Context, _ *capiv2.Cluster) (string, error) {
-						return coreDNSReconciler.ReconcileCoreDNS(ctx)
+						return coreDNSReconciler.ReconcileCoreDNS(ctx, hostedControlPlane)
 					},
 					Condition:    v1alpha1.WorkloadCoreDNSReadyCondition,
 					FailedReason: v1alpha1.WorkloadCoreDNSFailedReason,

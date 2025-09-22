@@ -416,6 +416,7 @@ func (er *etcdClusterReconciler) reconcileStatefulSet(
 				WithReadOnly(true)
 
 			container := er.createEtcdContainer(
+				ctx,
 				hostedControlPlane, cluster,
 				etcdDataVolumeMount, etcdCertificatesVolumeMount,
 				serverPort, peerPort, metricsPort,
@@ -573,6 +574,7 @@ func (er *etcdClusterReconciler) createEtcdCertificatesVolume(
 }
 
 func (er *etcdClusterReconciler) createEtcdContainer(
+	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 	etcdDataVolumeMount *corev1ac.VolumeMountApplyConfiguration,
@@ -583,10 +585,14 @@ func (er *etcdClusterReconciler) createEtcdContainer(
 ) *corev1ac.ContainerApplyConfiguration {
 	return corev1ac.Container().
 		WithName("etcd").
-		WithImage(fmt.Sprintf("registry.k8s.io/etcd:%s-0", version.Version)).
-		WithImagePullPolicy(corev1.PullAlways).
+		WithImage(operatorutil.ResolveETCDImage(
+			hostedControlPlane.Spec.ETCD.Image,
+			version.Version,
+		)).
+		WithImagePullPolicy(hostedControlPlane.Spec.ETCD.ImagePullPolicy).
 		WithCommand("etcd").
 		WithArgs(er.buildEtcdArgs(
+			ctx,
 			hostedControlPlane, cluster,
 			etcdDataVolumeMount, etcdCertificatesVolumeMount,
 			serverPort, peerPort, metricsPort,
@@ -610,6 +616,9 @@ func (er *etcdClusterReconciler) createEtcdContainer(
 				WithValue(path.Join(*etcdCertificatesVolumeMount.MountPath, "server.key")),
 		).
 		WithPorts(serverPort, peerPort, metricsPort).
+		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
+			hostedControlPlane.Spec.ETCD.Resources,
+		)).
 		WithStartupProbe(operatorutil.CreateStartupProbe(metricsPort, "/readyz", corev1.URISchemeHTTP)).
 		WithReadinessProbe(operatorutil.CreateReadinessProbe(metricsPort, "/readyz", corev1.URISchemeHTTP)).
 		WithLivenessProbe(operatorutil.CreateLivenessProbe(metricsPort, "/livez", corev1.URISchemeHTTP)).
@@ -617,6 +626,7 @@ func (er *etcdClusterReconciler) createEtcdContainer(
 }
 
 func (er *etcdClusterReconciler) buildEtcdArgs(
+	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 	etcdDataVolumeMount *corev1ac.VolumeMountApplyConfiguration,
@@ -659,7 +669,7 @@ func (er *etcdClusterReconciler) buildEtcdArgs(
 		"quota-backend-bytes":         strconv.Itoa(int(storageQuota)),
 	}
 
-	return operatorutil.ArgsToSlice(args)
+	return operatorutil.ArgsToSliceWithObservability(ctx, hostedControlPlane.Spec.ETCD.Args, args)
 }
 
 func (er *etcdClusterReconciler) buildInitialCluster(

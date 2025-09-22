@@ -68,6 +68,8 @@ type HostedControlPlaneInlineSpec struct {
 	KonnectivityClient Container `json:"konnectivityClient,omitempty"`
 	//+kubebuilder:validation:Optional
 	KubeProxy KubeProxyComponent `json:"kubeProxy,omitempty"`
+	//+kubebuilder:validation:Optional
+	CoreDNS Container `json:"coredns,omitempty"`
 	//+kubebuilder:default={}
 	ETCD *ETCDComponent `json:"etcd,omitempty"`
 }
@@ -94,7 +96,21 @@ type Pod struct {
 	PriorityClassName string `json:"priorityClassName,omitempty"`
 }
 
+type ImageSpec struct {
+	//+kubebuilder:validation:Optional
+	Registry string `json:"registry,omitempty"`
+	//+kubebuilder:validation:Optional
+	Repository string `json:"repository,omitempty"`
+	//+kubebuilder:validation:Optional
+	Tag string `json:"tag,omitempty"`
+}
+
 type Container struct {
+	//+kubebuilder:validation:Optional
+	Image *ImageSpec `json:"image,omitempty"`
+	//+kubebuilder:validation:Optional
+	//+kubebuilder:default="Always"
+	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 	//+kubebuilder:validation:Optional
 	Args map[string]string `json:"args,omitempty"`
 	//+kubebuilder:validation:Optional
@@ -115,6 +131,7 @@ type KubeProxyComponent struct {
 }
 
 type ETCDComponent struct {
+	Container `json:",inline"`
 	//+kubebuilder:validation:Optional
 	VolumeSize resource.Quantity `json:"volumeSize,omitempty"`
 	// AutoGrow will increase the volume size automatically when it is near full.
@@ -172,6 +189,7 @@ type Audit struct {
 }
 
 type AuditWebhook struct {
+	Container `json:",inline"`
 	//+kubebuilder:validation:Required
 	//+kubebuilder:validation:MinItems=1
 	//+kubebuilder:validation:UniqueItems=true

@@ -36,16 +36,16 @@ vars:
       kustomize:
         url: sigs.k8s.io/kustomize/kustomize/v5
         version: 5.7.1
-      buildah:
-        url: github.com/containers/buildah/cmd/buildah
-        version: 1.41.0
+      qq:
+        url: github.com/JFryy/qq
+        version: 0.3.1
   controllerGenCmd: 'go run {{ (index .tools "controller-gen").url }}@v{{ (index .tools "controller-gen").version }}'
   conversionGenCmd: 'go run {{ (index .tools "conversion-gen").url }}@v{{ (index .tools "conversion-gen").version }}'
   golangciLintCmd: 'go run {{ (index .tools "golangci-lint").url }}@v{{ (index .tools "golangci-lint").version }}'
   gofumptCmd: 'go run {{ (index .tools "gofumpt").url }}@v{{ (index .tools "gofumpt").version }}'
   golinesCmd: 'go run {{ (index .tools "golines").url }}@v{{ (index .tools "golines").version }}'
   kustomizeCmd: 'go run {{ (index .tools "kustomize").url }}@v{{ (index .tools "kustomize").version }}'
-  buildahCmd: 'go run {{ (index .tools "buildah").url }}@v{{ (index .tools "buildah").version }}'
+  qqCmd: 'go run {{ (index .tools "qq").url }}@v{{ (index .tools "qq").version }}'
   buildDir: build
   artifactsDir: _artifacts
   #  TODO: until https://github.com/go-task/task/issues/178 is done
@@ -120,11 +120,11 @@ tasks:
     cmd: git diff --exit-code
   clean:
     cmds:
-      - "{{ .buildahCmd }} manifest rm {{ .IMAGE }} 2>/dev/null || true"
+      - "buildah manifest rm {{ .IMAGE }} 2>/dev/null || true"
       - rm -rf {{ .buildDir }}
       - rm -rf {{ .artifactsDir }}
     status:
-      - (! {{ .buildahCmd }} manifest inspect {{ .IMAGE }} 2>/dev/null) || false
+      - (! buildah manifest inspect {{ .IMAGE }} 2>/dev/null) || false
       - test ! -d {{ .buildDir }}
       - test ! -d {{ .artifactsDir }}
 
@@ -156,7 +156,7 @@ tasks:
       arch: '{{ .arch | default ARCH }}'
       oldDigests:
         sh: >-
-          {{ .buildahCmd }} manifest inspect {{ .IMAGE }} 2> /dev/null | jq -r '.manifests | map(select(.platform.architecture == "{{ .arch }}")) | map(.digest)[]'
+          buildah manifest inspect {{ .IMAGE }} 2> /dev/null | {{ .qqCmd }} -r '.manifests | map(select(.platform.architecture == "{{ .arch }}")) | map(.digest)[]' || true
     sources:
       - Containerfile
       - .containerignore
@@ -164,10 +164,10 @@ tasks:
     cmds:
       - for:
           var: oldDigests
-        cmd: "{{ .buildahCmd }} manifest remove {{ .IMAGE }} {{ .ITEM }} || true"
-      - "{{ .buildahCmd }} build --arch {{ .arch }} --manifest {{ .IMAGE }} --build-arg=manager={{ .buildDir }}/manager-{{ .arch }} ."
+        cmd: "buildah manifest remove {{ .IMAGE }} {{ .ITEM }} || true"
+      - "buildah build --arch {{ .arch }} --manifest {{ .IMAGE }} --build-arg=manager={{ .buildDir }}/manager-{{ .arch }} ."
     status:
-      - "{{ .buildahCmd }} manifest inspect {{ .IMAGE }} | grep -q {{ .arch }}"
+      - "buildah manifest inspect {{ .IMAGE }} | grep -q {{ .arch }}"
   build:
     method: none
     deps:
