@@ -11,44 +11,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: ./go.mod
-
-      - uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-
-      - run: task lint
-      - run: task lint fix=true
-
-      - name: Check for uncommitted changes
-        run: task check-diff
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: ./go.mod
-
-      - uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-
-      - run: task test
-
   build:
-    name: Build
+    name: Lint
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -65,10 +29,18 @@ jobs:
         with:
           version: 3.x
 
+      - run: task test
+
+      - run: task lint
+      - run: task lint fix=true
+
+      - name: Check for uncommitted changes
+        run: task check-diff
+
       - run: task build
 
       - name: Log in and push image to Container Registry
-        if: github.event_name == 'push' && github.ref == 'main'
+        if: github.event_name == 'push'
         run: |
           echo ${{ github.token }} | buildah login --username ${{ github.repository_owner }} --password-stdin ghcr.io
           buildah manifest push --all ${IMAGE}
