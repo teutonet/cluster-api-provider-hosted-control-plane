@@ -14,6 +14,8 @@ on:
 
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   build:
     name: Test, lint, build and push (if on main)
@@ -21,6 +23,9 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository }}:latest
       GITHUB_TOKEN: ${{ secrets.ACTIONS_BOT_TOKEN }}
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v5
 

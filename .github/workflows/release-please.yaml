@@ -9,6 +9,8 @@ on:
       - main
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   release-please:
     runs-on: ubuntu-latest
@@ -31,6 +33,9 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.tag_name }}
       GITHUB_TOKEN: ${{ secrets.ACTIONS_BOT_TOKEN }}
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v5
         with:
