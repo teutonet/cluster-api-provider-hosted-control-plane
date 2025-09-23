@@ -204,8 +204,11 @@ type AuditWebhookTarget struct {
 }
 
 type AuditWebhookAuthentication struct {
+	//+kubebuilder:validation:Required
+	SecretName string `json:"secretName"`
 	//+kubebuilder:validation:Optional
-	SecretName string `json:"secretname,omitempty"`
+	// SecretNamespace. If not set, defaults to the namespace of the HostedControlPlane.
+	SecretNamespace string `json:"secretNamespace,omitempty"`
 	//+kubebuilder:validation:Optional
 	//+kubebuilder:default="token"
 	TokenKey string `json:"tokenKey,omitempty"`
