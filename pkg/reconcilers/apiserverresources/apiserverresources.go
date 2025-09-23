@@ -1305,13 +1305,18 @@ func (arr *apiServerResourcesReconciler) generateEnvoyConfig(
 				},
 			}
 			if target.Authentication != nil {
-				secret, err := arr.KubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
-					Get(ctx, target.Authentication.SecretName, metav1.GetOptions{})
+				secretNamespace := hostedControlPlane.Namespace
+				secretName := target.Authentication.SecretName
+				if target.Authentication.SecretNamespace != "" {
+					secretNamespace = target.Authentication.SecretNamespace
+				}
+				secret, err := arr.KubernetesClient.CoreV1().Secrets(secretNamespace).
+					Get(ctx, secretName, metav1.GetOptions{})
 				if err != nil {
 					return slices.T2[map[string]any, error](nil, fmt.Errorf(
 						"failed to get audit webhook target authentication secret %s/%s: %w",
-						hostedControlPlane.Namespace,
-						target.Authentication.SecretName,
+						secretNamespace,
+						secretName,
 						err,
 					))
 				}
@@ -1320,8 +1325,8 @@ func (arr *apiServerResourcesReconciler) generateEnvoyConfig(
 					return slices.T2[map[string]any, error](nil, fmt.Errorf(
 						"failed to get audit webhook target authentication token key %s in secret %s/%s: %w",
 						target.Authentication.TokenKey,
-						hostedControlPlane.Namespace,
-						target.Authentication.SecretName,
+						secretNamespace,
+						secretName,
 						errWebhookSecretIsMissingKey,
 					))
 				}
