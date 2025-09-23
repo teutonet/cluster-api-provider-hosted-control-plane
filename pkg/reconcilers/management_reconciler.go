@@ -67,6 +67,7 @@ func (mr *ManagementResourceReconciler) ReconcileSecret(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
+	component string,
 	namespace string,
 	name string,
 	data map[string][]byte,
@@ -86,7 +87,7 @@ func (mr *ManagementResourceReconciler) ReconcileSecret(
 					namespace,
 					name,
 					operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
-					names.GetControlPlaneLabels(cluster, ""),
+					names.GetControlPlaneLabels(cluster, component),
 					data,
 				),
 			)

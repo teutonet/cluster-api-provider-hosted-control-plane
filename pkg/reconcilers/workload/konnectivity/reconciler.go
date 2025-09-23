@@ -284,7 +284,7 @@ func (kr *konnectivityReconciler) buildKonnectivityClientArgs(
 			kr.konnectivityServiceAccountTokenName,
 		),
 	}
-	return operatorutil.ArgsToSliceWithObservability(
+	return operatorutil.ArgsToSlice(
 		ctx,
 		hostedControlPlane.Spec.KonnectivityClient.Args,
 		args,

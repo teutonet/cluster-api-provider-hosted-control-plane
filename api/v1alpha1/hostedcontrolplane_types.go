@@ -199,6 +199,16 @@ type AuditWebhook struct {
 type AuditWebhookTarget struct {
 	//+kubebuilder:validation:Required
 	Server string `json:"server"`
+	//+kubebuilder:validation:Optional
+	Authentication *AuditWebhookAuthentication `json:"authentication,omitempty"`
+}
+
+type AuditWebhookAuthentication struct {
+	//+kubebuilder:validation:Optional
+	SecretName string `json:"secretname,omitempty"`
+	//+kubebuilder:validation:Optional
+	//+kubebuilder:default="token"
+	TokenKey string `json:"tokenKey,omitempty"`
 }
 
 //+kubebuilder:validation:MinProperties=2

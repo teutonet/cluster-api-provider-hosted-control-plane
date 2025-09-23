@@ -669,7 +669,7 @@ func (er *etcdClusterReconciler) buildEtcdArgs(
 		"quota-backend-bytes":         strconv.Itoa(int(storageQuota)),
 	}
 
-	return operatorutil.ArgsToSliceWithObservability(ctx, hostedControlPlane.Spec.ETCD.Args, args)
+	return operatorutil.ArgsToSlice(ctx, hostedControlPlane.Spec.ETCD.Args, args)
 }
 
 func (er *etcdClusterReconciler) buildInitialCluster(
