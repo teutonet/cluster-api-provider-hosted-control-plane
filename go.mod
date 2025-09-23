@@ -11,7 +11,7 @@ require (
 	github.com/blang/semver/v4 v4.0.0
 	github.com/caarlos0/env/v6 v6.10.1
 	github.com/cert-manager/cert-manager v1.18.0-beta.0.0.20250731163618-236523b2c1b8
-	github.com/coredns/corefile-migration v1.0.27
+	github.com/coredns/corefile-migration v1.0.28
 	github.com/go-logr/logr v1.4.3
 	github.com/onsi/gomega v1.38.0
 	github.com/robfig/cron/v3 v3.0.1
