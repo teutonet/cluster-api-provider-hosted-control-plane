@@ -312,7 +312,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 				WithName("coredns").
 				WithImage(operatorutil.ResolveCoreDNSImage(hostedControlPlane.Spec.CoreDNS.Image)).
 				WithImagePullPolicy(hostedControlPlane.Spec.CoreDNS.ImagePullPolicy).
-				WithArgs(operatorutil.ArgsToSliceWithObservability(
+				WithArgs(operatorutil.ArgsToSlice(
 					ctx,
 					hostedControlPlane.Spec.CoreDNS.Args,
 					map[string]string{

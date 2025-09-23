@@ -23,9 +23,9 @@ func argsToSlice(args ...map[string]string) []string {
 	return argsSlice
 }
 
-// ArgsToSliceWithObservability merges user and controller arguments with observability for overrides.
-// Controller args override user args, but overrides are logged, traced, and emitted as events.
-func ArgsToSliceWithObservability(
+// ArgsToSlice merges user and controller arguments with observability for overrides.
+// Controller args override user args and overrides are logged, traced, and emitted as events.
+func ArgsToSlice(
 	ctx context.Context,
 	userArgs map[string]string,
 	controllerArgs map[string]string,

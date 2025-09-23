@@ -32,6 +32,8 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+var errWebhookSecretIsMissingKey = errors.New("webhook authentication secret is missing key")
+
 type ApiServerResourcesReconciler interface {
 	ReconcileApiServerService(
 		ctx context.Context,
@@ -233,27 +235,35 @@ func (arr *apiServerResourcesReconciler) reconcileAuditConfig(
 
 			auditConfig := hostedControlPlane.Spec.Deployment.APIServer.Audit
 			if auditConfig.Webhook != nil {
-				if err := arr.setWebhookConfigs(auditConfig, data); err != nil {
+				if webhookKubeconfigString, envoyConfigString, err := arr.generateWebhookConfigs(
+					ctx,
+					hostedControlPlane,
+				); err != nil {
 					return err
+				} else {
+					data[arr.auditWebhookConfigFileName] = webhookKubeconfigString
+					if envoyConfigString != "" {
+						data[arr.envoyConfigFileName] = envoyConfigString
+					}
 				}
 			}
 
-			policyYaml, err := operatorutil.PolicyToYaml(
-				auditConfig.Policy,
-			)
-			if err != nil {
+			if policyYaml, err := operatorutil.PolicyToYaml(auditConfig.Policy); err != nil {
 				return fmt.Errorf("failed to marshal audit policy: %w", err)
+			} else {
+				data[arr.auditPolicyFileName] = policyYaml
 			}
-			data[arr.auditPolicyFileName] = policyYaml
 
-			return arr.ReconcileConfigmap(
+			return arr.ReconcileSecret(
 				ctx,
 				hostedControlPlane,
 				cluster,
 				"audit",
 				hostedControlPlane.Namespace,
-				names.GetAuditWebhookConfigMapName(cluster),
-				data,
+				names.GetAuditWebhookSecretName(cluster),
+				slices.MapValues(data, func(value string, _ string) []byte {
+					return []byte(value)
+				}),
 			)
 		})
 }
@@ -615,8 +625,8 @@ func (arr *apiServerResourcesReconciler) createAuditConfigVolume(
 ) *corev1ac.VolumeApplyConfiguration {
 	return corev1ac.Volume().
 		WithName("audit-webhook-config").
-		WithConfigMap(corev1ac.ConfigMapVolumeSource().
-			WithName(names.GetAuditWebhookConfigMapName(cluster)),
+		WithSecret(corev1ac.SecretVolumeSource().
+			WithSecretName(names.GetAuditWebhookSecretName(cluster)),
 		)
 }
 
@@ -840,7 +850,7 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 		}
 	}
 
-	return operatorutil.ArgsToSliceWithObservability(
+	return operatorutil.ArgsToSlice(
 		ctx,
 		hostedControlPlane.Spec.Deployment.APIServer.Args,
 		args,
@@ -924,7 +934,7 @@ func (arr *apiServerResourcesReconciler) createAuditWebhookSidecarContainer(
 		WithName("audit-webhook").
 		WithImage(operatorutil.ResolveAuditWebhookImage(auditConfig.Webhook.Image)).
 		WithImagePullPolicy(auditConfig.Webhook.ImagePullPolicy).
-		WithArgs(operatorutil.ArgsToSliceWithObservability(
+		WithArgs(operatorutil.ArgsToSlice(
 			ctx,
 			auditConfig.Webhook.Args,
 			map[string]string{
@@ -967,7 +977,7 @@ func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 		"mode":         "grpc",
 	}
 
-	return operatorutil.ArgsToSliceWithObservability(
+	return operatorutil.ArgsToSlice(
 		ctx,
 		hostedControlPlane.Spec.Deployment.APIServer.Konnectivity.Args,
 		args,
@@ -1132,7 +1142,7 @@ func (arr *apiServerResourcesReconciler) buildSchedulerArgs(
 		"leader-elect":              strconv.FormatBool(leaderElect),
 	}
 
-	return operatorutil.ArgsToSliceWithObservability(
+	return operatorutil.ArgsToSlice(
 		ctx,
 		hostedControlPlane.Spec.Deployment.Scheduler.Args,
 		args,
@@ -1173,7 +1183,7 @@ func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 		"use-service-account-credentials":  "true",
 	}
 
-	return operatorutil.ArgsToSliceWithObservability(
+	return operatorutil.ArgsToSlice(
 		ctx,
 		hostedControlPlane.Spec.Deployment.ControllerManager.Args,
 		args,
@@ -1210,115 +1220,23 @@ func (arr *apiServerResourcesReconciler) setAuditWebhookPorts(
 	return nil
 }
 
-func (arr *apiServerResourcesReconciler) setWebhookConfigs(
-	auditConfig *v1alpha1.Audit,
-	data map[string]string,
-) error {
+func (arr *apiServerResourcesReconciler) generateWebhookConfigs(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) (string, string, error) {
+	auditConfig := hostedControlPlane.Spec.Deployment.APIServer.Audit
 	targetCount := len(auditConfig.Webhook.Targets)
 	targetConfigTargetName := "webhook"
 	targetServer := auditConfig.Webhook.Targets[0].Server
+	envoyConfig := ""
 
 	if targetCount > 1 {
-		route := map[string]any{
-			"cluster": "webhook_service_0",
-			"request_mirror_policies": slices.RepeatBy(targetCount-1, func(i int) map[string]any {
-				return map[string]any{
-					"cluster":                           fmt.Sprintf("webhook_service_%d", i+1),
-					"disable_shadow_host_suffix_append": true,
-				}
-			}),
-		}
-
-		envoyConfig := map[string]any{
-			"static_resources": map[string]any{
-				"listeners": []map[string]any{
-					{
-						"address": map[string]any{
-							"socket_address": map[string]any{
-								"address":    "127.0.0.1",
-								"port_value": arr.envoyPort,
-							},
-						},
-						"filter_chains": []map[string]any{
-							{
-								"filters": []map[string]any{
-									{
-										"name": "envoy.filters.network.http_connection_manager",
-										"typed_config": map[string]any{
-											"@type": "type.googleapis.com/envoy.extensions.filters.network." +
-												"http_connection_manager.v3.HttpConnectionManager",
-											"stat_prefix": "ingress_http",
-											"route_config": map[string]any{
-												"name": "local_route",
-												"virtual_hosts": []map[string]any{
-													{
-														"name":    "local_service",
-														"domains": []string{"*"},
-														"routes": []map[string]any{
-															{
-																"match": map[string]any{
-																	"path": "/",
-																},
-																"route": route,
-															},
-														},
-													},
-												},
-											},
-											"http_filters": []map[string]any{
-												{
-													"name": "envoy.filters.http.router",
-													"typed_config": map[string]any{
-														"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
-													},
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-				"clusters": slices.Map(
-					auditConfig.Webhook.Targets,
-					func(target v1alpha1.AuditWebhookTarget, index int) map[string]any {
-						host, portStr, _ := net.SplitHostPort(target.Server)
-						port, _ := strconv.Atoi(portStr)
-						return map[string]any{
-							"name": fmt.Sprintf("webhook_service_%d", index),
-							"load_assignment": map[string]any{
-								"cluster_name": fmt.Sprintf("webhook_service_%d", index),
-								"endpoints": []map[string]any{
-									{
-										"lb_endpoints": []map[string]any{
-											{
-												"endpoint": map[string]any{
-													"address": map[string]any{
-														"socket_address": map[string]any{
-															"address":    host,
-															"port_value": port,
-														},
-													},
-												},
-											},
-										},
-									},
-								},
-							},
-						}
-					},
-				),
-			},
-		}
-
-		if envoyYaml, err := yaml.Marshal(envoyConfig); err != nil {
-			return fmt.Errorf("failed to marshal envoy config: %w", err)
+		if envoyTargetServer, envoyConfigString, err := arr.generateEnvoyConfig(ctx, hostedControlPlane); err != nil {
+			return "", "", err
 		} else {
-			data[arr.envoyConfigFileName] = string(envoyYaml)
+			targetServer = envoyTargetServer
+			envoyConfig = envoyConfigString
 		}
-
-		targetServer = fmt.Sprintf("http://%s", net.JoinHostPort("localhost", strconv.Itoa(int(arr.envoyPort))))
 	}
 
 	targetConfig := api.Config{
@@ -1335,10 +1253,178 @@ func (arr *apiServerResourcesReconciler) setWebhookConfigs(
 			},
 		},
 	}
+
 	kubeconfigBytes, err := clientcmd.Write(targetConfig)
 	if err != nil {
-		return fmt.Errorf("failed to marshal audit webhook kubeconfig: %w", err)
+		return "", "", fmt.Errorf("failed to marshal audit webhook kubeconfig: %w", err)
 	}
-	data[arr.auditWebhookConfigFileName] = string(kubeconfigBytes)
-	return nil
+	return string(kubeconfigBytes), envoyConfig, nil
+}
+
+func (arr *apiServerResourcesReconciler) generateEnvoyConfig(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) (string, string, error) {
+	auditConfig := hostedControlPlane.Spec.Deployment.APIServer.Audit
+
+	route := map[string]any{
+		"cluster": "webhook_service_0",
+		"request_mirror_policies": slices.RepeatBy(len(auditConfig.Webhook.Targets)-1, func(i int) map[string]any {
+			return map[string]any{
+				"cluster":                           fmt.Sprintf("webhook_service_%d", i+1),
+				"disable_shadow_host_suffix_append": true,
+			}
+		}),
+	}
+
+	clusters := slices.Map(
+		auditConfig.Webhook.Targets,
+		func(target v1alpha1.AuditWebhookTarget, index int) slices.Tuple2[map[string]any, error] {
+			host, portStr, _ := net.SplitHostPort(target.Server)
+			port, _ := strconv.Atoi(portStr)
+			cluster := map[string]any{
+				"name": fmt.Sprintf("webhook_service_%d", index),
+				"load_assignment": map[string]any{
+					"cluster_name": fmt.Sprintf("webhook_service_%d", index),
+					"endpoints": []map[string]any{
+						{
+							"lb_endpoints": []map[string]any{
+								{
+									"endpoint": map[string]any{
+										"address": map[string]any{
+											"socket_address": map[string]any{
+												"address":    host,
+												"port_value": port,
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			if target.Authentication != nil {
+				secret, err := arr.KubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace).
+					Get(ctx, target.Authentication.SecretName, metav1.GetOptions{})
+				if err != nil {
+					return slices.T2[map[string]any, error](nil, fmt.Errorf(
+						"failed to get audit webhook target authentication secret %s/%s: %w",
+						hostedControlPlane.Namespace,
+						target.Authentication.SecretName,
+						err,
+					))
+				}
+				token, ok := secret.Data[target.Authentication.TokenKey]
+				if !ok {
+					return slices.T2[map[string]any, error](nil, fmt.Errorf(
+						"failed to get audit webhook target authentication token key %s in secret %s/%s: %w",
+						target.Authentication.TokenKey,
+						hostedControlPlane.Namespace,
+						target.Authentication.SecretName,
+						errWebhookSecretIsMissingKey,
+					))
+				}
+				cluster["filters"] = []map[string]any{
+					{
+						"name":  "envoy.filters.network.http_connection_manager",
+						"@type": "type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation",
+						"mutations": []map[string]any{
+							{
+								"request_mutations": []map[string]any{
+									{
+										"append": []map[string]any{
+											{
+												"header": map[string]any{
+													"key":   "Authorization",
+													"value": fmt.Sprintf("Bearer %s", token),
+												},
+												"append_action": "OVERWRITE_IF_EXISTS_OR_ADD",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+			}
+			return slices.T2[map[string]any, error](cluster, nil)
+		},
+	)
+
+	if errs := slices.Filter(clusters, func(t slices.Tuple2[map[string]any, error], _ int) bool {
+		return t.B != nil
+	}); len(errs) > 0 {
+		return "", "", fmt.Errorf("failed to parse audit webhook target servers: %w", errors.Join(
+			slices.Map(errs, func(t slices.Tuple2[map[string]any, error], _ int) error {
+				return t.B
+			})...),
+		)
+	}
+
+	envoyConfig := map[string]any{
+		"static_resources": map[string]any{
+			"listeners": []map[string]any{
+				{
+					"address": map[string]any{
+						"socket_address": map[string]any{
+							"address":    "127.0.0.1",
+							"port_value": arr.envoyPort,
+						},
+					},
+					"filter_chains": []map[string]any{
+						{
+							"filters": []map[string]any{
+								{
+									"name": "envoy.filters.network.http_connection_manager",
+									"typed_config": map[string]any{
+										"@type": "type.googleapis.com/envoy.extensions.filters.network." +
+											"http_connection_manager.v3.HttpConnectionManager",
+										"stat_prefix": "ingress_http",
+										"route_config": map[string]any{
+											"name": "local_route",
+											"virtual_hosts": []map[string]any{
+												{
+													"name":    "local_service",
+													"domains": []string{"*"},
+													"routes": []map[string]any{
+														{
+															"match": map[string]any{
+																"path": "/",
+															},
+															"route": route,
+														},
+													},
+												},
+											},
+										},
+										"http_filters": []map[string]any{
+											{
+												"name": "envoy.filters.http.router",
+												"typed_config": map[string]any{
+													"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"clusters": slices.Map(clusters, func(t slices.Tuple2[map[string]any, error], _ int) map[string]any {
+				return t.A
+			}),
+		},
+	}
+
+	if envoyYaml, err := yaml.Marshal(envoyConfig); err != nil {
+		return "", "", fmt.Errorf("failed to marshal envoy config: %w", err)
+	} else {
+		return string(envoyYaml),
+			fmt.Sprintf("http://%s", net.JoinHostPort("localhost", strconv.Itoa(int(arr.envoyPort)))),
+			nil
+	}
 }

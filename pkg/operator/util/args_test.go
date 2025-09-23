@@ -277,7 +277,7 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 
 			ctx = recorder.IntoContext(ctx, recorder.New(eventRecorder, obj))
 
-			result := ArgsToSliceWithObservability(
+			result := ArgsToSlice(
 				ctx,
 				tt.userArgs,
 				tt.controllerArgs,
@@ -304,7 +304,7 @@ func TestArgsToSliceWithObservabilityNilInputs(t *testing.T) {
 
 	ctx = recorder.IntoContext(ctx, recorder.New(nil, nil))
 
-	result := ArgsToSliceWithObservability(
+	result := ArgsToSlice(
 		ctx,
 		nil,
 		map[string]string{"test": "value"},
@@ -346,8 +346,8 @@ func TestArgsToSliceWithObservabilityBackwardCompatibility(t *testing.T) {
 	// Test with argsToSlice (original function)
 	originalResult := argsToSlice(userArgs, controllerArgs)
 
-	// Test with ArgsToSliceWithObservability (new function)
-	newResult := ArgsToSliceWithObservability(
+	// Test with ArgsToSlice (new function)
+	newResult := ArgsToSlice(
 		ctx,
 		userArgs,
 		controllerArgs,
