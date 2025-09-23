@@ -24,7 +24,7 @@ import (
 
 var (
 	tracer                    = tracing.GetTracer("S3Client")
-	errCredentialIsMissingKey = errors.New("S3 credential is missing key")
+	errCredentialIsMissingKey = errors.New("s3 credential is missing key")
 )
 
 type S3Client interface {

@@ -422,5 +422,5 @@ func (kr *kubeProxyReconciler) buildArgs(
 		"nodeport-addresses": "primary",
 		"bind-address":       "$(NODE_IP)",
 	}
-	return operatorutil.ArgsToSliceWithObservability(ctx, hostedControlPlane.Spec.KubeProxy.Args, args)
+	return operatorutil.ArgsToSlice(ctx, hostedControlPlane.Spec.KubeProxy.Args, args)
 }

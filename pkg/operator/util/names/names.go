@@ -96,7 +96,7 @@ func GetKonnectivityConfigMapName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-konnectivity"
 }
 
-func GetAuditWebhookConfigMapName(cluster *capiv2.Cluster) string {
+func GetAuditWebhookSecretName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-audit-webhook"
 }
 
