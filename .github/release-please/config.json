@@ -21,8 +21,6 @@
   "draft": true,
   "pull-request-title-pattern": "chore: [bot] release: ${version}",
   "packages": {
-    ".": {
-      "package-name": "cluster-api-control-plane-provider-hcp"
-    }
+    ".": {}
   }
 }
