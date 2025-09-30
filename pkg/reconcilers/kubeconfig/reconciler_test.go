@@ -21,7 +21,6 @@ func getConcreteReconciler(r KubeconfigReconciler) *kubeconfigReconciler {
 }
 
 func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name               string
 		hostedControlPlane *v1alpha1.HostedControlPlane
@@ -112,6 +111,8 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx := t.Context()
+			g := NewWithT(t)
 			kubeClient := fake.NewClientset(slices.Map(tt.existingSecrets,
 				func(s *corev1.Secret, _ int) runtime.Object {
 					return s
@@ -124,8 +125,6 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 				"konnectivity-client",
 				"controller",
 			)
-
-			ctx := t.Context()
 
 			if !tt.expectedError {
 				kubeconfig, err := getConcreteReconciler(reconciler).generateKubeconfig(
@@ -157,7 +156,6 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 }
 
 func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name            string
 		cluster         *capiv2.Cluster
@@ -211,6 +209,8 @@ func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx := t.Context()
+			g := NewWithT(t)
 			secrets := []*corev1.Secret{
 				createCertificateSecret("test-cluster-ca", "default", true),
 			}
@@ -246,8 +246,6 @@ func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
 					KubernetesClient: kubeClient,
 				},
 			}
-
-			ctx := t.Context()
 			kubeconfig, err := getConcreteReconciler(
 				reconciler,
 			).generateKubeconfig(ctx, tt.cluster, endpoint, userName, certSecretName)
@@ -271,6 +269,7 @@ func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
 }
 
 func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
+	ctx := t.Context()
 	g := NewWithT(t)
 	cluster := &capiv2.Cluster{
 		ObjectMeta: metav1.ObjectMeta{
@@ -292,8 +291,6 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 			KubernetesClient: kubeClient,
 		},
 	}
-
-	ctx := t.Context()
 	endpoint := capiv2.APIEndpoint{Host: "api.example.com", Port: 443}
 	kubeconfig1, err := reconciler.generateKubeconfig(ctx, cluster, endpoint, "admin", "test-cluster-admin-kubeconfig")
 	g.Expect(err).NotTo(HaveOccurred())
@@ -323,6 +320,7 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 }
 
 func TestKubeconfigReconciler_MultiUserScenarios(t *testing.T) {
+	ctx := t.Context()
 	g := NewWithT(t)
 	cluster := &capiv2.Cluster{
 		ObjectMeta: metav1.ObjectMeta{
@@ -356,8 +354,6 @@ func TestKubeconfigReconciler_MultiUserScenarios(t *testing.T) {
 			KubernetesClient: kubeClient,
 		},
 	}
-
-	ctx := t.Context()
 	endpoint := capiv2.APIEndpoint{Host: "api.example.com", Port: 443}
 	kubeconfigs := make(map[string]*api.Config)
 

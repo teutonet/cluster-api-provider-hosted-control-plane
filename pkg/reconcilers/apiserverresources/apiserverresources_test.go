@@ -11,8 +11,8 @@ import (
 )
 
 func TestApiServerResourcesReconciler_extractAdditionalVolumesAndMounts(t *testing.T) {
-	reconciler := &apiServerResourcesReconciler{}
 	g := NewWithT(t)
+	reconciler := &apiServerResourcesReconciler{}
 
 	configMapMountName := "custom-config"
 	configMapMountPath := "/etc/custom"
@@ -93,7 +93,6 @@ func TestApiServerResourcesReconciler_extractAdditionalVolumesAndMounts(t *testi
 
 func TestApiServerResourcesReconciler_ResourceLifecycle_MountConfiguration(t *testing.T) {
 	reconciler := &apiServerResourcesReconciler{}
-	g := NewWithT(t)
 
 	tests := []struct {
 		name                string
@@ -151,6 +150,7 @@ func TestApiServerResourcesReconciler_ResourceLifecycle_MountConfiguration(t *te
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			volumes, mounts := reconciler.extractAdditionalVolumesAndMounts(tt.mounts)
 
 			g.Expect(volumes).To(HaveLen(tt.expectedVolumeCount))

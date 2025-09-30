@@ -19,80 +19,75 @@ type OverriddenArg struct {
 }
 
 func TestArgsToSlice(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
-		name     string
-		args     []map[string]string
-		expected []string
+		name           string
+		userArgs       map[string]string
+		controllerArgs map[string]string
+		expected       []string
 	}{
 		{
-			name:     "empty args",
-			args:     []map[string]string{},
-			expected: []string{},
+			name:           "empty args",
+			userArgs:       map[string]string{},
+			controllerArgs: map[string]string{},
+			expected:       []string{},
 		},
 		{
-			name:     "single empty map",
-			args:     []map[string]string{{}},
-			expected: []string{},
+			name:           "single empty map",
+			userArgs:       map[string]string{},
+			controllerArgs: map[string]string{},
+			expected:       []string{},
 		},
 		{
-			name: "single map with one key-value",
-			args: []map[string]string{
-				{"key1": "value1"},
-			},
-			expected: []string{"--key1=value1"},
+			name:           "single map with one key-value",
+			userArgs:       map[string]string{},
+			controllerArgs: map[string]string{"key1": "value1"},
+			expected:       []string{"--key1=value1"},
 		},
 		{
-			name: "single map with multiple key-values",
-			args: []map[string]string{
-				{"key1": "value1", "key2": "value2"},
-			},
-			expected: []string{"--key1=value1", "--key2=value2"},
+			name:           "single map with multiple key-values",
+			userArgs:       map[string]string{},
+			controllerArgs: map[string]string{"key1": "value1", "key2": "value2"},
+			expected:       []string{"--key1=value1", "--key2=value2"},
 		},
 		{
-			name: "multiple maps",
-			args: []map[string]string{
-				{"key1": "value1"},
-				{"key2": "value2"},
-			},
-			expected: []string{"--key1=value1", "--key2=value2"},
+			name:           "multiple maps",
+			userArgs:       map[string]string{"key1": "value1"},
+			controllerArgs: map[string]string{"key2": "value2"},
+			expected:       []string{"--key1=value1", "--key2=value2"},
 		},
 		{
-			name: "multiple maps with overlapping keys",
-			args: []map[string]string{
-				{"key1": "value1"},
-				{"key1": "value2"},
-			},
-			expected: []string{"--key1=value2"},
+			name:           "multiple maps with overlapping keys",
+			userArgs:       map[string]string{"key1": "value1"},
+			controllerArgs: map[string]string{"key1": "value2"},
+			expected:       []string{"--key1=value2"},
 		},
 		{
-			name: "maps with empty values",
-			args: []map[string]string{
-				{"key1": "", "key2": "value2"},
-			},
-			expected: []string{"--key1=", "--key2=value2"},
+			name:           "maps with empty values",
+			userArgs:       map[string]string{},
+			controllerArgs: map[string]string{"key1": "", "key2": "value2"},
+			expected:       []string{"--key1=", "--key2=value2"},
 		},
 		{
-			name: "maps with special characters",
-			args: []map[string]string{
-				{"key-with-dash": "value_with_underscore", "key.with.dot": "value/with/slash"},
+			name:     "maps with special characters",
+			userArgs: map[string]string{},
+			controllerArgs: map[string]string{
+				"key-with-dash": "value_with_underscore",
+				"key.with.dot":  "value/with/slash",
 			},
 			expected: []string{"--key-with-dash=value_with_underscore", "--key.with.dot=value/with/slash"},
 		},
 		{
-			name: "complex mixed case",
-			args: []map[string]string{
-				{"a": "1", "z": "26"},
-				{"m": "13"},
-				{"b": "2"},
-			},
-			expected: []string{"--a=1", "--b=2", "--m=13", "--z=26"},
+			name:           "complex mixed case",
+			userArgs:       map[string]string{"a": "1", "z": "26"},
+			controllerArgs: map[string]string{"m": "13", "b": "2"},
+			expected:       []string{"--a=1", "--b=2", "--m=13", "--z=26"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := argsToSlice(tt.args...)
+			g := NewWithT(t)
+			result := argsToSlice(tt.userArgs, tt.controllerArgs, nil)
 
 			g.Expect(result).To(Equal(tt.expected))
 
@@ -105,15 +100,15 @@ func TestArgsToSlice(t *testing.T) {
 
 func TestArgsToSlice_Ordering(t *testing.T) {
 	g := NewWithT(t)
-	input1 := []map[string]string{
-		{"z": "26", "a": "1", "m": "13"},
+	input1 := map[string]string{
+		"z": "26", "a": "1", "m": "13",
 	}
-	input2 := []map[string]string{
-		{"a": "1", "m": "13", "z": "26"},
+	input2 := map[string]string{
+		"a": "1", "m": "13", "z": "26",
 	}
 
-	result1 := argsToSlice(input1...)
-	result2 := argsToSlice(input2...)
+	result1 := argsToSlice(input1, map[string]string{}, nil)
+	result2 := argsToSlice(input2, map[string]string{}, nil)
 
 	g.Expect(result1).
 		To(Equal(result2))
@@ -123,7 +118,6 @@ func TestArgsToSlice_Ordering(t *testing.T) {
 }
 
 func TestArgsToSliceWithObservability(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name              string
 		userArgs          map[string]string
@@ -266,8 +260,9 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := log.IntoContext(t.Context(), log.Log.WithName("test"))
+			g := NewWithT(t)
 
-			eventRecorder := record.NewFakeRecorder(10)
+			eventRecorder := record.NewFakeRecorder(100)
 			obj := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-config",
@@ -344,7 +339,7 @@ func TestArgsToSliceWithObservabilityBackwardCompatibility(t *testing.T) {
 	}
 
 	// Test with argsToSlice (original function)
-	originalResult := argsToSlice(userArgs, controllerArgs)
+	originalResult := argsToSlice(userArgs, controllerArgs, nil)
 
 	// Test with ArgsToSlice (new function)
 	newResult := ArgsToSlice(

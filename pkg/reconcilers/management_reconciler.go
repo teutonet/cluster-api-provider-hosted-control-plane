@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 
+	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -16,8 +18,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
-	networkingv1ac "k8s.io/client-go/applyconfigurations/networking/v1"
 	"k8s.io/client-go/kubernetes"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
@@ -25,6 +25,7 @@ import (
 type ManagementResourceReconciler struct {
 	Tracer              string
 	KubernetesClient    kubernetes.Interface
+	CiliumClient        ciliumclient.Interface
 	WorldComponent      string
 	ControllerNamespace string
 	ControllerComponent string
@@ -47,7 +48,7 @@ func (mr *ManagementResourceReconciler) ReconcileService(
 				attribute.String("service.namespace", namespace),
 				attribute.String("service.name", name),
 			)
-			return reconcileService(
+			service, ready, err := reconcileService(
 				ctx,
 				mr.KubernetesClient,
 				namespace,
@@ -59,6 +60,14 @@ func (mr *ManagementResourceReconciler) ReconcileService(
 				headless,
 				ports,
 			)
+			if err != nil {
+				return nil, false, fmt.Errorf("failed to reconcile service %s/%s into management cluster: %w",
+					namespace,
+					name,
+					err,
+				)
+			}
+			return service, ready, err
 		},
 	)
 }
@@ -70,6 +79,7 @@ func (mr *ManagementResourceReconciler) ReconcileSecret(
 	component string,
 	namespace string,
 	name string,
+	deleteResource bool,
 	data map[string][]byte,
 ) error {
 	return tracing.WithSpan1(ctx, mr.Tracer, "ReconcileSecret",
@@ -78,7 +88,7 @@ func (mr *ManagementResourceReconciler) ReconcileSecret(
 				attribute.String("secret.namespace", namespace),
 				attribute.String("secret.name", name),
 			)
-			return errorsUtil.IfErrErrorf("failed to apply secret %s/%s into management cluster: %w",
+			return errorsUtil.IfErrErrorf("failed to reconcile secret %s/%s into management cluster: %w",
 				namespace,
 				name,
 				reconcileSecret(
@@ -86,6 +96,7 @@ func (mr *ManagementResourceReconciler) ReconcileSecret(
 					mr.KubernetesClient,
 					namespace,
 					name,
+					deleteResource,
 					operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
 					names.GetControlPlaneLabels(cluster, component),
 					data,
@@ -110,7 +121,7 @@ func (mr *ManagementResourceReconciler) ReconcileConfigmap(
 				attribute.String("configmap.namespace", namespace),
 				attribute.String("configmap.name", name),
 			)
-			return errorsUtil.IfErrErrorf("failed to apply configmap %s/%s into management cluster: %w",
+			return errorsUtil.IfErrErrorf("failed to reconcile configmap %s/%s into management cluster: %w",
 				namespace,
 				name,
 				reconcileConfigmap(
@@ -128,42 +139,6 @@ func (mr *ManagementResourceReconciler) ReconcileConfigmap(
 	)
 }
 
-func (mr *ManagementResourceReconciler) convertToPeerApplyConfigurations(
-	portComponentMappings map[int32][]string,
-	cluster *capiv2.Cluster,
-) map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration {
-	if portComponentMappings == nil {
-		return nil
-	}
-	return slices.MapEntries(portComponentMappings,
-		func(port int32, components []string) (int32, []*networkingv1ac.NetworkPolicyPeerApplyConfiguration) {
-			return port, slices.Map(components,
-				func(component string, _ int) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
-					if component == mr.ControllerComponent {
-						return networkingv1ac.NetworkPolicyPeer().
-							WithNamespaceSelector(metav1ac.LabelSelector().
-								WithMatchLabels(map[string]string{
-									corev1.LabelMetadataName: mr.ControllerNamespace,
-								}),
-							)
-					}
-					if component == mr.WorldComponent {
-						return networkingv1ac.NetworkPolicyPeer().
-							WithIPBlock(networkingv1ac.IPBlock().WithCIDR("0.0.0.0/0"))
-					}
-					return networkingv1ac.NetworkPolicyPeer().
-						WithPodSelector(names.GetControlPlaneSelector(cluster, component)).
-						WithNamespaceSelector(metav1ac.LabelSelector().
-							WithMatchLabels(map[string]string{
-								corev1.LabelMetadataName: cluster.Namespace,
-							}),
-						)
-				},
-			)
-		},
-	)
-}
-
 func (mr *ManagementResourceReconciler) ReconcileDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
@@ -171,8 +146,8 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 	replicas int32,
 	priorityClassName string,
 	component string,
-	ingressPortComponents map[int32][]string,
-	egressPortComponents map[int32][]string,
+	ingressPolicyTargets map[int32][]networkpolicy.IngressNetworkPolicyTarget,
+	egressPolicyTargets map[int32][]networkpolicy.EgressNetworkPolicyTarget,
 	targetComponent string,
 	initContainers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	containers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
@@ -204,19 +179,29 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 				)
 			}
 
-			return reconcileDeployment(
+			name := fmt.Sprintf("%s-%s", cluster.Name, component)
+			deployment, ready, err := reconcileDeployment(
 				ctx,
 				mr.KubernetesClient,
+				mr.CiliumClient,
 				cluster.Namespace,
-				fmt.Sprintf("%s-%s", cluster.Name, component),
+				name,
 				false,
 				operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
 				names.GetControlPlaneLabels(cluster, component),
-				mr.convertToPeerApplyConfigurations(ingressPortComponents, cluster),
-				mr.convertToPeerApplyConfigurations(egressPortComponents, cluster),
+				ingressPolicyTargets,
+				egressPolicyTargets,
 				replicas,
 				createPodTemplateSpec(podOptions, initContainers, containers, volumes),
 			)
+			if err != nil {
+				return nil, false, fmt.Errorf("failed to reconcile deployment %s/%s into management cluster: %w",
+					cluster.Namespace,
+					name,
+					err,
+				)
+			}
+			return deployment, ready, err
 		},
 	)
 }
@@ -232,8 +217,8 @@ func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 	podManagementPolicy appsv1.PodManagementPolicyType,
 	updateStrategy *appsv1ac.StatefulSetUpdateStrategyApplyConfiguration,
 	component string,
-	ingressPortComponents map[int32][]string,
-	egressPortComponents map[int32][]string,
+	ingressPolicyTargets map[int32][]networkpolicy.IngressNetworkPolicyTarget,
+	egressPolicyTargets map[int32][]networkpolicy.EgressNetworkPolicyTarget,
 	replicas int32,
 	containers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	volumes []*corev1ac.VolumeApplyConfiguration,
@@ -249,9 +234,10 @@ func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 				attribute.Int("statefulset.containers.count", len(containers)),
 				attribute.Int("statefulset.volumes.count", len(volumes)),
 			)
-			return reconcileStatefulset(
+			statefulset, ready, err := reconcileStatefulset(
 				ctx,
 				mr.KubernetesClient,
+				mr.CiliumClient,
 				namespace,
 				name,
 				false,
@@ -260,8 +246,8 @@ func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 				podManagementPolicy,
 				updateStrategy,
 				names.GetControlPlaneLabels(cluster, component),
-				mr.convertToPeerApplyConfigurations(ingressPortComponents, cluster),
-				mr.convertToPeerApplyConfigurations(egressPortComponents, cluster),
+				ingressPolicyTargets,
+				egressPolicyTargets,
 				replicas,
 				createPodTemplateSpec(
 					podOptions,
@@ -272,6 +258,14 @@ func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 				volumeClaimTemplates,
 				volumeClaimRetentionPolicy,
 			)
+			if err != nil {
+				return nil, false, fmt.Errorf("failed to reconcile statefulset %s/%s into management cluster: %w",
+					namespace,
+					name,
+					err,
+				)
+			}
+			return statefulset, ready, err
 		},
 	)
 }

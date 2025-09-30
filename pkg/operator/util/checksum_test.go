@@ -12,12 +12,11 @@ import (
 const namespace = "test-namespace"
 
 func TestCalculateConfigMapChecksum(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name            string
 		namespace       string
 		configMapNames  []string
-		setupConfigMaps func(*fake.Clientset, string)
+		setupConfigMaps func(*fake.Clientset, string, Gomega)
 		expectError     bool
 		expectedLength  int
 	}{
@@ -25,7 +24,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			name:            "empty configmap names",
 			namespace:       "test-namespace",
 			configMapNames:  []string{},
-			setupConfigMaps: func(client *fake.Clientset, namespace string) {},
+			setupConfigMaps: func(_ *fake.Clientset, _ string, _ Gomega) {},
 			expectError:     false,
 			expectedLength:  0,
 		},
@@ -33,7 +32,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			name:           "single configmap",
 			namespace:      "test-namespace",
 			configMapNames: []string{"test-config"},
-			setupConfigMaps: func(client *fake.Clientset, namespace string) {
+			setupConfigMaps: func(client *fake.Clientset, namespace string, g Gomega) {
 				_, err := client.CoreV1().ConfigMaps(namespace).Create(
 					t.Context(),
 					&corev1.ConfigMap{
@@ -57,7 +56,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			name:           "multiple configmaps",
 			namespace:      "test-namespace",
 			configMapNames: []string{"config1", "config2"},
-			setupConfigMaps: func(client *fake.Clientset, namespace string) {
+			setupConfigMaps: func(client *fake.Clientset, namespace string, g Gomega) {
 				configMaps := []*corev1.ConfigMap{
 					{
 						ObjectMeta: metav1.ObjectMeta{
@@ -97,7 +96,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			name:           "configmap with binary data",
 			namespace:      "test-namespace",
 			configMapNames: []string{"binary-config"},
-			setupConfigMaps: func(client *fake.Clientset, namespace string) {
+			setupConfigMaps: func(client *fake.Clientset, namespace string, g Gomega) {
 				_, err := client.CoreV1().ConfigMaps(namespace).Create(
 					t.Context(),
 					&corev1.ConfigMap{
@@ -123,7 +122,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			name:            "configmap not found",
 			namespace:       "test-namespace",
 			configMapNames:  []string{"non-existent"},
-			setupConfigMaps: func(client *fake.Clientset, namespace string) {},
+			setupConfigMaps: func(_ *fake.Clientset, _ string, _ Gomega) {},
 			expectError:     true,
 			expectedLength:  0,
 		},
@@ -131,7 +130,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			name:           "mixed existing and non-existing configmaps",
 			namespace:      "test-namespace",
 			configMapNames: []string{"existing", "non-existent"},
-			setupConfigMaps: func(client *fake.Clientset, namespace string) {
+			setupConfigMaps: func(client *fake.Clientset, namespace string, g Gomega) {
 				_, err := client.CoreV1().ConfigMaps(namespace).Create(
 					t.Context(),
 					&corev1.ConfigMap{
@@ -154,8 +153,9 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			fakeClient := fake.NewClientset()
-			tt.setupConfigMaps(fakeClient, tt.namespace)
+			tt.setupConfigMaps(fakeClient, tt.namespace, g)
 
 			checksum, err := CalculateConfigMapChecksum(
 				t.Context(),
@@ -339,7 +339,6 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 }
 
 func TestCalculateChecksum(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name     string
 		dataMaps []map[string]any
@@ -381,6 +380,7 @@ func TestCalculateChecksum(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			result := calculateChecksum(tt.dataMaps...)
 
 			if tt.expected == "" {

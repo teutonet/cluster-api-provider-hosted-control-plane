@@ -18,7 +18,6 @@ import (
 )
 
 func TestTLSRoutesReconciler_TrafficRouting(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name               string
 		hostedControlPlane *v1alpha1.HostedControlPlane
@@ -141,6 +140,7 @@ func TestTLSRoutesReconciler_TrafficRouting(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			gatewayClient := fake.NewClientset(tt.existingTLSRoutes...)
 
 			reconciler := &tlsRoutesReconciler{
@@ -218,7 +218,6 @@ func TestTLSRoutesReconciler_TrafficRouting(t *testing.T) {
 }
 
 func TestTLSRoutesReconciler_CertificateIntegration(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name               string
 		hostedControlPlane *v1alpha1.HostedControlPlane
@@ -263,6 +262,7 @@ func TestTLSRoutesReconciler_CertificateIntegration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			gatewayClient := fake.NewClientset()
 
 			reconciler := &tlsRoutesReconciler{
@@ -296,7 +296,6 @@ func TestTLSRoutesReconciler_CertificateIntegration(t *testing.T) {
 }
 
 func TestTLSRoutesReconciler_GatewayFailover(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name               string
 		hostedControlPlane *v1alpha1.HostedControlPlane
@@ -374,6 +373,7 @@ func TestTLSRoutesReconciler_GatewayFailover(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			gatewayClient := fake.NewClientset()
 
 			reconciler := &tlsRoutesReconciler{

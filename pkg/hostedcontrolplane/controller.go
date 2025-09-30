@@ -13,6 +13,8 @@ import (
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
+	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
+	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/go-logr/logr"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
@@ -38,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	utilNet "k8s.io/utils/net"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -64,6 +67,7 @@ type HostedControlPlaneReconciler interface {
 }
 
 func NewHostedControlPlaneReconciler(
+	restConfig *rest.Config,
 	client client.Client,
 	kubernetesClient kubernetes.Interface,
 	certManagerClient cmclient.Interface,
@@ -75,6 +79,7 @@ func NewHostedControlPlaneReconciler(
 	tracingWrapper func(rt http.RoundTripper) http.RoundTripper,
 ) HostedControlPlaneReconciler {
 	return &hostedControlPlaneReconciler{
+		restConfig:                       restConfig,
 		client:                           client,
 		kubernetesClient:                 kubernetesClient,
 		certManagerClient:                certManagerClient,
@@ -107,6 +112,7 @@ func NewHostedControlPlaneReconciler(
 }
 
 type hostedControlPlaneReconciler struct {
+	restConfig                       *rest.Config
 	client                           client.Client
 	kubernetesClient                 kubernetes.Interface
 	certManagerClient                cmclient.Interface
@@ -328,6 +334,7 @@ func (r *hostedControlPlaneReconciler) resolveOwnerRefsToHostedControlPlanes(
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes,verbs=get;update;patch
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes/finalizers,verbs=update
+//+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=list;watch
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=get
 //+kubebuilder:rbac:groups="",resources=events,verbs=create
 
@@ -401,9 +408,14 @@ func (r *hostedControlPlaneReconciler) patch(
 ) error {
 	return tracing.WithSpan1(ctx, r.tracer, "Patch",
 		func(ctx context.Context, span trace.Span) error {
+			hostedControlPlane.Status.Conditions = slices.Map(hostedControlPlane.Status.Conditions,
+				func(condition metav1.Condition, _ int) metav1.Condition {
+					condition.Reason = slices.PascalCase(strings.ReplaceAll(condition.Reason, " ", "_"))
+					return condition
+				})
 			applicableConditions := slices.FilterMap(hostedControlPlane.Status.Conditions,
 				func(condition metav1.Condition, _ int) (string, bool) {
-					if condition.Type != capiv2.ReadyCondition &&
+					if !slices.Contains([]string{capiv2.ReadyCondition, capiv2.PausedCondition}, condition.Type) &&
 						!strings.HasPrefix(condition.Type, "Workload") {
 						return condition.Type, true
 					} else {
@@ -420,12 +432,9 @@ func (r *hostedControlPlaneReconciler) patch(
 				return errorsUtil.IfErrErrorf("failed to set summary condition: %w", err)
 			}
 
-			patchConditions := make([]string, len(applicableConditions)+1)
-			copy(patchConditions, applicableConditions)
-			patchConditions[len(applicableConditions)] = capiv2.ReadyCondition
 			options = append(options,
 				patch.WithOwnedConditions{
-					Conditions: patchConditions,
+					Conditions: append(applicableConditions, capiv2.ReadyCondition),
 				},
 			)
 			return errorsUtil.IfErrErrorf("failed to patch HostedControlPlane: %w",
@@ -512,6 +521,21 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				}
 			}
 
+			var ciliumClient ciliumclient.Interface
+
+			groups, err := r.kubernetesClient.Discovery().ServerGroups()
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to discover server groups: %w", err)
+			}
+			if slices.SomeBy(groups.Groups, func(group metav1.APIGroup) bool {
+				return group.Name == ciliumv2.SchemeGroupVersion.Group
+			}) {
+				ciliumClient, err = ciliumclient.NewForConfig(r.restConfig)
+				if err != nil {
+					return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to create cilium client: %w", err)
+				}
+			}
+
 			certificateReconciler := certificates.NewCertificateReconciler(
 				r.certManagerClient,
 				kubernetesServiceIP,
@@ -525,47 +549,15 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.konnectivityClientKubeconfigName,
 				r.controllerKubeconfigName,
 			)
-			var etcdClient etcd_client.EtcdClient
-			var err error
-
-			etcdClient, err = r.etcdClientFactory(
-				ctx,
-				r.kubernetesClient,
-				hostedControlPlane,
-				cluster,
-				r.etcdServerPort,
-			)
-			if err != nil {
-				conditions.Set(hostedControlPlane, metav1.Condition{
-					Type:    v1alpha1.EtcdClusterReadyCondition,
-					Status:  metav1.ConditionFalse,
-					Reason:  v1alpha1.EtcdClusterFailedReason,
-					Message: fmt.Sprintf("Failed to create etcd client: %v", err),
-				})
-				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to create etcd client: %w", err)
-			}
-			s3Client, err := r.s3ClientFactory(
-				ctx,
-				r.kubernetesClient,
-				hostedControlPlane,
-				cluster,
-			)
-			if err != nil {
-				conditions.Set(hostedControlPlane, metav1.Condition{
-					Type:    v1alpha1.EtcdClusterReadyCondition,
-					Status:  metav1.ConditionFalse,
-					Reason:  v1alpha1.EtcdClusterFailedReason,
-					Message: fmt.Sprintf("Failed to create S3 client: %v", err),
-				})
-			}
 			etcdClusterReconciler := etcd_cluster.NewEtcdClusterReconciler(
 				r.kubernetesClient,
+				ciliumClient,
 				r.recorder,
 				r.etcdServerPort,
 				r.etcdServerStorageBuffer,
 				r.etcdServerStorageIncrement,
-				etcdClient,
-				s3Client,
+				r.etcdClientFactory,
+				r.s3ClientFactory,
 				r.etcdComponentLabel,
 				r.apiServerComponentLabel,
 				r.controllerNamespace,
@@ -573,6 +565,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 			)
 			apiServerResourcesReconciler := apiserverresources.NewApiServerResourcesReconciler(
 				r.kubernetesClient,
+				ciliumClient,
 				r.worldComponent,
 				serviceCIDR,
 				r.apiServerComponentLabel,
@@ -704,9 +697,10 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 				default:
 					conditions.Set(hostedControlPlane, metav1.Condition{
-						Type:   string(phase.Condition),
-						Status: metav1.ConditionTrue,
-						Reason: "ReconcileSucceeded",
+						Type:    string(phase.Condition),
+						Status:  metav1.ConditionTrue,
+						Reason:  "ReconcileSucceeded",
+						Message: fmt.Sprintf("Management phase %s reconciled successfully", phase.Name),
 					})
 				}
 			}

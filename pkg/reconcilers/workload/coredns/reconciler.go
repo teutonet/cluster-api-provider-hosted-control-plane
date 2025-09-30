@@ -3,9 +3,11 @@ package coredns
 import (
 	"context"
 	"fmt"
+	"math"
 	"net"
 	"path"
 
+	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/coredns/corefile-migration/migration/corefile"
 	"github.com/go-logr/logr"
 	slices "github.com/samber/lo"
@@ -13,6 +15,7 @@ import (
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
@@ -21,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
+	"k8s.io/utils/ptr"
 )
 
 type CoreDNSReconciler interface {
@@ -29,12 +33,14 @@ type CoreDNSReconciler interface {
 
 func NewCoreDNSReconciler(
 	kubernetesClient alias.WorkloadClusterClient,
+	ciliumClient ciliumclient.Interface,
 	serviceDomain string,
 	dnsIP net.IP,
 ) CoreDNSReconciler {
 	return &coreDNSReconciler{
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
 			KubernetesClient: kubernetesClient,
+			CiliumClient:     ciliumClient,
 			Tracer:           tracing.GetTracer("coredns"),
 		},
 		serviceDomain:  serviceDomain,
@@ -316,8 +322,9 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 					ctx,
 					hostedControlPlane.Spec.CoreDNS.Args,
 					map[string]string{
-						"-conf": path.Join(*corednsConfigVolumeMount.MountPath, cr.coreDNSCorefileFileName),
+						"conf": path.Join(*corednsConfigVolumeMount.MountPath, cr.coreDNSCorefileFileName),
 					},
+					operatorutil.ArgOption{Prefix: ptr.To("-")},
 				)...).
 				WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
 					hostedControlPlane.Spec.CoreDNS.Resources,
@@ -350,10 +357,10 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 
 			_, ready, err := cr.ReconcileDeployment(
 				ctx,
-				cr.coreDNSResourceName,
 				cr.coreDNSNamespace,
+				cr.coreDNSResourceName,
 				false,
-				slices.Ternary(len(nodes.Items) > 1, int32(2), int32(1)),
+				int32(math.Min(float64(len(nodes.Items)), float64(hostedControlPlane.Spec.CoreDNS.Replicas))),
 				reconcilers.PodOptions{
 					ServiceAccountName: cr.coreDNSServiceAccountName,
 					PriorityClassName:  "system-cluster-critical",
@@ -364,8 +371,19 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 					},
 				},
 				cr.coreDNSLabels,
-				nil,
-				nil,
+				map[int32][]networkpolicy.IngressNetworkPolicyTarget{
+					cr.coreDNSPort: {
+						networkpolicy.NewNamespaceLabelNetworkPolicyTarget(map[string]string{}),
+					},
+				},
+				map[int32][]networkpolicy.EgressNetworkPolicyTarget{
+					53: {
+						networkpolicy.NewWorldNetworkPolicyTarget(),
+					},
+					6443: {
+						networkpolicy.NewAPIServerNetworkPolicyTarget(hostedControlPlane),
+					},
+				},
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(container, reconcilers.ContainerOptions{
 						Capabilities: []corev1.Capability{"NET_BIND_SERVICE"},

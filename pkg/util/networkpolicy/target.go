@@ -1,6 +1,10 @@
 package networkpolicy
 
 import (
+	cilium "github.com/cilium/cilium/pkg/k8s/apis/cilium.io"
+	ciliummetav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
+	"github.com/cilium/cilium/pkg/policy/api"
+	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	corev1 "k8s.io/api/core/v1"
@@ -9,10 +13,29 @@ import (
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
-type NetworkPolicyTarget interface {
-	ApplyToVanillaNetworkPolicy(
+type CiliumPolicyPeer struct {
+	Endpoints  []api.EndpointSelector
+	CIDR       []api.CIDR
+	FQDNs      []string
+	Identities []api.Entity
+}
+
+type IngressNetworkPolicyTarget interface {
+	ApplyToKubernetesIngressNetworkPolicy(
 		networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 	) *networkingv1ac.NetworkPolicyPeerApplyConfiguration
+	ApplyToCiliumIngressNetworkPolicy(
+		apiEndpointSelector *CiliumPolicyPeer,
+	) *CiliumPolicyPeer
+}
+
+type EgressNetworkPolicyTarget interface {
+	ApplyToKubernetesEgressNetworkPolicy(
+		networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+	) *networkingv1ac.NetworkPolicyPeerApplyConfiguration
+	ApplyToCiliumEgressNetworkPolicy(
+		apiEndpointSelector *CiliumPolicyPeer,
+	) *CiliumPolicyPeer
 }
 
 type DNSNetworkPolicyTarget struct {
@@ -25,14 +48,21 @@ func NewDNSNetworkPolicyTarget(hostname string) DNSNetworkPolicyTarget {
 	}
 }
 
-var _ NetworkPolicyTarget = DNSNetworkPolicyTarget{}
+var _ EgressNetworkPolicyTarget = DNSNetworkPolicyTarget{}
 
-func (d DNSNetworkPolicyTarget) ApplyToVanillaNetworkPolicy(
+func (d DNSNetworkPolicyTarget) ApplyToKubernetesEgressNetworkPolicy(
 	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 ) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
-	// DNS filtering is not supported in NetworkPolicy, so we allow traffic from/to anywhere.
+	// DNS filtering is not supported in NetworkPolicy, so we allow traffic to anywhere.
 	return NewCIDRNetworkPolicyTarget("0.0.0.0/0").
-		ApplyToVanillaNetworkPolicy(networkPolicyPeerApplyConfiguration)
+		ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (d DNSNetworkPolicyTarget) ApplyToCiliumEgressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	ciliumPolicyPeer.FQDNs = append(ciliumPolicyPeer.FQDNs, d.Hostname)
+	return ciliumPolicyPeer
 }
 
 type CIDRNetworkPolicyTarget struct {
@@ -51,16 +81,97 @@ func NewIPNetworkPolicyTarget(ip string) CIDRNetworkPolicyTarget {
 	}
 }
 
-var _ NetworkPolicyTarget = CIDRNetworkPolicyTarget{}
+var (
+	_ IngressNetworkPolicyTarget = CIDRNetworkPolicyTarget{}
+	_ EgressNetworkPolicyTarget  = CIDRNetworkPolicyTarget{}
+)
 
-func (c CIDRNetworkPolicyTarget) ApplyToVanillaNetworkPolicy(
+func (c CIDRNetworkPolicyTarget) ApplyToKubernetesIngressNetworkPolicy(
 	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 ) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
-	return networkPolicyPeerApplyConfiguration.
-		WithIPBlock(
-			networkingv1ac.IPBlock().
-				WithCIDR(c.CIDR),
-		)
+	return networkPolicyPeerApplyConfiguration.WithIPBlock(networkingv1ac.IPBlock().
+		WithCIDR(c.CIDR),
+	)
+}
+
+func (c CIDRNetworkPolicyTarget) ApplyToKubernetesEgressNetworkPolicy(
+	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	return c.ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (c CIDRNetworkPolicyTarget) ApplyToCiliumIngressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	ciliumPolicyPeer.CIDR = append(ciliumPolicyPeer.CIDR, api.CIDR(c.CIDR))
+	return ciliumPolicyPeer
+}
+
+func (c CIDRNetworkPolicyTarget) ApplyToCiliumEgressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	return c.ApplyToCiliumIngressNetworkPolicy(ciliumPolicyPeer)
+}
+
+type ClusterNetworkPolicyTarget struct{}
+
+func NewClusterNetworkPolicyTarget() ClusterNetworkPolicyTarget {
+	return ClusterNetworkPolicyTarget{}
+}
+
+var _ EgressNetworkPolicyTarget = ClusterNetworkPolicyTarget{}
+
+func (c ClusterNetworkPolicyTarget) ApplyToKubernetesEgressNetworkPolicy(
+	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	// Cluster filtering is not supported in NetworkPolicy, so we allow traffic to anywhere.
+	return NewCIDRNetworkPolicyTarget("0.0.0.0/0").
+		ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (c ClusterNetworkPolicyTarget) ApplyToCiliumEgressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	ciliumPolicyPeer.Identities = append(ciliumPolicyPeer.Identities, api.EntityCluster)
+	return ciliumPolicyPeer
+}
+
+type WorldNetworkPolicyTarget struct{}
+
+func NewWorldNetworkPolicyTarget() WorldNetworkPolicyTarget {
+	return WorldNetworkPolicyTarget{}
+}
+
+var (
+	_ IngressNetworkPolicyTarget = WorldNetworkPolicyTarget{}
+	_ EgressNetworkPolicyTarget  = WorldNetworkPolicyTarget{}
+)
+
+func (w WorldNetworkPolicyTarget) ApplyToKubernetesIngressNetworkPolicy(
+	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	// World filtering is not supported in NetworkPolicy, so we allow traffic to anywhere.
+	return NewCIDRNetworkPolicyTarget("0.0.0.0/0").
+		ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (w WorldNetworkPolicyTarget) ApplyToKubernetesEgressNetworkPolicy(
+	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	return w.ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (w WorldNetworkPolicyTarget) ApplyToCiliumIngressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	ciliumPolicyPeer.Identities = append(ciliumPolicyPeer.Identities, api.EntityWorld)
+	return ciliumPolicyPeer
+}
+
+func (w WorldNetworkPolicyTarget) ApplyToCiliumEgressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	return w.ApplyToCiliumIngressNetworkPolicy(ciliumPolicyPeer)
 }
 
 type APIServerNetworkPolicyTarget struct {
@@ -73,13 +184,35 @@ func NewAPIServerNetworkPolicyTarget(hostedControlPlane *v1alpha1.HostedControlP
 	}
 }
 
-var _ NetworkPolicyTarget = APIServerNetworkPolicyTarget{}
+var (
+	_ IngressNetworkPolicyTarget = APIServerNetworkPolicyTarget{}
+	_ EgressNetworkPolicyTarget  = APIServerNetworkPolicyTarget{}
+)
 
-func (a APIServerNetworkPolicyTarget) ApplyToVanillaNetworkPolicy(
+func (a APIServerNetworkPolicyTarget) ApplyToKubernetesIngressNetworkPolicy(
 	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 ) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
 	return NewIPNetworkPolicyTarget(a.HostedControlPlane.Status.LegacyIP).
-		ApplyToVanillaNetworkPolicy(networkPolicyPeerApplyConfiguration)
+		ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (a APIServerNetworkPolicyTarget) ApplyToKubernetesEgressNetworkPolicy(
+	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	return a.ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (a APIServerNetworkPolicyTarget) ApplyToCiliumIngressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	ciliumPolicyPeer.Identities = append(ciliumPolicyPeer.Identities, api.EntityKubeAPIServer)
+	return ciliumPolicyPeer
+}
+
+func (a APIServerNetworkPolicyTarget) ApplyToCiliumEgressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	return a.ApplyToCiliumIngressNetworkPolicy(ciliumPolicyPeer)
 }
 
 type ComponentNetworkPolicyTarget struct {
@@ -94,9 +227,12 @@ func NewComponentNetworkPolicyTarget(cluster *capiv2.Cluster, component string) 
 	}
 }
 
-var _ NetworkPolicyTarget = ComponentNetworkPolicyTarget{}
+var (
+	_ IngressNetworkPolicyTarget = ComponentNetworkPolicyTarget{}
+	_ EgressNetworkPolicyTarget  = ComponentNetworkPolicyTarget{}
+)
 
-func (c ComponentNetworkPolicyTarget) ApplyToVanillaNetworkPolicy(
+func (c ComponentNetworkPolicyTarget) ApplyToKubernetesIngressNetworkPolicy(
 	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 ) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
 	return NewLabelNetworkPolicyTarget(
@@ -104,7 +240,32 @@ func (c ComponentNetworkPolicyTarget) ApplyToVanillaNetworkPolicy(
 		map[string]string{
 			corev1.LabelMetadataName: c.Cluster.Namespace,
 		},
-	).ApplyToVanillaNetworkPolicy(networkPolicyPeerApplyConfiguration)
+	).ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (c ComponentNetworkPolicyTarget) ApplyToKubernetesEgressNetworkPolicy(
+	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	return c.ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (c ComponentNetworkPolicyTarget) ApplyToCiliumIngressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	labels := names.GetControlPlaneLabels(c.Cluster, c.Component)
+	labels[cilium.PodNamespaceLabel] = c.Cluster.Namespace
+	ciliumPolicyPeer.Endpoints = append(ciliumPolicyPeer.Endpoints, api.EndpointSelector{
+		LabelSelector: &ciliummetav1.LabelSelector{
+			MatchLabels: labels,
+		},
+	})
+	return ciliumPolicyPeer
+}
+
+func (c ComponentNetworkPolicyTarget) ApplyToCiliumEgressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	return c.ApplyToCiliumIngressNetworkPolicy(ciliumPolicyPeer)
 }
 
 type LabelNetworkPolicyTarget struct {
@@ -119,21 +280,18 @@ func NewLabelNetworkPolicyTarget(podLabels, namespaceLabels map[string]string) L
 	}
 }
 
-func NewPodLabelNetworkPolicyTarget(podLabels map[string]string) LabelNetworkPolicyTarget {
-	return LabelNetworkPolicyTarget{
-		PodLabels: podLabels,
-	}
-}
-
 func NewNamespaceLabelNetworkPolicyTarget(namespaceLabels map[string]string) LabelNetworkPolicyTarget {
 	return LabelNetworkPolicyTarget{
 		NamespaceLabels: namespaceLabels,
 	}
 }
 
-var _ NetworkPolicyTarget = LabelNetworkPolicyTarget{}
+var (
+	_ IngressNetworkPolicyTarget = LabelNetworkPolicyTarget{}
+	_ EgressNetworkPolicyTarget  = LabelNetworkPolicyTarget{}
+)
 
-func (l LabelNetworkPolicyTarget) ApplyToVanillaNetworkPolicy(
+func (l LabelNetworkPolicyTarget) ApplyToKubernetesIngressNetworkPolicy(
 	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 ) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
 	policyPeerApplyConfiguration := networkPolicyPeerApplyConfiguration
@@ -148,6 +306,40 @@ func (l LabelNetworkPolicyTarget) ApplyToVanillaNetworkPolicy(
 	return policyPeerApplyConfiguration
 }
 
+func (l LabelNetworkPolicyTarget) ApplyToKubernetesEgressNetworkPolicy(
+	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	return l.ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (l LabelNetworkPolicyTarget) ApplyToCiliumIngressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	if l.PodLabels != nil {
+		ciliumPolicyPeer.Endpoints = append(ciliumPolicyPeer.Endpoints, api.EndpointSelector{
+			LabelSelector: &ciliummetav1.LabelSelector{
+				MatchLabels: l.PodLabels,
+			},
+		})
+	}
+	if l.NamespaceLabels != nil {
+		ciliumPolicyPeer.Endpoints = append(ciliumPolicyPeer.Endpoints, api.EndpointSelector{
+			LabelSelector: &ciliummetav1.LabelSelector{
+				MatchLabels: slices.MapEntries(l.NamespaceLabels, func(k string, v string) (string, string) {
+					return cilium.PodNamespaceMetaLabelsPrefix + k, v
+				}),
+			},
+		})
+	}
+	return ciliumPolicyPeer
+}
+
+func (l LabelNetworkPolicyTarget) ApplyToCiliumEgressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	return l.ApplyToCiliumIngressNetworkPolicy(ciliumPolicyPeer)
+}
+
 type HCPControllerNetworkPolicyTarget struct {
 	ControllerNamespace string
 }
@@ -158,14 +350,24 @@ func NewHCPControllerNetworkPolicyTarget(controllerNamespace string) HCPControll
 	}
 }
 
-var _ NetworkPolicyTarget = HCPControllerNetworkPolicyTarget{}
+var _ IngressNetworkPolicyTarget = HCPControllerNetworkPolicyTarget{}
 
-func (h HCPControllerNetworkPolicyTarget) ApplyToVanillaNetworkPolicy(
+func (h HCPControllerNetworkPolicyTarget) ApplyToKubernetesIngressNetworkPolicy(
 	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 ) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
 	return NewNamespaceLabelNetworkPolicyTarget(
 		map[string]string{
 			corev1.LabelMetadataName: h.ControllerNamespace,
 		},
-	).ApplyToVanillaNetworkPolicy(networkPolicyPeerApplyConfiguration)
+	).ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (h HCPControllerNetworkPolicyTarget) ApplyToCiliumIngressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	return NewNamespaceLabelNetworkPolicyTarget(
+		map[string]string{
+			corev1.LabelMetadataName: h.ControllerNamespace,
+		},
+	).ApplyToCiliumIngressNetworkPolicy(ciliumPolicyPeer)
 }

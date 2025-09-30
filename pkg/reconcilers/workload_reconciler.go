@@ -2,11 +2,14 @@ package reconcilers
 
 import (
 	"context"
+	"fmt"
 	"net"
 
+	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -15,32 +18,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
-	networkingv1ac "k8s.io/client-go/applyconfigurations/networking/v1"
 )
 
 type WorkloadResourceReconciler struct {
 	Tracer           string
 	KubernetesClient alias.WorkloadClusterClient
-}
-
-func (wr *WorkloadResourceReconciler) convertToPeerApplyConfigurations(
-	ingressPortComponents map[int32][]map[string]string,
-) map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration {
-	if ingressPortComponents == nil {
-		return nil
-	}
-	return slices.MapEntries(
-		ingressPortComponents,
-		func(port int32, labelsSelectors []map[string]string) (int32, []*networkingv1ac.NetworkPolicyPeerApplyConfiguration) {
-			return port, slices.Map(labelsSelectors,
-				func(labelSelector map[string]string, _ int) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
-					return networkingv1ac.NetworkPolicyPeer().
-						WithPodSelector(metav1ac.LabelSelector().WithMatchLabels(labelSelector))
-				},
-			)
-		},
-	)
+	CiliumClient     ciliumclient.Interface
 }
 
 func (wr *WorkloadResourceReconciler) ReconcileService(
@@ -59,7 +42,7 @@ func (wr *WorkloadResourceReconciler) ReconcileService(
 				attribute.String("service.namespace", namespace),
 				attribute.String("service.name", name),
 			)
-			return reconcileService(
+			service, ready, err := reconcileService(
 				ctx,
 				wr.KubernetesClient,
 				namespace,
@@ -71,6 +54,13 @@ func (wr *WorkloadResourceReconciler) ReconcileService(
 				headless,
 				ports,
 			)
+			if err != nil {
+				return nil, false, errorsUtil.IfErrErrorf(
+					"failed to reconcile service %s/%s into workloadcluster: %w",
+					namespace, name, err,
+				)
+			}
+			return service, ready, err
 		},
 	)
 }
@@ -89,7 +79,7 @@ func (wr *WorkloadResourceReconciler) ReconcileConfigmap(
 				attribute.String("configmap.namespace", namespace),
 				attribute.String("configmap.name", name),
 			)
-			return errorsUtil.IfErrErrorf("failed to apply configmap %s/%s into workloadcluster: %w",
+			return errorsUtil.IfErrErrorf("failed to reconcile configmap %s/%s into workloadcluster: %w",
 				namespace,
 				name,
 				reconcileConfigmap(
@@ -109,14 +99,14 @@ func (wr *WorkloadResourceReconciler) ReconcileConfigmap(
 
 func (wr *WorkloadResourceReconciler) ReconcileDeployment(
 	ctx context.Context,
-	name string,
 	namespace string,
+	name string,
 	deleteResource bool,
 	replicas int32,
 	podOptions PodOptions,
 	labels map[string]string,
-	ingressPortLabels map[int32][]map[string]string,
-	egressPortLabels map[int32][]map[string]string,
+	ingressPolicyTargets map[int32][]networkpolicy.IngressNetworkPolicyTarget,
+	egressPolicyTargets map[int32][]networkpolicy.EgressNetworkPolicyTarget,
 	containers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	volumes []*corev1ac.VolumeApplyConfiguration,
 ) (*appsv1.Deployment, bool, error) {
@@ -129,19 +119,27 @@ func (wr *WorkloadResourceReconciler) ReconcileDeployment(
 				attribute.Int("deployment.containers.count", len(containers)),
 				attribute.Int("deployment.volumes.count", len(volumes)),
 			)
-			return reconcileDeployment(
+			deployment, ready, err := reconcileDeployment(
 				ctx,
 				wr.KubernetesClient,
+				wr.CiliumClient,
 				namespace,
 				name,
 				deleteResource,
 				nil,
 				labels,
-				wr.convertToPeerApplyConfigurations(ingressPortLabels),
-				wr.convertToPeerApplyConfigurations(egressPortLabels),
+				ingressPolicyTargets,
+				egressPolicyTargets,
 				replicas,
 				createPodTemplateSpec(podOptions, nil, containers, volumes),
 			)
+			if err != nil {
+				return nil, false, fmt.Errorf(
+					"failed to reconcile deployment %s/%s into workloadcluster: %w",
+					namespace, name, err,
+				)
+			}
+			return deployment, ready, err
 		},
 	)
 }
@@ -153,8 +151,8 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 	deleteResource bool,
 	podOptions PodOptions,
 	labels map[string]string,
-	ingressPortLabels map[int32][]map[string]string,
-	egressPortLabels map[int32][]map[string]string,
+	ingressPolicyTargets map[int32][]networkpolicy.IngressNetworkPolicyTarget,
+	egressPolicyTargets map[int32][]networkpolicy.EgressNetworkPolicyTarget,
 	containers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	volumes []*corev1ac.VolumeApplyConfiguration,
 ) (*appsv1.DaemonSet, bool, error) {
@@ -166,18 +164,20 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 				attribute.Int("daemonset.containers.count", len(containers)),
 				attribute.Int("daemonset.volumes.count", len(volumes)),
 			)
-			return reconcileWorkload(
+			daemonSet, ready, err := reconcileWorkload(
 				ctx,
 				wr.KubernetesClient,
+				wr.CiliumClient,
 				wr.KubernetesClient.AppsV1().DaemonSets(namespace),
+				appsv1.SchemeGroupVersion.String(),
 				"DaemonSet",
 				namespace,
 				name,
 				deleteResource,
 				nil,
 				labels,
-				wr.convertToPeerApplyConfigurations(ingressPortLabels),
-				wr.convertToPeerApplyConfigurations(egressPortLabels),
+				ingressPolicyTargets,
+				egressPolicyTargets,
 				metav1.DeletePropagationBackground,
 				appsv1ac.DaemonSet,
 				appsv1ac.DaemonSetSpec,
@@ -186,6 +186,7 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 				(*appsv1ac.DaemonSetApplyConfiguration).WithLabels,
 				(*appsv1ac.DaemonSetSpecApplyConfiguration).WithSelector,
 				(*appsv1ac.DaemonSetSpecApplyConfiguration).WithTemplate,
+				(*appsv1.DaemonSet).GetUID,
 				createPodTemplateSpec(podOptions, nil, containers, volumes),
 				func(daemonSet *appsv1.DaemonSet) bool {
 					return arePodsReady(
@@ -198,6 +199,13 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 					)
 				},
 			)
+			if err != nil {
+				return nil, false, fmt.Errorf(
+					"failed to reconcile daemonset %s/%s into workloadcluster: %w",
+					namespace, name, err,
+				)
+			}
+			return daemonSet, ready, err
 		},
 	)
 }

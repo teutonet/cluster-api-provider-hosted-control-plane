@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/static:latest-glibc
+FROM scratch
 ARG manager
 COPY $manager /manager
 USER 1000:1000

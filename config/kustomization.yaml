@@ -5,7 +5,7 @@ namePrefix: capi-hosted-control-plane-
 labels:
   - includeSelectors: true
     pairs:
-      cluster.x-k8s.io/provider: control-plane-hosted
+      cluster.x-k8s.io/provider: control-plane-hosted-control-plane
 
 resources:
   - ./deployment.yaml
@@ -121,6 +121,7 @@ replacements:
         options:
           create: true
           delimiter: .
+          index: 1
         fieldPaths:
           - .spec.dnsNames.0
           - .spec.dnsNames.1

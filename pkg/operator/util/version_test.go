@@ -8,7 +8,6 @@ import (
 )
 
 func TestGetMinorVersion(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		version     string
@@ -121,6 +120,7 @@ func TestGetMinorVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			hcp := &v1alpha1.HostedControlPlane{
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					Version: tt.version,

@@ -8,7 +8,6 @@ import (
 )
 
 func TestGetRootIssuerName(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -38,6 +37,7 @@ func TestGetRootIssuerName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetRootIssuerName(cluster)
@@ -47,7 +47,6 @@ func TestGetRootIssuerName(t *testing.T) {
 }
 
 func TestGetCAIssuerName(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -67,6 +66,7 @@ func TestGetCAIssuerName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetCAIssuerName(cluster)
@@ -76,7 +76,6 @@ func TestGetCAIssuerName(t *testing.T) {
 }
 
 func TestGetServiceName(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -96,6 +95,7 @@ func TestGetServiceName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetServiceName(cluster)
@@ -105,7 +105,6 @@ func TestGetServiceName(t *testing.T) {
 }
 
 func TestGetInternalServiceHost(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -134,6 +133,7 @@ func TestGetInternalServiceHost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
@@ -144,7 +144,6 @@ func TestGetInternalServiceHost(t *testing.T) {
 }
 
 func TestGetEtcdClientServiceDNSName(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -167,6 +166,7 @@ func TestGetEtcdClientServiceDNSName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
@@ -177,7 +177,6 @@ func TestGetEtcdClientServiceDNSName(t *testing.T) {
 }
 
 func TestGetEtcdDNSNames(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -208,6 +207,7 @@ func TestGetEtcdDNSNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
@@ -221,7 +221,6 @@ func TestGetEtcdDNSNames(t *testing.T) {
 }
 
 func TestGetKubeconfigSecretName(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name           string
 		clusterName    string
@@ -256,6 +255,7 @@ func TestGetKubeconfigSecretName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetKubeconfigSecretName(cluster, tt.kubeconfigName)
@@ -265,7 +265,6 @@ func TestGetKubeconfigSecretName(t *testing.T) {
 }
 
 func TestGetKonnectivityServerHost(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name                     string
 		clusterName              string
@@ -294,6 +293,7 @@ func TestGetKonnectivityServerHost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			cluster.Spec.ControlPlaneEndpoint.Host = tt.controlPlaneEndpointHost
@@ -304,7 +304,6 @@ func TestGetKonnectivityServerHost(t *testing.T) {
 }
 
 func TestGetTLSRouteName(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -324,6 +323,7 @@ func TestGetTLSRouteName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetTLSRouteName(cluster)
@@ -333,7 +333,6 @@ func TestGetTLSRouteName(t *testing.T) {
 }
 
 func TestGetKonnectivityTLSRouteName(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -353,6 +352,7 @@ func TestGetKonnectivityTLSRouteName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetKonnectivityTLSRouteName(cluster)
@@ -363,7 +363,6 @@ func TestGetKonnectivityTLSRouteName(t *testing.T) {
 
 // Test multiple certificate name functions together since they follow the same pattern.
 func TestCertificateNames(t *testing.T) {
-	g := NewWithT(t)
 	cluster := &capiv2.Cluster{}
 	cluster.Name = "test-cluster"
 
@@ -394,6 +393,7 @@ func TestCertificateNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			result := tt.function(cluster)
 			g.Expect(result).To(Equal(tt.expected))
 		})

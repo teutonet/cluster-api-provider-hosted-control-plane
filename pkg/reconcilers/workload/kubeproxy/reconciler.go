@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"path"
 
+	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/go-logr/logr"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	slices "github.com/samber/lo"
@@ -44,11 +46,13 @@ type KubeProxyReconciler interface {
 
 func NewKubeProxyReconciler(
 	kubernetesClient alias.WorkloadClusterClient,
+	ciliumClient ciliumclient.Interface,
 	podCIDR string,
 ) KubeProxyReconciler {
 	return &kubeProxyReconciler{
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
 			KubernetesClient: kubernetesClient,
+			CiliumClient:     ciliumClient,
 			Tracer:           tracing.GetTracer("kubeproxy"),
 		},
 		podCIDR:                 podCIDR,
@@ -389,8 +393,15 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 					},
 				},
 				kr.kubeProxyLabels,
-				nil,
-				nil,
+				map[int32][]networkpolicy.IngressNetworkPolicyTarget{},
+				map[int32][]networkpolicy.EgressNetworkPolicyTarget{
+					0: { // needs to proxy to any port in the whole cluster
+						networkpolicy.NewClusterNetworkPolicyTarget(),
+					},
+					6443: {
+						networkpolicy.NewAPIServerNetworkPolicyTarget(hostedControlPlane),
+					},
+				},
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(container, reconcilers.ContainerOptions{
 						Root:                    true,

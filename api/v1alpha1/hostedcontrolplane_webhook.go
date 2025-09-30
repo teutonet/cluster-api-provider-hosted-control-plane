@@ -55,7 +55,8 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 		fieldErrs = append(fieldErrs, fieldErr)
 	}
 
-	if newHostedControlPlane.Spec.ETCD.AutoGrow && !newHostedControlPlane.Spec.ETCD.VolumeSize.IsZero() {
+	if newHostedControlPlane.Spec.ETCD.AutoGrow && newHostedControlPlane.Spec.ETCD.VolumeSize != nil &&
+		!newHostedControlPlane.Spec.ETCD.VolumeSize.IsZero() {
 		fieldErrs = append(fieldErrs, field.Invalid(
 			w.specPath.Child("etcd").Child("autoGrow"),
 			newHostedControlPlane.Spec.ETCD.AutoGrow,
@@ -63,7 +64,8 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 		))
 	}
 
-	if !newHostedControlPlane.Spec.ETCD.AutoGrow && newHostedControlPlane.Spec.ETCD.VolumeSize.IsZero() {
+	if !newHostedControlPlane.Spec.ETCD.AutoGrow &&
+		(newHostedControlPlane.Spec.ETCD.VolumeSize == nil || newHostedControlPlane.Spec.ETCD.VolumeSize.IsZero()) {
 		fieldErrs = append(fieldErrs, field.Invalid(
 			w.specPath.Child("etcd").Child("autoGrow"),
 			newHostedControlPlane.Spec.ETCD.AutoGrow,
@@ -136,7 +138,7 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 		)})
 	}
 
-	if !newHostedControlPlane.Spec.ETCD.AutoGrow {
+	if !newHostedControlPlane.Spec.ETCD.AutoGrow && newHostedControlPlane.Spec.ETCD.VolumeSize != nil {
 		if oldHostedControlPlane.Spec.ETCD.AutoGrow &&
 			newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(
 				oldHostedControlPlane.Status.ETCDVolumeSize) == -1 {
@@ -153,7 +155,8 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 					),
 				)},
 			)
-		} else if newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(oldHostedControlPlane.Spec.ETCD.VolumeSize) == -1 {
+		} else if oldHostedControlPlane.Spec.ETCD.VolumeSize != nil &&
+			newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(*oldHostedControlPlane.Spec.ETCD.VolumeSize) == -1 {
 			return warnings, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{field.Invalid(
 				w.specPath.Child("etcd").Child("volumeSize"),
 				newHostedControlPlane.Spec.ETCD.VolumeSize,

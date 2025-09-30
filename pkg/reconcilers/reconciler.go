@@ -7,15 +7,26 @@ import (
 	"net"
 	"regexp"
 	"sort"
+	"strconv"
 
+	cilium "github.com/cilium/cilium/pkg/k8s/apis/cilium.io"
+	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
+	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
+	ciliuminterfacev2 "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned/typed/cilium.io/v2"
+	ciliummetav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
+	"github.com/cilium/cilium/pkg/policy/api"
 	slices "github.com/samber/lo"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
+	"go.opentelemetry.io/otel/trace"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -23,13 +34,11 @@ import (
 	networkingv1ac "k8s.io/client-go/applyconfigurations/networking/v1"
 	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
 	"k8s.io/client-go/kubernetes"
+	networkininterface "k8s.io/client-go/kubernetes/typed/networking/v1"
 	"k8s.io/utils/ptr"
 )
 
 var (
-	errPodDisruptionBudgetHasBothMinAvailableAndMaxUnavailable = errors.New(
-		"pod disruption budget cannot have both minAvailable and maxUnavailable set",
-	)
 	errServiceHasBothClusterIPAndIsHeadless = errors.New(
 		"service cannot be headless and have a clusterIP set",
 	)
@@ -40,6 +49,18 @@ var (
 		`Forbidden: updates to \S+ spec for fields other than .* are forbidden`,
 	)
 )
+
+type PodDisruptionBudgetType = string
+
+var (
+	PodDisruptionBudgetTypeMinAvailable   PodDisruptionBudgetType = "MinAvailable"
+	PodDisruptionBudgetTypeMaxUnavailable PodDisruptionBudgetType = "MaxUnavailable"
+)
+
+type PodDisruptionBudgetMode struct {
+	Type  PodDisruptionBudgetType
+	Value int32
+}
 
 type PodOptions struct {
 	ServiceAccountName string
@@ -65,15 +86,17 @@ type reconcileClient[applyConfiguration any, result any] interface {
 func reconcileWorkload[RA any, RSA any, R any](
 	ctx context.Context,
 	kubernetesClient kubernetes.Interface,
+	ciliumClient ciliumclient.Interface,
 	client reconcileClient[RA, R],
+	apiVersion string,
 	kind string,
 	namespace string,
 	name string,
 	deleteResource bool,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
-	ingressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
-	egressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+	ingressPolicyTargets map[int32][]networkpolicy.IngressNetworkPolicyTarget,
+	egressPolicyTargets map[int32][]networkpolicy.EgressNetworkPolicyTarget,
 	propagationPolicy metav1.DeletionPropagation,
 	createResourceApplyConfiguration func(name string, namespace string) *RA,
 	createResourceSpecApplyConfiguration func() *RSA,
@@ -86,26 +109,11 @@ func reconcileWorkload[RA any, RSA any, R any](
 		resourceSpecApplyConfiguration *RSA, labelSelector *metav1ac.LabelSelectorApplyConfiguration,
 	) *RSA,
 	setSpecTemplate func(resourceSpecApplyConfiguration *RSA, template *corev1ac.PodTemplateSpecApplyConfiguration) *RSA,
+	getUID func(resource *R) types.UID,
 	podTemplateSpecApplyConfiguration *corev1ac.PodTemplateSpecApplyConfiguration,
 	readinessCheck func(*R) bool,
 	mutateFuncs ...func(*RA) *RA,
 ) (*R, bool, error) {
-	if err := reconcileNetworkPolicy(
-		ctx,
-		kubernetesClient,
-		namespace,
-		name,
-		deleteResource,
-		ownerReference,
-		labels,
-		ingressPortLabels,
-		egressPortLabels,
-	); err != nil {
-		return nil, false, fmt.Errorf("failed to reconcile network policy for %s %s/%s: %w",
-			kind, namespace, name, err,
-		)
-	}
-
 	if deleteResource {
 		if err := client.Delete(
 			ctx,
@@ -114,6 +122,7 @@ func reconcileWorkload[RA any, RSA any, R any](
 		); err != nil && !apierrors.IsNotFound(err) {
 			return nil, false, fmt.Errorf("failed to delete %s %s: %w", kind, name, err)
 		}
+		return nil, true, nil
 	}
 
 	labelSelector := metav1ac.LabelSelector().WithMatchLabels(labels)
@@ -174,6 +183,28 @@ func reconcileWorkload[RA any, RSA any, R any](
 		)
 	}
 
+	if err := reconcileNetworkPolicy(
+		ctx,
+		kubernetesClient,
+		ciliumClient,
+		namespace,
+		name,
+		metav1ac.OwnerReference().
+			WithAPIVersion(apiVersion).
+			WithKind(kind).
+			WithName(name).
+			WithUID(getUID(appliedResource)).
+			WithController(true).
+			WithBlockOwnerDeletion(true),
+		labels,
+		ingressPolicyTargets,
+		egressPolicyTargets,
+	); err != nil {
+		return nil, false, fmt.Errorf("failed to reconcile network policy for %s %s/%s: %w",
+			kind, namespace, name, err,
+		)
+	}
+
 	if !readinessCheck(appliedResource) {
 		return appliedResource, false, nil
 	}
@@ -186,28 +217,32 @@ func reconcileWorkload[RA any, RSA any, R any](
 func reconcileDeployment(
 	ctx context.Context,
 	kubernetesClient kubernetes.Interface,
+	ciliumClient ciliumclient.Interface,
 	namespace string,
 	name string,
 	deleteResource bool,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
-	ingressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
-	egressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+	ingressPolicyTargets map[int32][]networkpolicy.IngressNetworkPolicyTarget,
+	egressPolicyTargets map[int32][]networkpolicy.EgressNetworkPolicyTarget,
 	replicas int32,
 	podTemplateSpec *corev1ac.PodTemplateSpecApplyConfiguration,
 ) (*appsv1.Deployment, bool, error) {
+	kind := "Deployment"
 	deployment, ready, err := reconcileWorkload(
 		ctx,
 		kubernetesClient,
+		ciliumClient,
 		kubernetesClient.AppsV1().Deployments(namespace),
-		"Deployment",
+		appsv1.SchemeGroupVersion.String(),
+		kind,
 		namespace,
 		name,
 		deleteResource,
 		ownerReference,
 		labels,
-		ingressPortLabels,
-		egressPortLabels,
+		ingressPolicyTargets,
+		egressPolicyTargets,
 		metav1.DeletePropagationBackground,
 		appsv1ac.Deployment,
 		appsv1ac.DeploymentSpec,
@@ -216,6 +251,7 @@ func reconcileDeployment(
 		(*appsv1ac.DeploymentApplyConfiguration).WithLabels,
 		(*appsv1ac.DeploymentSpecApplyConfiguration).WithSelector,
 		(*appsv1ac.DeploymentSpecApplyConfiguration).WithTemplate,
+		(*appsv1.Deployment).GetUID,
 		podTemplateSpec.WithSpec(podTemplateSpec.Spec.
 			WithTopologySpreadConstraints(
 				operatorutil.CreatePodTopologySpreadConstraints(metav1ac.LabelSelector().WithMatchLabels(labels)),
@@ -236,11 +272,18 @@ func reconcileDeployment(
 		kubernetesClient,
 		namespace,
 		name,
-		deleteResource,
-		ownerReference,
+		metav1ac.OwnerReference().
+			WithAPIVersion(appsv1.SchemeGroupVersion.String()).
+			WithKind(kind).
+			WithName(deployment.Name).
+			WithUID(deployment.UID).
+			WithController(true).
+			WithBlockOwnerDeletion(true),
 		labels,
-		slices.Ternary(replicas > 2, int32(1), int32(0)),
-		0,
+		PodDisruptionBudgetMode{
+			Value: slices.Ternary(replicas > 1, int32(1), int32(0)),
+			Type:  PodDisruptionBudgetTypeMinAvailable,
+		},
 	); err != nil {
 		return nil, false, fmt.Errorf("failed to reconcile pod disruption budget for deployment %s/%s: %w",
 			namespace, name, err,
@@ -250,94 +293,379 @@ func reconcileDeployment(
 	return deployment, true, nil
 }
 
-//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=create;patch
-
 func reconcileNetworkPolicy(
 	ctx context.Context,
 	kubernetesClient kubernetes.Interface,
+	ciliumClient ciliumclient.Interface,
 	namespace string,
 	name string,
-	deleteResource bool,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
-	ingressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
-	egressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+	ingressPolicyTargets map[int32][]networkpolicy.IngressNetworkPolicyTarget,
+	egressPolicyTargets map[int32][]networkpolicy.EgressNetworkPolicyTarget,
 ) error {
-	networkPolicyInterface := kubernetesClient.NetworkingV1().NetworkPolicies(namespace)
+	return tracing.WithSpan1(ctx, "networkPolicy", "reconcileNetworkPolicy",
+		func(ctx context.Context, span trace.Span) error {
+			networkPolicyInterface := kubernetesClient.NetworkingV1().NetworkPolicies(namespace)
+			var ciliumNetworkPolicyInterface ciliuminterfacev2.CiliumNetworkPolicyInterface
+			deleteResource := ingressPolicyTargets == nil && egressPolicyTargets == nil
 
-	if deleteResource || ingressPortLabels == nil && egressPortLabels == nil {
-		if err := networkPolicyInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil &&
-			!apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete network policy %s/%s: %w", namespace, name, err)
-		}
-		return nil
-	}
+			if ciliumClient != nil {
+				ciliumNetworkPolicyInterface = ciliumClient.CiliumV2().CiliumNetworkPolicies(namespace)
+			}
 
-	spec := networkingv1ac.NetworkPolicySpec().
-		WithPodSelector(metav1ac.LabelSelector().WithMatchLabels(labels))
+			if deleteResource || ciliumClient != nil {
+				if err := networkPolicyInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil &&
+					!apierrors.IsNotFound(err) {
+					return fmt.Errorf("failed to delete network policy %s/%s: %w", namespace, name, err)
+				}
+				if deleteResource {
+					if err := ciliumNetworkPolicyInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil &&
+						!apierrors.IsNotFound(err) {
+						return fmt.Errorf("failed to delete cilium network policy %s/%s: %w", namespace, name, err)
+					}
+					return nil
+				}
+			}
 
-	if ingressPortLabels != nil {
-		spec = spec.
-			WithPolicyTypes(networkingv1.PolicyTypeIngress).
-			WithIngress(convertToRule(
-				networkingv1ac.NetworkPolicyIngressRule,
-				(*networkingv1ac.NetworkPolicyIngressRuleApplyConfiguration).WithPorts,
-				(*networkingv1ac.NetworkPolicyIngressRuleApplyConfiguration).WithFrom,
-				ingressPortLabels,
-			)...)
-	}
-	if egressPortLabels != nil {
-		egressRules := convertToRule(
-			networkingv1ac.NetworkPolicyEgressRule,
-			(*networkingv1ac.NetworkPolicyEgressRuleApplyConfiguration).WithPorts,
-			(*networkingv1ac.NetworkPolicyEgressRuleApplyConfiguration).WithTo,
-			egressPortLabels,
-		)
-		egressRules = append(egressRules,
-			networkingv1ac.NetworkPolicyEgressRule().
-				WithPorts(networkingv1ac.NetworkPolicyPort().
-					WithProtocol(corev1.ProtocolUDP).
-					WithPort(intstr.FromInt32(53)),
-				).
-				WithTo(networkingv1ac.NetworkPolicyPeer().
-					WithNamespaceSelector(metav1ac.LabelSelector().
-						WithMatchLabels(map[string]string{
-							corev1.LabelMetadataName: "kube-system",
-						}),
-					).
-					WithPodSelector(metav1ac.LabelSelector().
-						WithMatchLabels(map[string]string{
-							"k8s-app": "kube-dns",
-						}),
-					),
-				),
-		)
-		spec = spec.
-			WithPolicyTypes(networkingv1.PolicyTypeEgress).
-			WithEgress(egressRules...)
-	}
-
-	networkPolicyApplyConfiguration := networkingv1ac.NetworkPolicy(name, namespace).
-		WithLabels(labels).
-		WithSpec(spec)
-
-	if ownerReference != nil {
-		networkPolicyApplyConfiguration = networkPolicyApplyConfiguration.
-			WithOwnerReferences(ownerReference)
-	}
-
-	_, err := networkPolicyInterface.
-		Apply(
-			ctx,
-			networkPolicyApplyConfiguration,
-			operatorutil.ApplyOptions,
-		)
-	return errorsUtil.IfErrErrorf("failed to apply network policy %s/%s: %w", namespace, name, err)
+			if ciliumClient != nil {
+				return reconcileCiliumNetworkPolicy(
+					ctx,
+					ciliumNetworkPolicyInterface,
+					name,
+					namespace,
+					ownerReference,
+					labels,
+					ingressPolicyTargets,
+					egressPolicyTargets,
+				)
+			} else {
+				return reconcileKubernetesNetworkPolicy(
+					ctx,
+					networkPolicyInterface,
+					name,
+					namespace,
+					ownerReference,
+					labels,
+					ingressPolicyTargets,
+					egressPolicyTargets,
+				)
+			}
+		},
+	)
 }
 
-func sortByPort(
-	portLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
-) []slices.Entry[int32, []*networkingv1ac.NetworkPolicyPeerApplyConfiguration] {
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=create;patch;delete
+
+func reconcileKubernetesNetworkPolicy(
+	ctx context.Context,
+	networkPolicyInterface networkininterface.NetworkPolicyInterface,
+	name string,
+	namespace string,
+	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
+	labels map[string]string,
+	ingressPolicyTargets map[int32][]networkpolicy.IngressNetworkPolicyTarget,
+	egressPolicyTargets map[int32][]networkpolicy.EgressNetworkPolicyTarget,
+) error {
+	return tracing.WithSpan1(ctx, "networkPolicy", "reconcileKubernetesNetworkPolicy",
+		func(ctx context.Context, span trace.Span) error {
+			spec := networkingv1ac.NetworkPolicySpec().
+				WithPodSelector(metav1ac.LabelSelector().WithMatchLabels(labels))
+
+			if ingressPolicyTargets != nil {
+				spec = spec.
+					WithPolicyTypes(networkingv1.PolicyTypeIngress).
+					WithIngress(convertToRules(
+						networkingv1ac.NetworkPolicyIngressRule,
+						networkPolicyPortApplyConfiguration,
+						networkPolicyIngressPeerApplyConfiguration,
+						(*networkingv1ac.NetworkPolicyIngressRuleApplyConfiguration).WithPorts,
+						(*networkingv1ac.NetworkPolicyIngressRuleApplyConfiguration).WithFrom,
+						ingressPolicyTargets,
+					)...)
+			}
+			if egressPolicyTargets != nil {
+				egressRules := convertToRules(
+					networkingv1ac.NetworkPolicyEgressRule,
+					networkPolicyPortApplyConfiguration,
+					networkPolicyEgressPeerApplyConfiguration,
+					(*networkingv1ac.NetworkPolicyEgressRuleApplyConfiguration).WithPorts,
+					(*networkingv1ac.NetworkPolicyEgressRuleApplyConfiguration).WithTo,
+					egressPolicyTargets,
+				)
+				egressRules = append(egressRules,
+					networkingv1ac.NetworkPolicyEgressRule().
+						WithPorts(networkingv1ac.NetworkPolicyPort().
+							WithProtocol(corev1.ProtocolUDP).
+							WithPort(intstr.FromInt32(53)),
+						).
+						WithTo(networkingv1ac.NetworkPolicyPeer().
+							WithNamespaceSelector(metav1ac.LabelSelector().
+								WithMatchLabels(map[string]string{
+									corev1.LabelMetadataName: "kube-system",
+								}),
+							).
+							WithPodSelector(metav1ac.LabelSelector().
+								WithMatchLabels(map[string]string{
+									"k8s-app": "kube-dns",
+								}),
+							),
+						),
+				)
+				spec = spec.
+					WithPolicyTypes(networkingv1.PolicyTypeEgress).
+					WithEgress(egressRules...)
+			}
+
+			networkPolicyApplyConfiguration := networkingv1ac.NetworkPolicy(name, namespace).
+				WithLabels(labels).
+				WithSpec(spec)
+
+			if ownerReference != nil {
+				networkPolicyApplyConfiguration = networkPolicyApplyConfiguration.
+					WithOwnerReferences(ownerReference)
+			}
+
+			_, err := networkPolicyInterface.
+				Apply(
+					ctx,
+					networkPolicyApplyConfiguration,
+					operatorutil.ApplyOptions,
+				)
+			return errorsUtil.IfErrErrorf("failed to apply network policy %s/%s: %w", namespace, name, err)
+		},
+	)
+}
+
+//+kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;create;update;delete
+
+//nolint:funlen // large function due to conversion logic, no big deal
+func reconcileCiliumNetworkPolicy(
+	ctx context.Context,
+	ciliumNetworkPolicyInterface ciliuminterfacev2.CiliumNetworkPolicyInterface,
+	name string,
+	namespace string,
+	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
+	labels map[string]string,
+	ingressPolicyTargets map[int32][]networkpolicy.IngressNetworkPolicyTarget,
+	egressPolicyTargets map[int32][]networkpolicy.EgressNetworkPolicyTarget,
+) error {
+	return tracing.WithSpan1(ctx, "networkPolicy", "reconcileCiliumNetworkPolicy",
+		func(ctx context.Context, span trace.Span) error {
+			spec := &api.Rule{
+				EndpointSelector: api.EndpointSelector{
+					LabelSelector: &ciliummetav1.LabelSelector{
+						MatchLabels: labels,
+					},
+				},
+			}
+
+			if ingressPolicyTargets != nil {
+				spec.Ingress = slices.FromSlicePtr(convertToRules(
+					func() *api.IngressRule {
+						return &api.IngressRule{}
+					},
+					func(port int32) *api.PortRule {
+						return &api.PortRule{
+							Ports: []api.PortProtocol{
+								{
+									Port: strconv.Itoa(int(port)),
+								},
+							},
+						}
+					},
+					func(networkPolicyTarget networkpolicy.IngressNetworkPolicyTarget) *networkpolicy.CiliumPolicyPeer {
+						return networkPolicyTarget.ApplyToCiliumIngressNetworkPolicy(&networkpolicy.CiliumPolicyPeer{})
+					},
+					func(applyConfiguration *api.IngressRule, ports ...*api.PortRule) *api.IngressRule {
+						applyConfiguration.ToPorts = slices.FromSlicePtr(ports)
+						return applyConfiguration
+					},
+					func(applyConfiguration *api.IngressRule, peers ...*networkpolicy.CiliumPolicyPeer) *api.IngressRule {
+						applyConfiguration.FromEndpoints = append(
+							applyConfiguration.FromEndpoints,
+							slices.FlatMap(peers,
+								func(peer *networkpolicy.CiliumPolicyPeer, _ int) []api.EndpointSelector {
+									return peer.Endpoints
+								},
+							)...)
+						applyConfiguration.FromCIDR = append(applyConfiguration.FromCIDR, slices.FlatMap(peers,
+							func(peer *networkpolicy.CiliumPolicyPeer, _ int) []api.CIDR {
+								return peer.CIDR
+							},
+						)...)
+						applyConfiguration.FromEntities = append(applyConfiguration.FromEntities, slices.FlatMap(peers,
+							func(peer *networkpolicy.CiliumPolicyPeer, _ int) []api.Entity {
+								return peer.Identities
+							},
+						)...)
+						return applyConfiguration
+					},
+					ingressPolicyTargets,
+				))
+			}
+
+			if egressPolicyTargets != nil {
+				egressRules := convertToRules(
+					func() *api.EgressRule {
+						return &api.EgressRule{}
+					},
+					func(port int32) *api.PortRule {
+						return &api.PortRule{
+							Ports: []api.PortProtocol{
+								{
+									Port: strconv.Itoa(int(port)),
+								},
+							},
+						}
+					},
+					func(networkPolicyTarget networkpolicy.EgressNetworkPolicyTarget) *networkpolicy.CiliumPolicyPeer {
+						return networkPolicyTarget.ApplyToCiliumEgressNetworkPolicy(&networkpolicy.CiliumPolicyPeer{})
+					},
+					func(applyConfiguration *api.EgressRule, ports ...*api.PortRule) *api.EgressRule {
+						applyConfiguration.ToPorts = slices.FromSlicePtr(ports)
+						return applyConfiguration
+					},
+					func(applyConfiguration *api.EgressRule, peers ...*networkpolicy.CiliumPolicyPeer) *api.EgressRule {
+						applyConfiguration.ToEndpoints = append(applyConfiguration.ToEndpoints, slices.FlatMap(peers,
+							func(peer *networkpolicy.CiliumPolicyPeer, _ int) []api.EndpointSelector {
+								return peer.Endpoints
+							},
+						)...)
+						applyConfiguration.ToCIDR = append(applyConfiguration.ToCIDR, slices.FlatMap(peers,
+							func(peer *networkpolicy.CiliumPolicyPeer, _ int) []api.CIDR {
+								return peer.CIDR
+							},
+						)...)
+						applyConfiguration.ToFQDNs = append(applyConfiguration.ToFQDNs, slices.FlatMap(peers,
+							func(peer *networkpolicy.CiliumPolicyPeer, _ int) []api.FQDNSelector {
+								return slices.Map(peer.FQDNs, func(fqdn string, _ int) api.FQDNSelector {
+									return api.FQDNSelector{
+										MatchName: fqdn,
+									}
+								})
+							},
+						)...)
+						applyConfiguration.ToEntities = append(applyConfiguration.ToEntities, slices.FlatMap(peers,
+							func(peer *networkpolicy.CiliumPolicyPeer, _ int) []api.Entity {
+								return peer.Identities
+							},
+						)...)
+						return applyConfiguration
+					},
+					egressPolicyTargets,
+				)
+
+				egressRules = append(egressRules,
+					&api.EgressRule{
+						ToPorts: []api.PortRule{
+							{
+								Ports: []api.PortProtocol{
+									{
+										Port:     "53",
+										Protocol: "UDP",
+									},
+								},
+								Rules: &api.L7Rules{ // Always record DNS requests in Cilium for FQDN policies and visibility.
+									DNS: []api.PortRuleDNS{
+										{
+											MatchPattern: "*",
+										},
+									},
+								},
+							},
+						},
+						EgressCommonRule: api.EgressCommonRule{
+							ToEndpoints: []api.EndpointSelector{
+								{
+									LabelSelector: &ciliummetav1.LabelSelector{
+										MatchLabels: map[string]ciliummetav1.MatchLabelsValue{
+											"k8s-app":                "kube-dns",
+											cilium.PodNamespaceLabel: "kube-system",
+										},
+									},
+								},
+							},
+						},
+					},
+				)
+
+				spec.Egress = slices.FromSlicePtr(egressRules)
+			}
+
+			ciliumNetworkPolicyApplyConfiguration := &ciliumv2.CiliumNetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: namespace,
+					Labels:    labels,
+				},
+				Spec: spec,
+			}
+
+			if ownerReference != nil {
+				ciliumNetworkPolicyApplyConfiguration.OwnerReferences = []metav1.OwnerReference{
+					{
+						APIVersion:         *ownerReference.APIVersion,
+						Kind:               *ownerReference.Kind,
+						Name:               *ownerReference.Name,
+						UID:                *ownerReference.UID,
+						Controller:         ownerReference.Controller,
+						BlockOwnerDeletion: ownerReference.BlockOwnerDeletion,
+					},
+				}
+			}
+
+			ciliumNetworkPolicy, err := ciliumNetworkPolicyInterface.Get(ctx,
+				ciliumNetworkPolicyApplyConfiguration.Name,
+				metav1.GetOptions{},
+			)
+			exists := !apierrors.IsNotFound(err)
+			if err != nil && exists {
+				return fmt.Errorf("failed to get cilium network policy %s/%s: %w", namespace, name, err)
+			}
+
+			if !exists {
+				ciliumNetworkPolicy, err = ciliumNetworkPolicyInterface.
+					Create(
+						ctx,
+						ciliumNetworkPolicyApplyConfiguration,
+						metav1.CreateOptions{FieldManager: operatorutil.ApplyOptions.FieldManager},
+					)
+			} else {
+				ciliumNetworkPolicyApplyConfiguration.ResourceVersion = ciliumNetworkPolicy.ResourceVersion
+				ciliumNetworkPolicy, err = ciliumNetworkPolicyInterface.
+					Update(
+						ctx,
+						ciliumNetworkPolicyApplyConfiguration,
+						metav1.UpdateOptions{FieldManager: operatorutil.ApplyOptions.FieldManager},
+					)
+			}
+
+			if err != nil {
+				return fmt.Errorf("failed to create or update cilium network policy %s/%s: %w", namespace, name, err)
+			}
+
+			if invalidConditions := slices.Filter(ciliumNetworkPolicy.Status.Conditions,
+				func(condition ciliumv2.NetworkPolicyCondition, _ int) bool {
+					return condition.Type == ciliumv2.PolicyConditionValid && condition.Status == corev1.ConditionFalse
+				}); len(invalidConditions) > 0 {
+				return fmt.Errorf("cilium network policy %s/%s is invalid: %w", namespace, name,
+					errors.Join(slices.Map(invalidConditions, func(condition ciliumv2.NetworkPolicyCondition,
+						_ int,
+					) error {
+						//nolint:err113 // we don't get a real error from the condition, therefore we create one here
+						return errors.New(condition.Message)
+					})...),
+				)
+			}
+			return nil
+		},
+	)
+}
+
+func sortByPort[NPT any](
+	portLabels map[int32][]NPT,
+) []slices.Entry[int32, []NPT] {
 	portLabelMappings := slices.ToPairs(portLabels)
 	sort.Slice(portLabelMappings, func(i, j int) bool {
 		return portLabelMappings[i].Key < portLabelMappings[j].Key
@@ -345,24 +673,46 @@ func sortByPort(
 	return portLabelMappings
 }
 
-func convertToRule[AC any](
+func networkPolicyIngressPeerApplyConfiguration(
+	networkPolicyTarget networkpolicy.IngressNetworkPolicyTarget,
+) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	return networkPolicyTarget.ApplyToKubernetesIngressNetworkPolicy(networkingv1ac.NetworkPolicyPeer())
+}
+
+func networkPolicyEgressPeerApplyConfiguration(
+	networkPolicyTarget networkpolicy.EgressNetworkPolicyTarget,
+) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	return networkPolicyTarget.ApplyToKubernetesEgressNetworkPolicy(networkingv1ac.NetworkPolicyPeer())
+}
+
+func networkPolicyPortApplyConfiguration(port int32) *networkingv1ac.NetworkPolicyPortApplyConfiguration {
+	return networkingv1ac.NetworkPolicyPort().
+		WithPort(intstr.FromInt32(port))
+}
+
+func convertToRules[AC any, PORT any, PEER any, NPT interface{}](
 	createResourceApplyConfiguration func() *AC,
-	withPorts func(applyConfiguration *AC, ports ...*networkingv1ac.NetworkPolicyPortApplyConfiguration) *AC,
-	addPeers func(applyConfiguration *AC, peers ...*networkingv1ac.NetworkPolicyPeerApplyConfiguration) *AC,
-	egressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+	createPortApplyConfiguration func(port int32) *PORT,
+	createPeerApplyConfiguration func(networkPolicyTarget NPT) *PEER,
+	withPorts func(applyConfiguration *AC, ports ...*PORT) *AC,
+	addPeers func(applyConfiguration *AC, peers ...*PEER) *AC,
+	portNetworkPolicyTargets map[int32][]NPT,
 ) []*AC {
-	return slices.Map(sortByPort(egressPortLabels), func(
-		egressPortMapping slices.Entry[int32, []*networkingv1ac.NetworkPolicyPeerApplyConfiguration], _ int,
-	) *AC {
-		port, peerLabels := egressPortMapping.Key, egressPortMapping.Value
-		applyConfiguration := createResourceApplyConfiguration()
-		applyConfiguration = withPorts(
-			applyConfiguration,
-			networkingv1ac.NetworkPolicyPort().
-				WithPort(intstr.FromInt32(port)),
-		)
-		applyConfiguration = addPeers(applyConfiguration, peerLabels...)
-		return applyConfiguration
+	return slices.FlatMap(sortByPort(portNetworkPolicyTargets), func(
+		portMapping slices.Entry[int32, []NPT], _ int,
+	) []*AC {
+		port, networkPolicyTargets := portMapping.Key, portMapping.Value
+		return slices.Map(networkPolicyTargets, func(networkPolicyTarget NPT, _ int) *AC {
+			applyConfiguration := createResourceApplyConfiguration()
+			if port != 0 { // allow all ports
+				applyConfiguration = withPorts(
+					applyConfiguration,
+					createPortApplyConfiguration(port),
+				)
+			}
+			applyConfiguration = addPeers(applyConfiguration, createPeerApplyConfiguration(networkPolicyTarget))
+			return applyConfiguration
+		})
 	})
 }
 
@@ -373,34 +723,28 @@ func reconcilePodDisruptionBudget(
 	kubernetesClient kubernetes.Interface,
 	namespace string,
 	name string,
-	deleteResource bool,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
-	minAvailable int32,
-	maxUnavailable int32,
+	mode PodDisruptionBudgetMode,
 ) error {
 	podDisruptionBudgetInterface := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace)
-	if deleteResource || minAvailable == 0 && maxUnavailable == 0 {
+	if mode.Value == 0 {
 		if err := podDisruptionBudgetInterface.
 			Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete pod disruption budget %s/%s: %w", namespace, name, err)
 		}
 		return nil
 	}
-	if minAvailable > 0 && maxUnavailable > 0 {
-		return fmt.Errorf("%s/%s: %w",
-			namespace, name, errPodDisruptionBudgetHasBothMinAvailableAndMaxUnavailable,
-		)
-	}
 
 	spec := policyv1ac.PodDisruptionBudgetSpec().
 		WithSelector(metav1ac.LabelSelector().WithMatchLabels(labels))
 
-	switch {
-	case minAvailable > 0:
-		spec = spec.WithMinAvailable(intstr.FromInt32(minAvailable))
-	case maxUnavailable > 0:
-		spec = spec.WithMaxUnavailable(intstr.FromInt32(maxUnavailable))
+	value := intstr.FromInt32(mode.Value)
+	switch mode.Type {
+	case PodDisruptionBudgetTypeMinAvailable:
+		spec = spec.WithMinAvailable(value)
+	case PodDisruptionBudgetTypeMaxUnavailable:
+		spec = spec.WithMaxUnavailable(value)
 	}
 
 	podDisruptionBudgetApplyConfiguration := policyv1ac.PodDisruptionBudget(name, namespace).
@@ -492,6 +836,7 @@ func reconcileSecret(
 	kubernetesClient kubernetes.Interface,
 	namespace string,
 	name string,
+	deleteResource bool,
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
 	data map[string][]byte,
@@ -501,12 +846,22 @@ func reconcileSecret(
 		WithType(corev1.SecretTypeOpaque).
 		WithData(data)
 
+	secretInterface := kubernetesClient.CoreV1().Secrets(namespace)
+	if deleteResource {
+		err := secretInterface.
+			Delete(ctx, name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete secret %s/%s: %w", namespace, name, err)
+		}
+		return nil
+	}
+
 	if ownerReference != nil {
 		secretApplyConfiguration = secretApplyConfiguration.
 			WithOwnerReferences(ownerReference)
 	}
 
-	_, err := kubernetesClient.CoreV1().Secrets(namespace).
+	_, err := secretInterface.
 		Apply(
 			ctx,
 			secretApplyConfiguration,
@@ -592,6 +947,7 @@ func createDeploymentMutator(
 func reconcileStatefulset(
 	ctx context.Context,
 	kubernetesClient kubernetes.Interface,
+	ciliumClient ciliumclient.Interface,
 	namespace string,
 	name string,
 	deleteResource bool,
@@ -600,8 +956,8 @@ func reconcileStatefulset(
 	podManagementPolicy appsv1.PodManagementPolicyType,
 	updateStrategy *appsv1ac.StatefulSetUpdateStrategyApplyConfiguration,
 	labels map[string]string,
-	ingressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
-	egressPortLabels map[int32][]*networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+	ingressPolicyTargets map[int32][]networkpolicy.IngressNetworkPolicyTarget,
+	egressPolicyTargets map[int32][]networkpolicy.EgressNetworkPolicyTarget,
 	replicas int32,
 	podTemplateSpec *corev1ac.PodTemplateSpecApplyConfiguration,
 	volumeClaimTemplates []*corev1ac.PersistentVolumeClaimApplyConfiguration,
@@ -646,18 +1002,21 @@ func reconcileStatefulset(
 		}
 	}
 
+	kind := "StatefulSet"
 	statefulSet, ready, err := reconcileWorkload(
 		ctx,
 		kubernetesClient,
+		ciliumClient,
 		statefulSetInterface,
-		"StatefulSet",
+		appsv1.SchemeGroupVersion.String(),
+		kind,
 		namespace,
 		name,
 		deleteResource,
 		ownerReference,
 		selectorLabels,
-		ingressPortLabels,
-		egressPortLabels,
+		ingressPolicyTargets,
+		egressPolicyTargets,
 		metav1.DeletePropagationOrphan,
 		appsv1ac.StatefulSet,
 		appsv1ac.StatefulSetSpec,
@@ -666,6 +1025,7 @@ func reconcileStatefulset(
 		(*appsv1ac.StatefulSetApplyConfiguration).WithLabels,
 		(*appsv1ac.StatefulSetSpecApplyConfiguration).WithSelector,
 		(*appsv1ac.StatefulSetSpecApplyConfiguration).WithTemplate,
+		(*appsv1.StatefulSet).GetUID,
 		podTemplateSpec.WithSpec(podTemplateSpec.Spec.
 			WithTopologySpreadConstraints(
 				operatorutil.CreatePodTopologySpreadConstraints(metav1ac.LabelSelector().WithMatchLabels(labels)),
@@ -703,11 +1063,18 @@ func reconcileStatefulset(
 		kubernetesClient,
 		namespace,
 		name,
-		deleteResource,
-		ownerReference,
+		metav1ac.OwnerReference().
+			WithAPIVersion(appsv1.SchemeGroupVersion.String()).
+			WithKind(kind).
+			WithName(statefulSet.Name).
+			WithUID(statefulSet.UID).
+			WithController(true).
+			WithBlockOwnerDeletion(true),
 		labels,
-		0,
-		slices.Ternary(replicas > 1, int32(1), int32(0)),
+		PodDisruptionBudgetMode{
+			Value: slices.Ternary(replicas > 1, int32(1), int32(0)),
+			Type:  PodDisruptionBudgetTypeMaxUnavailable,
+		},
 	); err != nil {
 		return nil, false, fmt.Errorf("failed to reconcile pod disruption budget for statefulset %s/%s: %w",
 			namespace, name, err,

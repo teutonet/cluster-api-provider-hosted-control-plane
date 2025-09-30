@@ -158,6 +158,8 @@ linters:
           alias: networkingv1
         - pkg: k8s.io/client-go/applyconfigurations/networking/v1
           alias: networkingv1ac
+        - pkg: k8s.io/client-go/kubernetes/typed/networking/v1
+          alias: networkininterface
         - pkg: k8s.io/utils/net
           alias: utilNet
         - pkg: k8s.io/apiserver/pkg/apis/audit/v1
@@ -194,6 +196,18 @@ linters:
           alias: certmanagermetav1ac
         - pkg: github.com/cert-manager/cert-manager/pkg/client/clientset/versioned
           alias: cmclient
+
+        # Cilium
+        - pkg: github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2
+          alias: ciliumv2
+        - pkg: github.com/cilium/cilium/pkg/k8s/client/clientset/versioned
+          alias: ciliumclient
+        - pkg: github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1
+          alias: ciliummetav1
+        - pkg: github.com/cilium/cilium/pkg/k8s/apis/cilium.io
+          alias: cilium
+        - pkg: github.com/cilium/cilium/pkg/k8s/client/clientset/versioned/typed/cilium.io/v2
+          alias: ciliuminterfacev2
 
         # Third Party Libraries
         - pkg: github.com/samber/lo

@@ -45,12 +45,11 @@ func ResolveETCDImage(imageSpec *v1alpha1.ImageSpec, version string) string {
 }
 
 func ResolveKonnectivityImage(imageSpec *v1alpha1.ImageSpec, component string, minorVersion uint64) string {
-	defaultTag := fmt.Sprintf("v0.%d.0", minorVersion)
 	return resolveImageFromSpec(
 		imageSpec,
 		"registry.k8s.io",
 		fmt.Sprintf("kas-network-proxy/%s", component),
-		defaultTag,
+		fmt.Sprintf("v0.%d.0", minorVersion),
 	)
 }
 
@@ -62,6 +61,6 @@ func ResolveCoreDNSImage(imageSpec *v1alpha1.ImageSpec) string {
 	return resolveImageFromSpec(imageSpec, "registry.k8s.io", "coredns/coredns", "v1.12.0")
 }
 
-func ResolveAuditWebhookImage(imageSpec *v1alpha1.ImageSpec) string {
-	return resolveImageFromSpec(imageSpec, "docker.io", "envoyproxy/envoy", "v1.33.9")
+func ResolveNginxImage(imageSpec *v1alpha1.ImageSpec) string {
+	return resolveImageFromSpec(imageSpec, "docker.io", "nginx", "1.29.1")
 }
