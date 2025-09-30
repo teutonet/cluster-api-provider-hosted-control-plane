@@ -13,8 +13,6 @@ import (
 
 func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 	webhook := &hostedControlPlaneWebhook{}
-	ctx := t.Context()
-	g := NewWithT(t)
 
 	tests := []struct {
 		name      string
@@ -37,7 +35,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Name:      "test-gateway",
 							Namespace: "default",
 						},
-						ETCD: &ETCDComponent{
+						ETCD: ETCDComponent{
 							AutoGrow: true,
 						},
 					},
@@ -60,9 +58,9 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Name:      "test-gateway",
 							Namespace: "default",
 						},
-						ETCD: &ETCDComponent{
+						ETCD: ETCDComponent{
 							AutoGrow:   false,
-							VolumeSize: resource.MustParse("20Gi"),
+							VolumeSize: ptr.To(resource.MustParse("20Gi")),
 						},
 					},
 				},
@@ -83,7 +81,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Name:      "test-gateway",
 							Namespace: "default",
 						},
-						ETCD: &ETCDComponent{
+						ETCD: ETCDComponent{
 							AutoGrow: true,
 						},
 					},
@@ -106,9 +104,9 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Name:      "test-gateway",
 							Namespace: "default",
 						},
-						ETCD: &ETCDComponent{
+						ETCD: ETCDComponent{
 							AutoGrow:   true,
-							VolumeSize: resource.MustParse("20Gi"),
+							VolumeSize: ptr.To(resource.MustParse("20Gi")),
 						},
 					},
 				},
@@ -130,7 +128,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Name:      "test-gateway",
 							Namespace: "default",
 						},
-						ETCD: &ETCDComponent{
+						ETCD: ETCDComponent{
 							AutoGrow: false,
 						},
 					},
@@ -143,7 +141,8 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := webhook.ValidateCreate(ctx, tt.hcp)
+			g := NewWithT(t)
+			_, err := webhook.ValidateCreate(t.Context(), tt.hcp)
 
 			if tt.expectErr {
 				g.Expect(err).To(MatchError(ContainSubstring(tt.errMsg)))
@@ -156,8 +155,6 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 
 func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 	webhook := &hostedControlPlaneWebhook{}
-	ctx := t.Context()
-	g := NewWithT(t)
 
 	createValidHCP := func(version string, autoGrow bool, volumeSize string) *HostedControlPlane {
 		hcp := &HostedControlPlane{
@@ -172,7 +169,7 @@ func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 						Name:      "test-gateway",
 						Namespace: "default",
 					},
-					ETCD: &ETCDComponent{
+					ETCD: ETCDComponent{
 						AutoGrow: autoGrow,
 					},
 				},
@@ -180,7 +177,7 @@ func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 		}
 
 		if volumeSize != "" {
-			hcp.Spec.ETCD.VolumeSize = resource.MustParse(volumeSize)
+			hcp.Spec.ETCD.VolumeSize = ptr.To(resource.MustParse(volumeSize))
 		}
 
 		return hcp
@@ -276,7 +273,8 @@ func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := webhook.ValidateUpdate(ctx, tt.oldHCP, tt.newHCP)
+			g := NewWithT(t)
+			_, err := webhook.ValidateUpdate(t.Context(), tt.oldHCP, tt.newHCP)
 
 			if tt.expectErr {
 				g.Expect(err).To(MatchError(ContainSubstring(tt.errMsg)))
@@ -289,7 +287,6 @@ func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 
 func TestHostedControlPlaneWebhook_ValidateDelete(t *testing.T) {
 	webhook := &hostedControlPlaneWebhook{}
-	ctx := t.Context()
 	g := NewWithT(t)
 
 	hcp := &HostedControlPlane{
@@ -299,13 +296,12 @@ func TestHostedControlPlaneWebhook_ValidateDelete(t *testing.T) {
 		},
 	}
 
-	_, err := webhook.ValidateDelete(ctx, hcp)
+	_, err := webhook.ValidateDelete(t.Context(), hcp)
 	g.Expect(err).NotTo(HaveOccurred())
 }
 
 func TestHostedControlPlaneWebhook_CastObjectToHostedControlPlane(t *testing.T) {
 	webhook := &hostedControlPlaneWebhook{}
-	g := NewWithT(t)
 
 	tests := []struct {
 		name      string
@@ -330,6 +326,7 @@ func TestHostedControlPlaneWebhook_CastObjectToHostedControlPlane(t *testing.T) 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			result, err := webhook.castObjectToHostedControlPlane(tt.obj)
 
 			if tt.expectErr {
@@ -345,7 +342,6 @@ func TestHostedControlPlaneWebhook_CastObjectToHostedControlPlane(t *testing.T) 
 
 func TestHostedControlPlaneWebhook_ParseVersion(t *testing.T) {
 	webhook := &hostedControlPlaneWebhook{}
-	g := NewWithT(t)
 
 	tests := []struct {
 		name      string
@@ -386,6 +382,7 @@ func TestHostedControlPlaneWebhook_ParseVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			hcp := &HostedControlPlane{
 				Spec: HostedControlPlaneSpec{
 					Version: tt.version,

@@ -11,13 +11,12 @@ import (
 )
 
 func TestResourceRequirementsToResourcesApplyConfiguration(t *testing.T) {
-	g := NewWithT(t)
 	tests := append(getBasicResourceTestCases(), getAdvancedResourceTestCases()...)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := ResourceRequirementsToResourcesApplyConfiguration(tt.input)
-			tt.validate(g, result)
+			tt.validate(NewWithT(t), result)
 		})
 	}
 }

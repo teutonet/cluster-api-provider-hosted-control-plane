@@ -3,6 +3,7 @@ package operator
 
 import (
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
+	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -19,16 +20,17 @@ func NewScheme() (*runtime.Scheme, error) {
 	scheme := runtime.NewScheme()
 
 	addToSchemeFuncs := []func(*runtime.Scheme) error{
-		corev1.AddToScheme,
-		networkingv1.AddToScheme,
 		appsv1.AddToScheme,
-		policyv1.AddToScheme,
 		capiv2.AddToScheme,
-		v1beta2.AddToScheme,
-		v1alpha1.AddToScheme,
 		certmanagerv1.AddToScheme,
+		ciliumv2.AddToScheme,
+		corev1.AddToScheme,
 		gwv1.Install,
 		gwv1alpha2.Install,
+		networkingv1.AddToScheme,
+		policyv1.AddToScheme,
+		v1alpha1.AddToScheme,
+		v1beta2.AddToScheme,
 	}
 
 	for _, f := range addToSchemeFuncs {

@@ -106,12 +106,12 @@ tasks:
     cmd: go test ./{{ .path }}/... -coverprofile {{ .artifactsDir }}/cover.out
     generates:
       - "{{ .artifactsDir }}/cover.out"
-  ci:
+  pre-commit:
     cmds:
-      - task: lint
-      - task: test
-      - task: manifests
       - task: compile
+      - task: manifests
+      - task: test
+      - task: lint
       - task: check-diff
   check-diff:
     deps:
@@ -121,7 +121,7 @@ tasks:
     cmd: git diff --exit-code
   clean:
     cmds:
-      - "buildah manifest rm {{ .IMAGE }} 2>/dev/null || true"
+      - buildah manifest rm {{ .IMAGE }} 2>/dev/null || true
       - rm -rf {{ .buildDir }}
       - rm -rf {{ .artifactsDir }}
     status:
@@ -138,6 +138,7 @@ tasks:
     sources:
       - ./**/*.go
       - go.sum
+      - exclude: pkg/**/*_test.go
     vars:
       arch: '{{ .arch | default ARCH }}'
     env:
@@ -157,7 +158,7 @@ tasks:
       arch: '{{ .arch | default ARCH }}'
       oldDigests:
         sh: >-
-          buildah manifest inspect {{ .IMAGE }} 2> /dev/null | {{ .qqCmd }} -r '.manifests | map(select(.platform.architecture == "{{ .arch }}")) | map(.digest)[]' || true
+          (buildah manifest inspect {{ .IMAGE }} 2> /dev/null || echo '{}') | {{ .qqCmd }} -r '.manifests // [] | map(select(.platform.architecture == "{{ .arch }}")) | map(.digest)[]' 2>/dev/null || true
     sources:
       - Containerfile
       - .containerignore

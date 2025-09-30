@@ -8,7 +8,6 @@ import (
 )
 
 func TestBuildImageString(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name       string
 		registry   string
@@ -48,13 +47,13 @@ func TestBuildImageString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			g.Expect(buildImageString(tt.registry, tt.repository, tt.tag)).To(Equal(tt.expected))
 		})
 	}
 }
 
 func TestResolveImageFromSpec(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name              string
 		imageSpec         *v1alpha1.ImageSpec
@@ -147,6 +146,7 @@ func TestResolveImageFromSpec(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			g.Expect(resolveImageFromSpec(tt.imageSpec, tt.defaultRegistry, tt.defaultRepository, tt.defaultTag)).
 				To(Equal(tt.expected))
 		})
@@ -154,7 +154,6 @@ func TestResolveImageFromSpec(t *testing.T) {
 }
 
 func TestResolveKubernetesComponentImage(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name      string
 		imageSpec *v1alpha1.ImageSpec
@@ -202,13 +201,13 @@ func TestResolveKubernetesComponentImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			g.Expect(ResolveKubernetesComponentImage(tt.imageSpec, tt.component, tt.version)).To(Equal(tt.expected))
 		})
 	}
 }
 
 func TestResolveETCDImage(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name      string
 		imageSpec *v1alpha1.ImageSpec
@@ -242,13 +241,13 @@ func TestResolveETCDImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			g.Expect(ResolveETCDImage(tt.imageSpec, tt.version)).To(Equal(tt.expected))
 		})
 	}
 }
 
 func TestResolveKonnectivityImage(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name         string
 		imageSpec    *v1alpha1.ImageSpec
@@ -292,13 +291,13 @@ func TestResolveKonnectivityImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			g.Expect(ResolveKonnectivityImage(tt.imageSpec, tt.component, tt.minorVersion)).To(Equal(tt.expected))
 		})
 	}
 }
 
 func TestResolveKubeProxyImage(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name      string
 		imageSpec *v1alpha1.ImageSpec
@@ -331,13 +330,13 @@ func TestResolveKubeProxyImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			g.Expect(ResolveKubeProxyImage(tt.imageSpec, tt.version)).To(Equal(tt.expected))
 		})
 	}
 }
 
 func TestResolveCoreDNSImage(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name      string
 		imageSpec *v1alpha1.ImageSpec
@@ -375,13 +374,13 @@ func TestResolveCoreDNSImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			g.Expect(ResolveCoreDNSImage(tt.imageSpec)).To(Equal(tt.expected))
 		})
 	}
 }
 
 func TestResolveAuditWebhookImage(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name      string
 		imageSpec *v1alpha1.ImageSpec
@@ -390,21 +389,21 @@ func TestResolveAuditWebhookImage(t *testing.T) {
 		{
 			name:      "default audit webhook image",
 			imageSpec: nil,
-			expected:  "docker.io/envoyproxy/envoy:v1.33.9",
+			expected:  "docker.io/nginx:1.29.1",
 		},
 		{
 			name: "custom registry for audit webhook",
 			imageSpec: &v1alpha1.ImageSpec{
 				Registry: "my-registry.com",
 			},
-			expected: "my-registry.com/envoyproxy/envoy:v1.33.9",
+			expected: "my-registry.com/nginx:1.29.1",
 		},
 		{
 			name: "custom tag for audit webhook",
 			imageSpec: &v1alpha1.ImageSpec{
 				Tag: "v1.34.0",
 			},
-			expected: "docker.io/envoyproxy/envoy:v1.34.0",
+			expected: "docker.io/nginx:v1.34.0",
 		},
 		{
 			name: "fully custom audit webhook",
@@ -419,7 +418,8 @@ func TestResolveAuditWebhookImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g.Expect(ResolveAuditWebhookImage(tt.imageSpec)).To(Equal(tt.expected))
+			g := NewWithT(t)
+			g.Expect(ResolveNginxImage(tt.imageSpec)).To(Equal(tt.expected))
 		})
 	}
 }

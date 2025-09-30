@@ -64,14 +64,14 @@ type HostedControlPlaneInlineSpec struct {
 	//+kubebuilder:validation:Required
 	Gateway GatewayReference `json:"gateway"`
 
-	//+kubebuilder:validation:Optional
-	KonnectivityClient Container `json:"konnectivityClient,omitempty"`
+	//+kubebuilder:default={}
+	KonnectivityClient ScalablePod `json:"konnectivityClient,omitempty"`
 	//+kubebuilder:validation:Optional
 	KubeProxy KubeProxyComponent `json:"kubeProxy,omitempty"`
-	//+kubebuilder:validation:Optional
-	CoreDNS Container `json:"coredns,omitempty"`
 	//+kubebuilder:default={}
-	ETCD *ETCDComponent `json:"etcd,omitempty"`
+	CoreDNS ScalablePod `json:"coredns,omitempty"`
+	//+kubebuilder:default={}
+	ETCD ETCDComponent `json:"etcd,omitempty"`
 }
 
 type GatewayReference struct {
@@ -119,9 +119,8 @@ type Container struct {
 
 type ScalablePod struct {
 	Pod `json:",inline"`
-	//+kubebuilder:validation:Optional
-	//+kubebuilder:default=1
-	Replicas *int32 `json:"replicas,omitempty"`
+	//+kubebuilder:default=2
+	Replicas int32 `json:"replicas,omitempty"`
 }
 
 type KubeProxyComponent struct {
@@ -133,7 +132,7 @@ type KubeProxyComponent struct {
 type ETCDComponent struct {
 	Container `json:",inline"`
 	//+kubebuilder:validation:Optional
-	VolumeSize resource.Quantity `json:"volumeSize,omitempty"`
+	VolumeSize *resource.Quantity `json:"volumeSize,omitempty"`
 	// AutoGrow will increase the volume size automatically when it is near full.
 	//+kubebuilder:default=true
 	AutoGrow bool `json:"autoGrow,omitempty"`
@@ -192,7 +191,6 @@ type AuditWebhook struct {
 	Container `json:",inline"`
 	//+kubebuilder:validation:Required
 	//+kubebuilder:validation:MinItems=1
-	//+kubebuilder:validation:UniqueItems=true
 	Targets []AuditWebhookTarget `json:"targets"`
 }
 

@@ -107,7 +107,10 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				Name         string
 			}
 
-			workloadClusterClient, err := wr.managementCluster.GetWorkloadClusterClient(ctx, cluster)
+			workloadClusterClient, workloadClusterCiliumClient, err := wr.managementCluster.GetWorkloadClusterClient(
+				ctx,
+				cluster,
+			)
 			if err != nil {
 				return "", fmt.Errorf("failed to get workload cluster client: %w", err)
 			}
@@ -139,17 +142,20 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 
 			kubeProxyReconciler := kubeproxy.NewKubeProxyReconciler(
 				workloadClusterClient,
+				workloadClusterCiliumClient,
 				wr.podCIDR,
 			)
 
 			coreDNSReconciler := coredns.NewCoreDNSReconciler(
 				workloadClusterClient,
+				workloadClusterCiliumClient,
 				wr.serviceDomain,
 				wr.dnsIP,
 			)
 
 			konnectivityReconciler := konnectivity.NewKonnectivityReconciler(
 				workloadClusterClient,
+				workloadClusterCiliumClient,
 				wr.konnectivityNamespace,
 				wr.konnectivityServiceAccount,
 				wr.konnectivityServerAudience,
@@ -243,9 +249,10 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 					return notReadyReason, nil
 				default:
 					conditions.Set(hostedControlPlane, metav1.Condition{
-						Type:   string(phase.Condition),
-						Status: metav1.ConditionTrue,
-						Reason: "ReconcileSucceeded",
+						Type:    string(phase.Condition),
+						Status:  metav1.ConditionTrue,
+						Reason:  "ReconcileSucceeded",
+						Message: fmt.Sprintf("Workload phase %s reconciled successfully", phase.Name),
 					})
 				}
 			}

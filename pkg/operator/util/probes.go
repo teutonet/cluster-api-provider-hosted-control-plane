@@ -17,7 +17,7 @@ func CreateStartupProbe(
 	healthCheckTimeout := konstants.ControlPlaneComponentHealthCheckTimeout.Seconds()
 	periodSeconds := int32(10)
 	failureThreshold := int32(math.Ceil(healthCheckTimeout / float64(periodSeconds)))
-	return CreateProbe(path, probePort, scheme).
+	return createProbe(path, probePort, scheme).
 		WithInitialDelaySeconds(0).
 		WithTimeoutSeconds(15).
 		WithFailureThreshold(failureThreshold).
@@ -29,7 +29,7 @@ func CreateReadinessProbe(
 	path string,
 	scheme corev1.URIScheme,
 ) *corev1ac.ProbeApplyConfiguration {
-	return CreateProbe(path, probePort, scheme).
+	return createProbe(path, probePort, scheme).
 		WithInitialDelaySeconds(0).
 		WithTimeoutSeconds(15).
 		WithFailureThreshold(3).
@@ -41,14 +41,14 @@ func CreateLivenessProbe(
 	path string,
 	scheme corev1.URIScheme,
 ) *corev1ac.ProbeApplyConfiguration {
-	return CreateProbe(path, probePort, scheme).
+	return createProbe(path, probePort, scheme).
 		WithInitialDelaySeconds(0).
 		WithTimeoutSeconds(15).
-		WithFailureThreshold(8).
+		WithFailureThreshold(3).
 		WithPeriodSeconds(10)
 }
 
-func CreateProbe(
+func createProbe(
 	path string,
 	probePort *corev1ac.ContainerPortApplyConfiguration,
 	scheme corev1.URIScheme,

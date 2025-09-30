@@ -168,9 +168,10 @@ func (kr *kubeconfigReconciler) reconcileKubeconfig(
 				ctx,
 				hostedControlPlane,
 				cluster,
-				cluster.Namespace,
 				"kubeconfig",
+				cluster.Namespace,
 				kubeconfigConfig.SecretName,
+				false,
 				map[string][]byte{
 					capisecretutil.KubeconfigDataName: kubeconfigBytes,
 				},

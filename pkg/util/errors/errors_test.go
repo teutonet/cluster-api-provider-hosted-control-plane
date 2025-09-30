@@ -8,7 +8,6 @@ import (
 )
 
 func TestErrorfIfErr(t *testing.T) {
-	g := NewWithT(t)
 	type args struct {
 		format string
 		args   []any
@@ -61,6 +60,7 @@ func TestErrorfIfErr(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			err := IfErrErrorf(tt.args.format, tt.args.args...)
 
 			if tt.expectedErr == nil {

@@ -47,13 +47,14 @@ var (
 
 func createTestReconciler(client client.Client) HostedControlPlaneReconciler {
 	return NewHostedControlPlaneReconciler(
+		nil,
 		client,
 		fake.NewClientset(),
 		nil,
 		nil,
 		nilEtcdClientFactory,
 		nilS3ClientFactory,
-		record.NewFakeRecorder(10),
+		record.NewFakeRecorder(100),
 		"test-namespace",
 		nil,
 	)
@@ -154,7 +155,6 @@ func withDeletion(hcp *v1alpha1.HostedControlPlane, finalizers []string) *v1alph
 }
 
 func TestHostedControlPlaneReconciler_ReconcileWorkflow(t *testing.T) {
-	g := NewWithT(t)
 	cluster := createTestCluster("test-cluster", "default")
 	tests := []struct {
 		name                 string
@@ -195,6 +195,8 @@ func TestHostedControlPlaneReconciler_ReconcileWorkflow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx := t.Context()
+			g := NewWithT(t)
 			scheme := runtime.NewScheme()
 			g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 			g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
@@ -219,8 +221,6 @@ func TestHostedControlPlaneReconciler_ReconcileWorkflow(t *testing.T) {
 					Namespace: tt.hostedControlPlane.Namespace,
 				},
 			}
-
-			ctx := t.Context()
 			result, err := reconciler.Reconcile(ctx, req)
 
 			g.Expect(err).NotTo(HaveOccurred())
@@ -245,12 +245,14 @@ func TestHostedControlPlaneReconciler_ReconcileWorkflow(t *testing.T) {
 }
 
 func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
-	g := NewWithT(t)
 	scheme := runtime.NewScheme()
+	g := NewWithT(t)
 	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
 	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 
 	t.Run("finalizer behavior during reconcile lifecycle", func(t *testing.T) {
+		ctx := t.Context()
+		g := NewWithT(t)
 		cluster := createTestCluster("test-cluster", "default")
 		hostedControlPlane := withReplicas(
 			withOwnerReference(createTestHostedControlPlane("test-hcp", "default"), cluster),
@@ -274,8 +276,6 @@ func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
 			},
 		}
 
-		ctx := t.Context()
-
 		result, err := reconciler.Reconcile(ctx, req)
 		if err != nil {
 			g.Expect(err).To(MatchError(Not(BeEmpty())))
@@ -294,6 +294,8 @@ func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
 	})
 
 	t.Run("finalizer should be removed during deletion", func(t *testing.T) {
+		ctx := t.Context()
+		g := NewWithT(t)
 		cluster := createTestClusterWithPausedCondition("test-cluster", "default", false)
 		hostedControlPlane := withDeletion(
 			withOwnerReference(createTestHostedControlPlane("test-hcp", "default"), cluster),
@@ -315,8 +317,6 @@ func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
 				Namespace: hostedControlPlane.Namespace,
 			},
 		}
-
-		ctx := t.Context()
 
 		g.Expect(hostedControlPlane.Finalizers).To(ContainElement("hcp.controlplane.cluster.x-k8s.io"))
 
@@ -341,12 +341,14 @@ func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
 }
 
 func TestHostedControlPlaneReconciler_OwnerReferenceValidation(t *testing.T) {
-	g := NewWithT(t)
 	scheme := runtime.NewScheme()
+	g := NewWithT(t)
 	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
 	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 
 	t.Run("should requeue when owner cluster is not found", func(t *testing.T) {
+		ctx := t.Context()
+		g := NewWithT(t)
 		hostedControlPlane := createTestHostedControlPlane("test-hcp", "default")
 
 		fakeClient := fakeClient.NewClientBuilder().
@@ -364,8 +366,6 @@ func TestHostedControlPlaneReconciler_OwnerReferenceValidation(t *testing.T) {
 				Namespace: hostedControlPlane.Namespace,
 			},
 		}
-
-		ctx := t.Context()
 		result, err := reconciler.Reconcile(ctx, req)
 
 		// Should not error but should requeue
@@ -374,6 +374,8 @@ func TestHostedControlPlaneReconciler_OwnerReferenceValidation(t *testing.T) {
 	})
 
 	t.Run("should proceed when valid owner cluster is found", func(t *testing.T) {
+		ctx := t.Context()
+		g := NewWithT(t)
 		cluster := createTestCluster("test-cluster", "default")
 		hostedControlPlane := withReplicas(
 			withOwnerReference(createTestHostedControlPlane("test-hcp", "default"), cluster),
@@ -396,8 +398,6 @@ func TestHostedControlPlaneReconciler_OwnerReferenceValidation(t *testing.T) {
 				Namespace: hostedControlPlane.Namespace,
 			},
 		}
-
-		ctx := t.Context()
 		result, err := reconciler.Reconcile(ctx, req)
 
 		// Should proceed with reconciliation (may error due to missing infrastructure but shouldn't fail on owner ref)
@@ -411,12 +411,14 @@ func TestHostedControlPlaneReconciler_OwnerReferenceValidation(t *testing.T) {
 }
 
 func TestHostedControlPlaneReconciler_StatusConditions(t *testing.T) {
-	g := NewWithT(t)
 	scheme := runtime.NewScheme()
+	g := NewWithT(t)
 	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
 	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 
 	t.Run("should set paused condition when cluster is paused", func(t *testing.T) {
+		ctx := t.Context()
+		g := NewWithT(t)
 		cluster := withPaused(createTestCluster("test-cluster", "default"), true)
 		hostedControlPlane := withOwnerReference(createTestHostedControlPlane("test-hcp", "default"), cluster)
 
@@ -435,8 +437,6 @@ func TestHostedControlPlaneReconciler_StatusConditions(t *testing.T) {
 				Namespace: hostedControlPlane.Namespace,
 			},
 		}
-
-		ctx := t.Context()
 		result, err := reconciler.Reconcile(ctx, req)
 
 		g.Expect(err).NotTo(HaveOccurred())
@@ -463,8 +463,8 @@ func TestHostedControlPlaneReconciler_StatusConditions(t *testing.T) {
 }
 
 func TestHostedControlPlaneReconciler_NonExistentResource(t *testing.T) {
-	g := NewWithT(t)
 	scheme := runtime.NewScheme()
+	g := NewWithT(t)
 	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
 
 	fakeClient := fakeClient.NewClientBuilder().
@@ -479,9 +479,7 @@ func TestHostedControlPlaneReconciler_NonExistentResource(t *testing.T) {
 			Namespace: "default",
 		},
 	}
-
-	ctx := t.Context()
-	result, err := reconciler.Reconcile(ctx, req)
+	result, err := reconciler.Reconcile(t.Context(), req)
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(result).To(Equal(ctrl.Result{}))

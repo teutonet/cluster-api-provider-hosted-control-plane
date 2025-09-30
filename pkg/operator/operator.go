@@ -175,6 +175,7 @@ func setupControllers(
 	}
 
 	if err := hostedcontrolplane.NewHostedControlPlaneReconciler(
+		mgr.GetConfig(),
 		client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
 		kubernetesClient,
 		certManagerClient,

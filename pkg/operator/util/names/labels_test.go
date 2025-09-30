@@ -8,7 +8,6 @@ import (
 )
 
 func TestGetControlPlaneLabels(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -81,6 +80,7 @@ func TestGetControlPlaneLabels(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetControlPlaneLabels(cluster, tt.component)
@@ -108,7 +108,6 @@ func TestGetControlPlaneLabels(t *testing.T) {
 }
 
 func TestGetControlPlaneSelector(t *testing.T) {
-	g := NewWithT(t)
 	tests := []struct {
 		name        string
 		clusterName string
@@ -145,6 +144,7 @@ func TestGetControlPlaneSelector(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetControlPlaneSelector(cluster, tt.component)
@@ -162,7 +162,6 @@ func TestGetControlPlaneSelector(t *testing.T) {
 }
 
 func TestGetControlPlaneLabelsSelectorConsistency(t *testing.T) {
-	g := NewWithT(t)
 	// Test that GetControlPlaneLabels and GetControlPlaneSelector produce consistent results
 	testCases := []struct {
 		clusterName string
@@ -176,6 +175,7 @@ func TestGetControlPlaneLabelsSelectorConsistency(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run("consistency_"+tc.clusterName+"_"+tc.component, func(t *testing.T) {
+			g := NewWithT(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tc.clusterName
 
