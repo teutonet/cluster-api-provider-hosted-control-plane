@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.0.0...v1.1.0) (2025-09-30)
+
+
+### Features
+
+* add CiliumNetworkPolicies ([6a9e1b0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/6a9e1b006fe5cab74da5fef00ebcb90d72534ad2))
+* switch konnectivity agent from DaemonSet to Deployment ([6a9e1b0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/6a9e1b006fe5cab74da5fef00ebcb90d72534ad2))
+
 ## 1.0.0 (2025-09-24)
 
 
