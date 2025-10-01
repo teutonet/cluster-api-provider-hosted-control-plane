@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.1.0...v1.1.1) (2025-10-01)
+
+
+### Bug Fixes
+
+* use conditional error, otherwise the operator is stuck after etcd ([4b095bf](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/4b095bf5bacfdb87eace89340c2a9113f902a216))
+
 ## [1.1.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.0.0...v1.1.0) (2025-09-30)
 
 
