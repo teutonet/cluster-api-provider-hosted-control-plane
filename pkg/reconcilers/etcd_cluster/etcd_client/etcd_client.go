@@ -13,6 +13,7 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
+	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.opentelemetry.io/otel/attribute"
@@ -262,7 +263,7 @@ func callETCDFuncOnMember[R any](
 				return err
 			})
 
-			return result, fmt.Errorf("failed to call etcd function on endpoint %s: %w", endpoint, err)
+			return result, errorsUtil.IfErrErrorf("failed to call etcd function on endpoint %s: %w", endpoint, err)
 		},
 	)
 }
