@@ -8,6 +8,7 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -119,8 +120,12 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 				},
 			)...)
 
+			managementClusterClient := &alias.ManagementClusterClient{
+				Interface: kubeClient,
+			}
+
 			reconciler := NewKubeconfigReconciler(
-				kubeClient,
+				managementClusterClient,
 				443,
 				"konnectivity-client",
 				"controller",
@@ -142,14 +147,13 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 				g.Expect(kubeconfig.AuthInfos["admin"].ClientCertificateData).ToNot(BeEmpty())
 				g.Expect(kubeconfig.AuthInfos["admin"].ClientKeyData).ToNot(BeEmpty())
 			} else {
-				_, err := getConcreteReconciler(reconciler).generateKubeconfig(
+				g.Expect(getConcreteReconciler(reconciler).generateKubeconfig(
 					ctx,
 					tt.cluster,
 					tt.cluster.Spec.ControlPlaneEndpoint,
 					"admin",
 					"test-cluster-admin",
-				)
-				g.Expect(err).To(HaveOccurred())
+				)).Error().To(HaveOccurred())
 			}
 		})
 	}
@@ -240,10 +244,13 @@ func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
 					return s
 				},
 			)...)
+			managementClusterClient := &alias.ManagementClusterClient{
+				Interface: kubeClient,
+			}
 
 			reconciler := &kubeconfigReconciler{
 				ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
-					KubernetesClient: kubeClient,
+					ManagementClusterClient: managementClusterClient,
 				},
 			}
 			kubeconfig, err := getConcreteReconciler(
@@ -285,10 +292,13 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 	caSecret := createCertificateSecret("test-cluster-ca", "default", true)
 
 	kubeClient := fake.NewClientset(oldCertSecret, caSecret)
+	managementClusterClient := &alias.ManagementClusterClient{
+		Interface: kubeClient,
+	}
 
 	reconciler := &kubeconfigReconciler{
 		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
-			KubernetesClient: kubeClient,
+			ManagementClusterClient: managementClusterClient,
 		},
 	}
 	endpoint := capiv2.APIEndpoint{Host: "api.example.com", Port: 443}
@@ -299,7 +309,7 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 	updatedCertSecret.Data[corev1.TLSCertKey] = []byte("new-cert-data")
 	updatedCertSecret.Data[corev1.TLSPrivateKeyKey] = []byte("new-key-data")
 
-	_, err = kubeClient.CoreV1().Secrets(cluster.Namespace).Update(
+	_, err = managementClusterClient.CoreV1().Secrets(cluster.Namespace).Update(
 		ctx, updatedCertSecret, metav1.UpdateOptions{})
 	g.Expect(err).NotTo(HaveOccurred())
 
@@ -348,10 +358,13 @@ func TestKubeconfigReconciler_MultiUserScenarios(t *testing.T) {
 			return s
 		},
 	)...)
+	managementClusterClient := &alias.ManagementClusterClient{
+		Interface: kubeClient,
+	}
 
 	reconciler := &kubeconfigReconciler{
 		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
-			KubernetesClient: kubeClient,
+			ManagementClusterClient: managementClusterClient,
 		},
 	}
 	endpoint := capiv2.APIEndpoint{Host: "api.example.com", Port: 443}

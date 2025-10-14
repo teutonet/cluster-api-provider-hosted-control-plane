@@ -6,15 +6,16 @@ import (
 	"testing"
 	"time"
 
+	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
@@ -26,37 +27,47 @@ import (
 )
 
 var (
-	nilS3ClientFactory = func(
+	s3ClientStubFactory = func(
 		_ context.Context,
-		_ kubernetes.Interface,
+		_ *alias.ManagementClusterClient,
 		_ *v1alpha1.HostedControlPlane,
 		_ *capiv2.Cluster,
 	) (s3_client.S3Client, error) {
 		return test.NewS3ClientStub(), nil
 	}
-	nilEtcdClientFactory = func(
+	etcdClientStubFactory = func(
 		_ context.Context,
-		_ kubernetes.Interface,
+		_ *alias.ManagementClusterClient,
 		_ *v1alpha1.HostedControlPlane,
 		_ *capiv2.Cluster,
 		_ int32,
 	) (etcd_client.EtcdClient, error) {
 		return test.NewEtcdClientStub(), nil
 	}
+	workloadClusterClientStubFactory = func(
+		_ context.Context,
+		_ *alias.ManagementClusterClient,
+		_ *capiv2.Cluster,
+		_ string,
+	) (*alias.WorkloadClusterClient, ciliumclient.Interface, error) {
+		return nil, nil, nil
+	}
 )
 
 func createTestReconciler(client client.Client) HostedControlPlaneReconciler {
 	return NewHostedControlPlaneReconciler(
-		nil,
 		client,
-		fake.NewClientset(),
+		&alias.ManagementClusterClient{Interface: fake.NewClientset()},
 		nil,
 		nil,
-		nilEtcdClientFactory,
-		nilS3ClientFactory,
+		func(ctx context.Context) (ciliumclient.Interface, error) {
+			return nil, nil
+		},
+		workloadClusterClientStubFactory,
+		etcdClientStubFactory,
+		s3ClientStubFactory,
 		record.NewFakeRecorder(100),
 		"test-namespace",
-		nil,
 	)
 }
 

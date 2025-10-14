@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"k8s.io/utils/ptr"
 )
 
 func buildImageString(registry, repository, tag string) string {
@@ -18,22 +19,11 @@ func resolveImageFromSpec(imageSpec *v1alpha1.ImageSpec, defaultRegistry, defaul
 		return buildImageString(defaultRegistry, defaultRepository, defaultTag)
 	}
 
-	registry := defaultRegistry
-	if imageSpec.Registry != "" {
-		registry = imageSpec.Registry
-	}
-
-	repository := defaultRepository
-	if imageSpec.Repository != "" {
-		repository = imageSpec.Repository
-	}
-
-	tag := defaultTag
-	if imageSpec.Tag != "" {
-		tag = imageSpec.Tag
-	}
-
-	return buildImageString(registry, repository, tag)
+	return buildImageString(
+		ptr.Deref(imageSpec.Registry, defaultRegistry),
+		ptr.Deref(imageSpec.Repository, defaultRepository),
+		ptr.Deref(imageSpec.Tag, defaultTag),
+	)
 }
 
 func ResolveKubernetesComponentImage(imageSpec *v1alpha1.ImageSpec, component, version string) string {

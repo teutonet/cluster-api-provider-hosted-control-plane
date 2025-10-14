@@ -5,11 +5,11 @@ import (
 	"fmt"
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
@@ -31,15 +31,15 @@ type KubeconfigReconciler interface {
 }
 
 func NewKubeconfigReconciler(
-	kubernetesClient kubernetes.Interface,
+	managementClusterClient *alias.ManagementClusterClient,
 	apiServerServicePort int32,
 	konnectivityClientKubeconfigName string,
 	controllerKubeconfigName string,
 ) KubeconfigReconciler {
 	return &kubeconfigReconciler{
 		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
-			KubernetesClient: kubernetesClient,
-			Tracer:           tracing.GetTracer("kubeconfig"),
+			ManagementClusterClient: managementClusterClient,
+			Tracer:                  tracing.GetTracer("kubeconfig"),
 		},
 		apiServerServicePort:             apiServerServicePort,
 		konnectivityClientKubeconfigName: konnectivityClientKubeconfigName,
@@ -116,7 +116,7 @@ func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 				},
 				{
 					Name:                  kr.controllerKubeconfigName,
-					CertificateSecretName: names.GetControllerKubeconfigCertificateSecretName(cluster),
+					CertificateSecretName: names.GetControlPlaneControllerKubeconfigCertificateSecretName(cluster),
 					ClusterName:           controlPlaneName,
 					ApiServerEndpoint:     clusterInternalServiceEndpoint,
 				},
@@ -199,13 +199,13 @@ func (kr *kubeconfigReconciler) generateKubeconfig(
 			clusterName := cluster.Name
 			contextName := fmt.Sprintf("%s@%s", userName, clusterName)
 
-			certSecret, err := kr.KubernetesClient.CoreV1().Secrets(cluster.Namespace).
+			certSecret, err := kr.ManagementClusterClient.CoreV1().Secrets(cluster.Namespace).
 				Get(ctx, kubeconfiCertificateSecretName, metav1.GetOptions{})
 			if err != nil {
 				return nil, fmt.Errorf("failed to get certificate secret: %w", err)
 			}
 
-			caSecret, err := kr.KubernetesClient.CoreV1().Secrets(cluster.Namespace).
+			caSecret, err := kr.ManagementClusterClient.CoreV1().Secrets(cluster.Namespace).
 				Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
 			if err != nil {
 				return nil, fmt.Errorf("failed to get CA secret: %w", err)

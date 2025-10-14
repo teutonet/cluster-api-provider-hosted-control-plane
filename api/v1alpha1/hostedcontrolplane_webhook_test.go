@@ -36,7 +36,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Namespace: "default",
 						},
 						ETCD: ETCDComponent{
-							AutoGrow: true,
+							AutoGrow: ptr.To(true),
 						},
 					},
 				},
@@ -59,7 +59,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Namespace: "default",
 						},
 						ETCD: ETCDComponent{
-							AutoGrow:   false,
+							AutoGrow:   ptr.To(false),
 							VolumeSize: ptr.To(resource.MustParse("20Gi")),
 						},
 					},
@@ -82,7 +82,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Namespace: "default",
 						},
 						ETCD: ETCDComponent{
-							AutoGrow: true,
+							AutoGrow: ptr.To(true),
 						},
 					},
 				},
@@ -105,7 +105,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Namespace: "default",
 						},
 						ETCD: ETCDComponent{
-							AutoGrow:   true,
+							AutoGrow:   ptr.To(true),
 							VolumeSize: ptr.To(resource.MustParse("20Gi")),
 						},
 					},
@@ -129,7 +129,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Namespace: "default",
 						},
 						ETCD: ETCDComponent{
-							AutoGrow: false,
+							AutoGrow: ptr.To(false),
 						},
 					},
 				},
@@ -170,7 +170,7 @@ func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 						Namespace: "default",
 					},
 					ETCD: ETCDComponent{
-						AutoGrow: autoGrow,
+						AutoGrow: ptr.To(autoGrow),
 					},
 				},
 			},
@@ -296,8 +296,7 @@ func TestHostedControlPlaneWebhook_ValidateDelete(t *testing.T) {
 		},
 	}
 
-	_, err := webhook.ValidateDelete(t.Context(), hcp)
-	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(webhook.ValidateDelete(t.Context(), hcp)).Error().NotTo(HaveOccurred())
 }
 
 func TestHostedControlPlaneWebhook_CastObjectToHostedControlPlane(t *testing.T) {

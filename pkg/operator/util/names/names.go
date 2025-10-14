@@ -108,12 +108,12 @@ func GetKonnectivityClientKubeconfigCertificateSecretName(cluster *capiv2.Cluste
 	return cluster.Name + "-konnectivity-client"
 }
 
-func GetControllerKubeconfigCertificateName(cluster *capiv2.Cluster) string {
-	return cluster.Name + "-controller"
+func GetControlPlaneControllerKubeconfigCertificateName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-control-plane-controller"
 }
 
-func GetControllerKubeconfigCertificateSecretName(cluster *capiv2.Cluster) string {
-	return cluster.Name + "-controller"
+func GetControlPlaneControllerKubeconfigCertificateSecretName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-control-plane-controller"
 }
 
 func GetKubeconfigSecretName(cluster *capiv2.Cluster, kubeconfigName string) string {

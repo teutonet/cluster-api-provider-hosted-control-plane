@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -35,7 +35,7 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: true,
+							AutoGrow: ptr.To(true),
 						},
 					},
 				},
@@ -54,7 +54,7 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: true,
+							AutoGrow: ptr.To(true),
 						},
 					},
 				},
@@ -73,7 +73,7 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow:   false,
+							AutoGrow:   ptr.To(false),
 							VolumeSize: ptr.To(resource.MustParse("25Gi")),
 						},
 					},
@@ -103,7 +103,8 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 
 			g.Expect(result.Cmp(tt.expectedSize)).To(Equal(0))
 
-			if tt.hostedControlPlane.Spec.ETCD.AutoGrow && result.Cmp(tt.hostedControlPlane.Status.ETCDVolumeSize) > 0 {
+			if tt.hostedControlPlane.Spec.ETCD.AutoGrow != nil && *tt.hostedControlPlane.Spec.ETCD.AutoGrow &&
+				result.Cmp(tt.hostedControlPlane.Status.ETCDVolumeSize) > 0 {
 				g.Expect(recorder.Events).To(Receive(
 					ContainSubstring(etcdVolumeSizeReCalculatedEvent),
 				))
@@ -133,7 +134,7 @@ func TestEtcdClusterReconciler_ErrorHandling_InvalidVolumeData(t *testing.T) {
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: true,
+							AutoGrow: ptr.To(true),
 						},
 					},
 				},
@@ -151,7 +152,7 @@ func TestEtcdClusterReconciler_ErrorHandling_InvalidVolumeData(t *testing.T) {
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: true,
+							AutoGrow: ptr.To(true),
 						},
 					},
 				},
@@ -239,7 +240,7 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: true,
+							AutoGrow: ptr.To(true),
 						},
 					},
 				},
@@ -272,7 +273,7 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 
 	t.Run("should handle etcd status error gracefully", func(t *testing.T) {
 		g := NewWithT(t)
-		stub := test.NewEtcdClientStub()
+		stub := NewEtcdClientStub()
 		stub.StatusError = errors.New("connection refused")
 
 		hcp := &v1alpha1.HostedControlPlane{
@@ -297,7 +298,7 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 
 	t.Run("should update volume usage from etcd status", func(t *testing.T) {
 		g := NewWithT(t)
-		stub := test.NewEtcdClientStub()
+		stub := NewEtcdClientStub()
 		highestMemberDBSize := int64(5368709120)
 		stub.StatusResponses = map[string]*clientv3.StatusResponse{
 			"etcd-0": {
@@ -330,9 +331,8 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 		err := reconciler.reconcileETCDSpaceUsage(ctx, stub, hcp)
 
 		g.Expect(err).NotTo(HaveOccurred())
-		expectedUsage := resource.NewQuantity(highestMemberDBSize, resource.BinarySI)
-		expectedUsage.SetScaled(expectedUsage.ScaledValue(resource.Giga), resource.Giga)
-		g.Expect(hcp.Status.ETCDVolumeUsage.String()).To(Equal(expectedUsage.String()))
+		expectedQuantity := resource.NewQuantity(highestMemberDBSize, resource.BinarySI)
+		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*expectedQuantity))
 	})
 }
 
@@ -341,7 +341,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 
 	t.Run("should handle etcd alarm errors", func(t *testing.T) {
 		g := NewWithT(t)
-		stub := test.NewEtcdClientStub()
+		stub := NewEtcdClientStub()
 		stub.AlarmError = errors.New("failed to list alarms")
 
 		hcp := &v1alpha1.HostedControlPlane{}
@@ -359,7 +359,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 
 	t.Run("should disarm NOSPACE alarms when autogrow is enabled", func(t *testing.T) {
 		g := NewWithT(t)
-		stub := test.NewEtcdClientStub()
+		stub := NewEtcdClientStub()
 		stub.ActiveAlarms = []*etcdserverpb.AlarmMember{
 			{
 				MemberID: 12345,
@@ -371,7 +371,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 			Spec: v1alpha1.HostedControlPlaneSpec{
 				HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 					ETCD: v1alpha1.ETCDComponent{
-						AutoGrow: true,
+						AutoGrow: ptr.To(true),
 					},
 				},
 			},
@@ -393,7 +393,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 
 	t.Run("should return error for active NOSPACE alarms when autogrow is disabled", func(t *testing.T) {
 		g := NewWithT(t)
-		stub := test.NewEtcdClientStub()
+		stub := NewEtcdClientStub()
 		stub.ActiveAlarms = []*etcdserverpb.AlarmMember{
 			{
 				MemberID: 12345,
@@ -405,7 +405,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 			Spec: v1alpha1.HostedControlPlaneSpec{
 				HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 					ETCD: v1alpha1.ETCDComponent{
-						AutoGrow: false,
+						AutoGrow: ptr.To(false),
 					},
 				},
 			},
@@ -427,7 +427,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 
 	t.Run("should return error for active non-NOSPACE alarms", func(t *testing.T) {
 		g := NewWithT(t)
-		stub := test.NewEtcdClientStub()
+		stub := NewEtcdClientStub()
 		stub.ActiveAlarms = []*etcdserverpb.AlarmMember{
 			{
 				MemberID: 12345,
@@ -439,7 +439,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 			Spec: v1alpha1.HostedControlPlaneSpec{
 				HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 					ETCD: v1alpha1.ETCDComponent{
-						AutoGrow: true,
+						AutoGrow: ptr.To(true),
 					},
 				},
 			},
@@ -458,7 +458,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 
 	t.Run("should pass when no alarms present", func(t *testing.T) {
 		g := NewWithT(t)
-		stub := test.NewEtcdClientStub()
+		stub := NewEtcdClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{}
 
@@ -481,8 +481,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	cronAt2AM := "0 2 * * *"
 	t.Run("should create snapshot and upload to S3 when scheduled", func(t *testing.T) {
 		g := NewWithT(t)
-		etcdClientStub := test.NewEtcdClientStub()
-		s3ClientStub := test.NewS3ClientStub()
+		etcdClientStub := NewEtcdClientStub()
+		s3ClientStub := NewS3ClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -504,7 +504,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			recorder:          recorder,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
-				context.Context, kubernetes.Interface,
+				context.Context, *alias.ManagementClusterClient,
 				*v1alpha1.HostedControlPlane, *capiv2.Cluster,
 			) (s3_client.S3Client, error) {
 				return s3ClientStub, nil
@@ -514,7 +514,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		err := reconciler.reconcileETCDBackup(ctx, etcdClientStub, hcp, nil)
 
 		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(s3ClientStub.LastUploadedBody).To(Equal(test.EtcdSnapshotData))
+		g.Expect(s3ClientStub.LastUploadedBody).To(Equal(EtcdSnapshotData))
 		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
 		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
 
@@ -528,8 +528,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 	t.Run("should not create backup when not scheduled", func(t *testing.T) {
 		g := NewWithT(t)
-		etcdClientStub := test.NewEtcdClientStub()
-		s3ClientStub := test.NewS3ClientStub()
+		etcdClientStub := NewEtcdClientStub()
+		s3ClientStub := NewS3ClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -551,7 +551,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			recorder:          recorder,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
-				context.Context, kubernetes.Interface,
+				context.Context, *alias.ManagementClusterClient,
 				*v1alpha1.HostedControlPlane, *capiv2.Cluster,
 			) (s3_client.S3Client, error) {
 				return s3ClientStub, nil
@@ -566,9 +566,9 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 	t.Run("should handle etcd snapshot creation failure", func(t *testing.T) {
 		g := NewWithT(t)
-		etcdClientStub := test.NewEtcdClientStub()
+		etcdClientStub := NewEtcdClientStub()
 		etcdClientStub.SnapshotError = errors.New("failed to create snapshot")
-		s3ClientStub := test.NewS3ClientStub()
+		s3ClientStub := NewS3ClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -590,7 +590,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			recorder:          recorder,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
-				context.Context, kubernetes.Interface,
+				context.Context, *alias.ManagementClusterClient,
 				*v1alpha1.HostedControlPlane, *capiv2.Cluster,
 			) (s3_client.S3Client, error) {
 				return s3ClientStub, nil
@@ -605,8 +605,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 	t.Run("should handle S3 upload failure", func(t *testing.T) {
 		g := NewWithT(t)
-		etcdClientStub := test.NewEtcdClientStub()
-		s3ClientStub := test.NewS3ClientStub()
+		etcdClientStub := NewEtcdClientStub()
+		s3ClientStub := NewS3ClientStub()
 		s3ClientStub.UploadError = errors.New("failed to upload to S3")
 
 		hcp := &v1alpha1.HostedControlPlane{
@@ -629,7 +629,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			recorder:          recorder,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
-				context.Context, kubernetes.Interface,
+				context.Context, *alias.ManagementClusterClient,
 				*v1alpha1.HostedControlPlane, *capiv2.Cluster,
 			) (s3_client.S3Client, error) {
 				return s3ClientStub, nil
@@ -644,8 +644,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 	t.Run("should handle invalid cron schedule", func(t *testing.T) {
 		g := NewWithT(t)
-		etcdClientStub := test.NewEtcdClientStub()
-		s3ClientStub := test.NewS3ClientStub()
+		etcdClientStub := NewEtcdClientStub()
+		s3ClientStub := NewS3ClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -667,7 +667,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			recorder:          recorder,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
-				context.Context, kubernetes.Interface,
+				context.Context, *alias.ManagementClusterClient,
 				*v1alpha1.HostedControlPlane, *capiv2.Cluster,
 			) (s3_client.S3Client, error) {
 				return s3ClientStub, nil
@@ -682,8 +682,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 	t.Run("should create first backup when ETCDLastBackupTime is zero", func(t *testing.T) {
 		g := NewWithT(t)
-		etcdClientStub := test.NewEtcdClientStub()
-		s3ClientStub := test.NewS3ClientStub()
+		etcdClientStub := NewEtcdClientStub()
+		s3ClientStub := NewS3ClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -695,9 +695,9 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 							Region:   "us-east-1",
 							Secret: v1alpha1.ETCDBackupSecret{
 								Name:               "etcd-backup-secret",
-								Namespace:          "default",
-								AccessKeyIDKey:     "access-key-id",
-								SecretAccessKeyKey: "secret-access-key",
+								Namespace:          ptr.To("default"),
+								AccessKeyIDKey:     ptr.To("access-key-id"),
+								SecretAccessKeyKey: ptr.To("secret-access-key"),
 							},
 						},
 					},
@@ -713,7 +713,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			recorder:          recorder,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
-				context.Context, kubernetes.Interface,
+				context.Context, *alias.ManagementClusterClient,
 				*v1alpha1.HostedControlPlane, *capiv2.Cluster,
 			) (s3_client.S3Client, error) {
 				return s3ClientStub, nil
@@ -723,7 +723,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		err := reconciler.reconcileETCDBackup(ctx, etcdClientStub, hcp, nil)
 
 		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(s3ClientStub.LastUploadedBody).To(Equal(test.EtcdSnapshotData))
+		g.Expect(s3ClientStub.LastUploadedBody).To(Equal(EtcdSnapshotData))
 		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
 		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
 	})

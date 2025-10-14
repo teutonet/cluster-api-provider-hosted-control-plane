@@ -7,8 +7,11 @@ import (
 )
 
 func ResourceRequirementsToResourcesApplyConfiguration(
-	resources corev1.ResourceRequirements,
+	resources *corev1.ResourceRequirements,
 ) *corev1ac.ResourceRequirementsApplyConfiguration {
+	if resources == nil {
+		return nil
+	}
 	return corev1ac.ResourceRequirements().
 		WithLimits(resources.Limits).
 		WithRequests(resources.Requests).

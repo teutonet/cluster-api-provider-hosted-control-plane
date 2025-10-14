@@ -9,6 +9,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
@@ -18,17 +19,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	"k8s.io/client-go/kubernetes"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 type ManagementResourceReconciler struct {
-	Tracer              string
-	KubernetesClient    kubernetes.Interface
-	CiliumClient        ciliumclient.Interface
-	WorldComponent      string
-	ControllerNamespace string
-	ControllerComponent string
+	Tracer                  string
+	ManagementClusterClient *alias.ManagementClusterClient
+	CiliumClient            ciliumclient.Interface
+	WorldComponent          string
+	ControllerNamespace     string
+	ControllerComponent     string
 }
 
 func (mr *ManagementResourceReconciler) ReconcileService(
@@ -50,7 +50,7 @@ func (mr *ManagementResourceReconciler) ReconcileService(
 			)
 			service, ready, err := reconcileService(
 				ctx,
-				mr.KubernetesClient,
+				mr.ManagementClusterClient,
 				namespace,
 				name,
 				operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
@@ -93,7 +93,7 @@ func (mr *ManagementResourceReconciler) ReconcileSecret(
 				name,
 				reconcileSecret(
 					ctx,
-					mr.KubernetesClient,
+					mr.ManagementClusterClient,
 					namespace,
 					name,
 					deleteResource,
@@ -126,7 +126,7 @@ func (mr *ManagementResourceReconciler) ReconcileConfigmap(
 				name,
 				reconcileConfigmap(
 					ctx,
-					mr.KubernetesClient,
+					mr.ManagementClusterClient,
 					namespace,
 					name,
 					false,
@@ -159,7 +159,6 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 				attribute.Int("deployment.replicas", int(replicas)),
 				attribute.String("deployment.component", component),
 				attribute.String("deployment.targetComponent", targetComponent),
-				attribute.String("deployment.priorityClass", priorityClassName),
 				attribute.Int("deployment.initContainers.count", len(initContainers)),
 				attribute.Int("deployment.containers.count", len(containers)),
 				attribute.Int("deployment.volumes.count", len(volumes)),
@@ -167,6 +166,9 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 			podOptions := PodOptions{
 				PriorityClassName: priorityClassName,
 			}
+			span.SetAttributes(
+				attribute.String("deployment.priorityClass", podOptions.PriorityClassName),
+			)
 			if targetComponent != "" {
 				podOptions.Affinity = corev1ac.Affinity().WithPodAffinity(corev1ac.PodAffinity().
 					WithPreferredDuringSchedulingIgnoredDuringExecution(corev1ac.WeightedPodAffinityTerm().
@@ -182,7 +184,7 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 			name := fmt.Sprintf("%s-%s", cluster.Name, component)
 			deployment, ready, err := reconcileDeployment(
 				ctx,
-				mr.KubernetesClient,
+				mr.ManagementClusterClient,
 				mr.CiliumClient,
 				cluster.Namespace,
 				name,
@@ -236,7 +238,7 @@ func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 			)
 			statefulset, ready, err := reconcileStatefulset(
 				ctx,
-				mr.KubernetesClient,
+				mr.ManagementClusterClient,
 				mr.CiliumClient,
 				namespace,
 				name,

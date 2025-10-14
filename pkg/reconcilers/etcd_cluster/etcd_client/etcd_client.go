@@ -13,6 +13,7 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -21,7 +22,6 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -38,19 +38,19 @@ type EtcdClient interface {
 }
 
 type etcdClient struct {
-	kubernetesClient  kubernetes.Interface
-	caPool            *x509.CertPool
-	clientCertificate tls.Certificate
-	endpoints         map[string]string
-	anyEndpoint       string
-	serverPort        int32
+	managementClusterClient *alias.ManagementClusterClient
+	caPool                  *x509.CertPool
+	clientCertificate       tls.Certificate
+	endpoints               map[string]string
+	anyEndpoint             string
+	serverPort              int32
 }
 
 var _ EtcdClient = &etcdClient{}
 
 type EtcdClientFactory = func(
 	ctx context.Context,
-	kubernetesClient kubernetes.Interface,
+	managementClusterClient *alias.ManagementClusterClient,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 	serverPort int32,
@@ -58,23 +58,28 @@ type EtcdClientFactory = func(
 
 func NewEtcdClient(
 	ctx context.Context,
-	kubernetesClient kubernetes.Interface,
+	managementClusterClient *alias.ManagementClusterClient,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 	serverPort int32,
 ) (EtcdClient, error) {
 	return tracing.WithSpan(ctx, tracer, "NewEtcdClient",
 		func(ctx context.Context, span trace.Span) (EtcdClient, error) {
-			caPool, clientCertificate, err := getETCDConnectionTLS(ctx, kubernetesClient, hostedControlPlane, cluster)
+			caPool, clientCertificate, err := getETCDConnectionTLS(
+				ctx,
+				managementClusterClient,
+				hostedControlPlane,
+				cluster,
+			)
 			if err != nil {
 				return nil, err
 			}
 			return &etcdClient{
-				kubernetesClient:  kubernetesClient,
-				caPool:            caPool,
-				clientCertificate: clientCertificate,
-				endpoints:         names.GetEtcdDNSNames(cluster),
-				serverPort:        serverPort,
+				managementClusterClient: managementClusterClient,
+				caPool:                  caPool,
+				clientCertificate:       clientCertificate,
+				endpoints:               names.GetEtcdDNSNames(cluster),
+				serverPort:              serverPort,
 				anyEndpoint: fmt.Sprintf("https://%s", net.JoinHostPort(
 					names.GetEtcdClientServiceDNSName(cluster),
 					strconv.Itoa(int(serverPort)),
@@ -179,13 +184,13 @@ func callETCDFuncOnAllMembers[R any](
 
 func getETCDConnectionTLS(
 	ctx context.Context,
-	kubernetesClient kubernetes.Interface,
+	managementClusterClient *alias.ManagementClusterClient,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 ) (*x509.CertPool, tls.Certificate, error) {
 	return tracing.WithSpan3(ctx, tracer, "GetETCDConnectionTLS",
 		func(ctx context.Context, span trace.Span) (*x509.CertPool, tls.Certificate, error) {
-			secrets := kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace)
+			secrets := managementClusterClient.CoreV1().Secrets(hostedControlPlane.Namespace)
 			etcdCASecret, err := secrets.
 				Get(ctx, names.GetEtcdCASecretName(cluster), metav1.GetOptions{})
 			if err != nil {
@@ -225,7 +230,7 @@ func callETCDFuncOnMember[R any](
 	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (R, error),
 ) (R, error) {
 	return tracing.WithSpan(ctx, tracer, "CallETCDFuncOnMember",
-		func(ctx context.Context, span trace.Span) (R, error) {
+		func(ctx context.Context, span trace.Span) (_ R, retErr error) {
 			span.SetAttributes(
 				attribute.String("etcd.endpoint", endpoint),
 			)
@@ -245,10 +250,10 @@ func callETCDFuncOnMember[R any](
 				return *new(R), fmt.Errorf("failed to create etcd client for endpoint %s: %w", endpoint, err)
 			}
 			defer func() {
-				if closeErr := etcdClient.Close(); closeErr != nil {
-					err = errors.Join(
-						err,
-						fmt.Errorf("failed to close etcd client for endpoint %s: %w", endpoint, closeErr),
+				if err := etcdClient.Close(); err != nil {
+					retErr = errors.Join(
+						retErr,
+						fmt.Errorf("failed to close etcd client for endpoint %s: %w", endpoint, err),
 					)
 				}
 			}()

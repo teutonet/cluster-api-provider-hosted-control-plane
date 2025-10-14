@@ -20,10 +20,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-func (c *HostedControlPlane) SetupWebhookWithManager(mgr ctrl.Manager) error {
+func (hcp *HostedControlPlane) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return errorsUtil.IfErrErrorf("failed to setup webhook: %w", ctrl.NewWebhookManagedBy(mgr).
-		For(c).
-		WithValidator(&hostedControlPlaneWebhook{}).
+		For(hcp).
+		WithValidator(NewHostedControlPlaneWebhook()).
 		Complete(),
 	)
 }
@@ -35,10 +35,14 @@ type hostedControlPlaneWebhook struct {
 	specPath  *field.Path
 }
 
-var _ webhook.CustomValidator = &hostedControlPlaneWebhook{
-	groupKind: SchemeGroupVersion.WithKind("HostedControlPlane").GroupKind(),
-	specPath:  field.NewPath("spec"),
+func NewHostedControlPlaneWebhook() *hostedControlPlaneWebhook {
+	return &hostedControlPlaneWebhook{
+		groupKind: schema.GroupKind{Group: "controlplane.cluster.x-k8s.io", Kind: "HostedControlPlane"},
+		specPath:  field.NewPath("spec"),
+	}
 }
+
+var _ webhook.CustomValidator = &hostedControlPlaneWebhook{}
 
 func (w *hostedControlPlaneWebhook) ValidateCreate(
 	_ context.Context,
@@ -55,7 +59,8 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 		fieldErrs = append(fieldErrs, fieldErr)
 	}
 
-	if newHostedControlPlane.Spec.ETCD.AutoGrow && newHostedControlPlane.Spec.ETCD.VolumeSize != nil &&
+	if newHostedControlPlane.Spec.ETCD.AutoGrowEnabled() &&
+		newHostedControlPlane.Spec.ETCD.VolumeSize != nil &&
 		!newHostedControlPlane.Spec.ETCD.VolumeSize.IsZero() {
 		fieldErrs = append(fieldErrs, field.Invalid(
 			w.specPath.Child("etcd").Child("autoGrow"),
@@ -64,8 +69,9 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 		))
 	}
 
-	if !newHostedControlPlane.Spec.ETCD.AutoGrow &&
-		(newHostedControlPlane.Spec.ETCD.VolumeSize == nil || newHostedControlPlane.Spec.ETCD.VolumeSize.IsZero()) {
+	if !newHostedControlPlane.Spec.ETCD.AutoGrowEnabled() &&
+		(newHostedControlPlane.Spec.ETCD.VolumeSize == nil ||
+			newHostedControlPlane.Spec.ETCD.VolumeSize.IsZero()) {
 		fieldErrs = append(fieldErrs, field.Invalid(
 			w.specPath.Child("etcd").Child("autoGrow"),
 			newHostedControlPlane.Spec.ETCD.AutoGrow,
@@ -74,15 +80,15 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 	}
 
 	if len(fieldErrs) > 0 {
-		return []string{}, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, fieldErrs)
+		return nil, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, fieldErrs)
 	}
 
-	return []string{}, nil
+	return nil, nil
 }
 
 func (w *hostedControlPlaneWebhook) castObjectToHostedControlPlane(
 	obj runtime.Object,
-) (*HostedControlPlane, *apierrors.StatusError) {
+) (*HostedControlPlane, error) {
 	hostedControlPlane, ok := obj.(*HostedControlPlane)
 	if !ok {
 		return nil, apierrors.NewBadRequest("expected a HostedControlPlane but got wrong type")
@@ -120,7 +126,7 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 
 	oldVersion, fieldErr := w.parseVersion(oldHostedControlPlane)
 	if fieldErr != nil {
-		return []string{}, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{fieldErr})
+		return nil, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{fieldErr})
 	}
 
 	// ignore fieldErr because we're going to validate the whole object anyway.
@@ -138,10 +144,10 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 		)})
 	}
 
-	if !newHostedControlPlane.Spec.ETCD.AutoGrow && newHostedControlPlane.Spec.ETCD.VolumeSize != nil {
-		if oldHostedControlPlane.Spec.ETCD.AutoGrow &&
-			newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(
-				oldHostedControlPlane.Status.ETCDVolumeSize) == -1 {
+	if !newHostedControlPlane.Spec.ETCD.AutoGrowEnabled() &&
+		newHostedControlPlane.Spec.ETCD.VolumeSize != nil {
+		if oldHostedControlPlane.Spec.ETCD.AutoGrowEnabled() &&
+			newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(oldHostedControlPlane.Status.ETCDVolumeSize) == -1 {
 			return warnings, apierrors.NewInvalid(
 				w.groupKind,
 				newHostedControlPlane.Name,
@@ -173,5 +179,5 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 }
 
 func (*hostedControlPlaneWebhook) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
-	return []string{}, nil
+	return nil, nil
 }

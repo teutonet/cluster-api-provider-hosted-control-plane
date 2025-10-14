@@ -29,14 +29,7 @@ func WithSpan[R any](
 ) (r R, err error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName)
 	defer span.End()
-	defer func() {
-		if rec := recover(); rec != nil {
-			err = rec.(error)
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			panic(rec)
-		}
-	}()
+	defer handlePanic(span)
 	r, err = block(ctx, span)
 	if err != nil {
 		span.RecordError(err)
@@ -53,6 +46,7 @@ func WithSpan1[R any](
 ) (r R) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName)
 	defer span.End()
+	defer handlePanic(span)
 	if r = block(ctx, span); any(r) != nil {
 		if err, isErr := any(r).(error); isErr {
 			span.RecordError(err)
@@ -70,10 +64,21 @@ func WithSpan3[R1 any, R2 any](
 ) (r1 R1, r2 R2, err error) {
 	ctx, span := otel.Tracer(tracerName).Start(ctx, spanName)
 	defer span.End()
+	defer handlePanic(span)
 	r1, r2, err = block(ctx, span)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}
 	return r1, r2, err
+}
+
+func handlePanic(span trace.Span) {
+	if rec := recover(); rec != nil {
+		if err, isErr := rec.(error); isErr {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		panic(rec)
+	}
 }

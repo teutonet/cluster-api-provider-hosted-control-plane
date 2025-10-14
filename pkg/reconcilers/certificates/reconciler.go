@@ -70,6 +70,7 @@ var _ CertificateReconciler = &certificateReconciler{}
 
 type certificateSpec struct {
 	name string
+	kind string
 	spec *certmanagerv1ac.CertificateSpecApplyConfiguration
 }
 
@@ -289,6 +290,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 	return []certificateSpec{
 		{
 			name: names.GetAPIServerCertificateName(cluster),
+			kind: "APIServer",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
 				konstants.APIServerCertCommonName,
@@ -307,6 +309,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 		},
 		{
 			name: names.GetAPIServerKubeletClientCertificateName(cluster),
+			kind: "APIServerKubeletClient",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
 				konstants.APIServerKubeletClientCertCommonName,
@@ -318,6 +321,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 		},
 		{
 			name: names.GetFrontProxyCertificateName(cluster),
+			kind: "FrontProxy",
 			spec: createCertificateSpec(
 				names.GetFrontProxyCAName(cluster),
 				konstants.FrontProxyClientCertCommonName,
@@ -327,6 +331,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 		},
 		{
 			name: names.GetServiceAccountCertificateName(cluster),
+			kind: "ServiceAccount",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
 				"service-account",
@@ -335,6 +340,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 		},
 		{
 			name: names.GetAdminCertificateName(cluster),
+			kind: "Admin",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
 				"kubernetes-admin",
@@ -346,6 +352,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 		},
 		{
 			name: names.GetControllerManagerKubeconfigCertificateName(cluster),
+			kind: "ControllerManager",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
 				konstants.ControllerManagerUser,
@@ -355,6 +362,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 		},
 		{
 			name: names.GetSchedulerKubeconfigCertificateName(cluster),
+			kind: "Scheduler",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
 				konstants.SchedulerUser,
@@ -364,6 +372,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 		},
 		{
 			name: names.GetKonnectivityClientKubeconfigCertificateName(cluster),
+			kind: "KonnectivityClient",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
 				cr.konnectivityServerAudience,
@@ -374,11 +383,12 @@ func (cr *certificateReconciler) createCertificateSpecs(
 			),
 		},
 		{
-			name: names.GetControllerKubeconfigCertificateName(cluster),
+			name: names.GetControlPlaneControllerKubeconfigCertificateName(cluster),
+			kind: "ControlPlaneController",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
 				"system:control-plane-controller",
-				names.GetControllerKubeconfigCertificateSecretName(cluster),
+				names.GetControlPlaneControllerKubeconfigCertificateSecretName(cluster),
 				certmanagerv1.UsageClientAuth,
 			).WithSubject(certmanagerv1ac.X509Subject().
 				WithOrganizations(konstants.SystemPrivilegedGroup),
@@ -386,6 +396,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 		},
 		{
 			name: names.GetEtcdServerCertificateName(cluster),
+			kind: "EtcdServer",
 			spec: createCertificateSpec(
 				names.GetEtcdCAName(cluster),
 				"etcd-server",
@@ -395,6 +406,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 		},
 		{
 			name: names.GetEtcdPeerCertificateName(cluster),
+			kind: "EtcdPeer",
 			spec: createCertificateSpec(
 				names.GetEtcdCAName(cluster),
 				"etcd-peer",
@@ -404,6 +416,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 		},
 		{
 			name: names.GetEtcdAPIServerClientCertificateName(cluster),
+			kind: "EtcdAPIServerClient",
 			spec: createCertificateSpec(
 				names.GetEtcdCAName(cluster),
 				"apiserver-etcd-client",
@@ -413,6 +426,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 		},
 		{
 			name: names.GetEtcdControllerClientCertificateName(cluster),
+			kind: "EtcdControllerClient",
 			spec: createCertificateSpec(
 				names.GetEtcdCAName(cluster),
 				"controller-etcd-client",
@@ -441,9 +455,11 @@ func (cr *certificateReconciler) ReconcileCertificates(
 					hostedControlPlane, cluster,
 					certificateAC.name, certificateAC.spec,
 				); err != nil {
-					return "", fmt.Errorf("failed to reconcile certificate %s: %w", certificateAC.name, err)
+					return "", fmt.Errorf("failed to reconcile certificate %s: %w", certificateAC.kind, err)
 				} else if !ready {
-					notReadyReasons = append(notReadyReasons, fmt.Sprintf("certificate %s not ready", certificateAC.name))
+					notReadyReasons = append(notReadyReasons,
+						fmt.Sprintf("certificate %s not ready", certificateAC.kind),
+					)
 				}
 			}
 

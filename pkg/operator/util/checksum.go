@@ -105,13 +105,13 @@ func extractConfigMapNames(volumes []corev1ac.VolumeApplyConfiguration) []string
 
 func SetChecksumAnnotations(
 	ctx context.Context,
-	client kubernetes.Interface,
+	kubernetesClient kubernetes.Interface,
 	namespace string,
 	template *corev1ac.PodTemplateSpecApplyConfiguration,
 ) (*corev1ac.PodTemplateSpecApplyConfiguration, error) {
 	usedSecretNames := extractSecretNames(template.Spec.Volumes)
 	if len(usedSecretNames) > 0 {
-		if secretChecksum, err := CalculateSecretChecksum(ctx, client,
+		if secretChecksum, err := CalculateSecretChecksum(ctx, kubernetesClient,
 			namespace,
 			usedSecretNames,
 		); err != nil {
@@ -125,7 +125,7 @@ func SetChecksumAnnotations(
 
 	usedConfigMapNames := extractConfigMapNames(template.Spec.Volumes)
 	if len(usedConfigMapNames) > 0 {
-		if configMapChecksum, err := CalculateConfigMapChecksum(ctx, client,
+		if configMapChecksum, err := CalculateConfigMapChecksum(ctx, kubernetesClient,
 			namespace,
 			usedConfigMapNames,
 		); err != nil {

@@ -32,16 +32,16 @@ type CoreDNSReconciler interface {
 }
 
 func NewCoreDNSReconciler(
-	kubernetesClient alias.WorkloadClusterClient,
+	managementClusterClient *alias.WorkloadClusterClient,
 	ciliumClient ciliumclient.Interface,
 	serviceDomain string,
 	dnsIP net.IP,
 ) CoreDNSReconciler {
 	return &coreDNSReconciler{
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
-			KubernetesClient: kubernetesClient,
-			CiliumClient:     ciliumClient,
-			Tracer:           tracing.GetTracer("coredns"),
+			WorkloadClusterClient: managementClusterClient,
+			CiliumClient:          ciliumClient,
+			Tracer:                tracing.GetTracer("coredns"),
 		},
 		serviceDomain:  serviceDomain,
 		dnsIP:          dnsIP,
@@ -116,10 +116,7 @@ func (cr *coreDNSReconciler) ReconcileCoreDNS(
 
 			logger := logr.FromContextAsSlogLogger(ctx)
 			for _, phase := range phases {
-				notReadyReason, err := tracing.WithSpan(
-					ctx,
-					cr.Tracer,
-					phase.Name,
+				notReadyReason, err := tracing.WithSpan(ctx, cr.Tracer, phase.Name,
 					func(ctx context.Context, _ trace.Span) (string, error) {
 						return phase.Reconcile(logr.NewContextWithSlogLogger(ctx, logger.With("phase", phase.Name)))
 					},
@@ -141,7 +138,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSRBAC(ctx context.Context) error {
 		func(ctx context.Context, span trace.Span) error {
 			serviceAccount := corev1ac.ServiceAccount(cr.coreDNSServiceAccountName, cr.coreDNSNamespace)
 
-			_, err := cr.KubernetesClient.CoreV1().
+			_, err := cr.WorkloadClusterClient.CoreV1().
 				ServiceAccounts(*serviceAccount.Namespace).
 				Apply(ctx, serviceAccount, operatorutil.ApplyOptions)
 			if err != nil {
@@ -164,7 +161,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSRBAC(ctx context.Context) error {
 						WithResources("endpointslices"),
 				)
 
-			_, err = cr.KubernetesClient.RbacV1().ClusterRoles().
+			_, err = cr.WorkloadClusterClient.RbacV1().ClusterRoles().
 				Apply(ctx, clusterRole, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply CoreDNS cluster role: %w", err)
@@ -184,7 +181,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSRBAC(ctx context.Context) error {
 						WithNamespace(*serviceAccount.Namespace),
 				)
 
-			_, err = cr.KubernetesClient.RbacV1().ClusterRoleBindings().
+			_, err = cr.WorkloadClusterClient.RbacV1().ClusterRoleBindings().
 				Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
 			if err != nil {
 				return fmt.Errorf("failed to apply CoreDNS cluster role binding: %w", err)
@@ -317,7 +314,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 			container := corev1ac.Container().
 				WithName("coredns").
 				WithImage(operatorutil.ResolveCoreDNSImage(hostedControlPlane.Spec.CoreDNS.Image)).
-				WithImagePullPolicy(hostedControlPlane.Spec.CoreDNS.ImagePullPolicy).
+				WithImagePullPolicy(hostedControlPlane.Spec.CoreDNS.ImagePullPolicyOrDefault()).
 				WithArgs(operatorutil.ArgsToSlice(
 					ctx,
 					hostedControlPlane.Spec.CoreDNS.Args,
@@ -350,7 +347,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 				WithReadinessProbe(operatorutil.CreateReadinessProbe(readyPort, "/ready", corev1.URISchemeHTTP)).
 				WithStartupProbe(operatorutil.CreateStartupProbe(readyPort, "/ready", corev1.URISchemeHTTP))
 
-			nodes, err := cr.KubernetesClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+			nodes, err := cr.WorkloadClusterClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 			if err != nil {
 				return "", fmt.Errorf("failed to list nodes: %w", err)
 			}
@@ -360,7 +357,10 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 				cr.coreDNSNamespace,
 				cr.coreDNSResourceName,
 				false,
-				int32(math.Min(float64(len(nodes.Items)), float64(hostedControlPlane.Spec.CoreDNS.Replicas))),
+				int32(
+					math.Min(float64(len(nodes.Items)),
+						float64(hostedControlPlane.Spec.CoreDNS.ReplicaCount(2))),
+				),
 				reconcilers.PodOptions{
 					ServiceAccountName: cr.coreDNSServiceAccountName,
 					PriorityClassName:  "system-cluster-critical",

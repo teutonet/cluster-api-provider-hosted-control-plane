@@ -64,13 +64,13 @@ type HostedControlPlaneInlineSpec struct {
 	//+kubebuilder:validation:Required
 	Gateway GatewayReference `json:"gateway"`
 
-	//+kubebuilder:default={}
+	//+kubebuilder:validation:Optional
 	KonnectivityClient ScalablePod `json:"konnectivityClient,omitempty"`
 	//+kubebuilder:validation:Optional
 	KubeProxy KubeProxyComponent `json:"kubeProxy,omitempty"`
-	//+kubebuilder:default={}
+	//+kubebuilder:validation:Optional
 	CoreDNS ScalablePod `json:"coredns,omitempty"`
-	//+kubebuilder:default={}
+	//+kubebuilder:validation:Optional
 	ETCD ETCDComponent `json:"etcd,omitempty"`
 }
 
@@ -98,35 +98,34 @@ type Pod struct {
 
 type ImageSpec struct {
 	//+kubebuilder:validation:Optional
-	Registry string `json:"registry,omitempty"`
+	Registry *string `json:"registry,omitempty"`
 	//+kubebuilder:validation:Optional
-	Repository string `json:"repository,omitempty"`
+	Repository *string `json:"repository,omitempty"`
 	//+kubebuilder:validation:Optional
-	Tag string `json:"tag,omitempty"`
+	Tag *string `json:"tag,omitempty"`
 }
 
 type Container struct {
 	//+kubebuilder:validation:Optional
 	Image *ImageSpec `json:"image,omitempty"`
 	//+kubebuilder:validation:Optional
-	//+kubebuilder:default="Always"
-	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
+	ImagePullPolicy *corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 	//+kubebuilder:validation:Optional
 	Args map[string]string `json:"args,omitempty"`
 	//+kubebuilder:validation:Optional
-	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
 type ScalablePod struct {
 	Pod `json:",inline"`
-	//+kubebuilder:default=2
-	Replicas int32 `json:"replicas,omitempty"`
+	//+kubebuilder:validation:Optional
+	Replicas *int32 `json:"replicas,omitempty"`
 }
 
 type KubeProxyComponent struct {
 	Pod `json:",inline"`
 	//+kubebuilder:validation:Optional
-	Disabled bool `json:"enabled,omitempty"`
+	Disabled *bool `json:"enabled,omitempty"`
 }
 
 type ETCDComponent struct {
@@ -134,8 +133,8 @@ type ETCDComponent struct {
 	//+kubebuilder:validation:Optional
 	VolumeSize *resource.Quantity `json:"volumeSize,omitempty"`
 	// AutoGrow will increase the volume size automatically when it is near full.
-	//+kubebuilder:default=true
-	AutoGrow bool `json:"autoGrow,omitempty"`
+	//+kubebuilder:validation:Optional
+	AutoGrow *bool `json:"autoGrow,omitempty"`
 	//+kubebuilder:validation:Optional
 	PriorityClassName string `json:"priorityClassName,omitempty"`
 	//+kubebuilder:validation:Optional
@@ -157,13 +156,11 @@ type ETCDBackupSecret struct {
 	//+kubebuilder:validation:Required
 	Name string `json:"name"`
 	//+kubebuilder:validation:Optional
-	Namespace string `json:"namespace"`
+	Namespace *string `json:"namespace"`
 	//+kubebuilder:validation:Optional
-	//+kubebuilder:default="accessKeyID"
-	AccessKeyIDKey string `json:"accessKeyIDKey,omitempty"`
+	AccessKeyIDKey *string `json:"accessKeyIDKey,omitempty"`
 	//+kubebuilder:validation:Optional
-	//+kubebuilder:default="secretAccessKey"
-	SecretAccessKeyKey string `json:"secretAccessKeyKey,omitempty"`
+	SecretAccessKeyKey *string `json:"secretAccessKeyKey,omitempty"`
 }
 
 type APIServerPod struct {
@@ -181,8 +178,7 @@ type Audit struct {
 	Policy auditv1.Policy `json:"policy"`
 	//+kubebuilder:validation:Optional
 	//+kubebuilder:validation:Enum=batch;blocking;blocking-strict
-	//+kubebuilder:default="batch"
-	Mode string `json:"mode,omitempty"`
+	Mode *string `json:"mode,omitempty"`
 	//+kubebuilder:validation:Optional
 	Webhook *AuditWebhook `json:"webhook,omitempty"`
 }
@@ -206,10 +202,9 @@ type AuditWebhookAuthentication struct {
 	SecretName string `json:"secretName"`
 	//+kubebuilder:validation:Optional
 	// SecretNamespace. If not set, defaults to the namespace of the HostedControlPlane.
-	SecretNamespace string `json:"secretNamespace,omitempty"`
+	SecretNamespace *string `json:"secretNamespace,omitempty"`
 	//+kubebuilder:validation:Optional
-	//+kubebuilder:default="token"
-	TokenKey string `json:"tokenKey,omitempty"`
+	TokenKey *string `json:"tokenKey,omitempty"`
 }
 
 //+kubebuilder:validation:MinProperties=2
@@ -260,9 +255,8 @@ type HostedControlPlaneStatus struct {
 	//+kubebuilder:validation:Optional
 	Ready bool `json:"ready"`
 	//+kubebuilder:validation:Optional
-	Version string `json:"version,omitempty"`
-	// +kubebuilder:default=true
-	ExternalManagedControlPlane *bool `json:"externalManagedControlPlane"`
+	Version                     string `json:"version,omitempty"`
+	ExternalManagedControlPlane *bool  `json:"externalManagedControlPlane"`
 }
 
 //+kubebuilder:object:root=true
@@ -273,10 +267,10 @@ type HostedControlPlaneList struct {
 	Items           []HostedControlPlane `json:"items"`
 }
 
-func (c *HostedControlPlane) GetConditions() []metav1.Condition {
-	return c.Status.Conditions
+func (hcp *HostedControlPlane) GetConditions() []metav1.Condition {
+	return hcp.Status.Conditions
 }
 
-func (c *HostedControlPlane) SetConditions(conditions []metav1.Condition) {
-	c.Status.Conditions = conditions
+func (hcp *HostedControlPlane) SetConditions(conditions []metav1.Condition) {
+	hcp.Status.Conditions = conditions
 }

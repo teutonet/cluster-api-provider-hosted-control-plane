@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"strings"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/apiserverresources"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/certificates"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster"
@@ -39,10 +39,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	utilNet "k8s.io/utils/net"
+	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -67,27 +66,32 @@ type HostedControlPlaneReconciler interface {
 }
 
 func NewHostedControlPlaneReconciler(
-	restConfig *rest.Config,
 	client client.Client,
-	kubernetesClient kubernetes.Interface,
+	managementClusterClient *alias.ManagementClusterClient,
 	certManagerClient cmclient.Interface,
 	gatewayClient gwclient.Interface,
+	ciliumClientFactory func(ctx context.Context) (ciliumclient.Interface, error),
+	workloadClusterClientFactory func(
+		ctx context.Context,
+		managementClusterClient *alias.ManagementClusterClient,
+		cluster *capiv2.Cluster,
+		controllerKubeconfigName string,
+	) (*alias.WorkloadClusterClient, ciliumclient.Interface, error),
 	etcdClientFactory etcd_client.EtcdClientFactory,
 	s3ClientFactory s3_client.S3ClientFactory,
 	recorder record.EventRecorder,
 	controllerNamespace string,
-	tracingWrapper func(rt http.RoundTripper) http.RoundTripper,
 ) HostedControlPlaneReconciler {
 	return &hostedControlPlaneReconciler{
-		restConfig:                       restConfig,
 		client:                           client,
-		kubernetesClient:                 kubernetesClient,
+		managementClusterClient:          managementClusterClient,
 		certManagerClient:                certManagerClient,
 		gatewayClient:                    gatewayClient,
 		etcdClientFactory:                etcdClientFactory,
 		s3ClientFactory:                  s3ClientFactory,
+		ciliumClientFactory:              ciliumClientFactory,
+		workloadClusterClientFactory:     workloadClusterClientFactory,
 		recorder:                         recorder,
-		managementCluster:                workload.NewManagementCluster(kubernetesClient, tracingWrapper, "controller"),
 		worldComponent:                   "world",
 		controllerNamespace:              controllerNamespace,
 		controllerComponent:              "hosted-control-plane-controller",
@@ -102,7 +106,7 @@ func NewHostedControlPlaneReconciler(
 		konnectivityNamespace:            metav1.NamespaceSystem,
 		konnectivityServiceAccount:       "konnectivity-agent",
 		konnectivityClientKubeconfigName: "konnectivity-client",
-		controllerKubeconfigName:         "controller",
+		controllerKubeconfigName:         "control-plane-controller",
 		konnectivityServerAudience:       "system:konnectivity-server",
 		apiServerServiceLegacyPortName:   "legacy-api",
 		konnectivityServicePort:          int32(8132),
@@ -112,15 +116,20 @@ func NewHostedControlPlaneReconciler(
 }
 
 type hostedControlPlaneReconciler struct {
-	restConfig                       *rest.Config
-	client                           client.Client
-	kubernetesClient                 kubernetes.Interface
-	certManagerClient                cmclient.Interface
-	gatewayClient                    gwclient.Interface
-	etcdClientFactory                etcd_client.EtcdClientFactory
-	s3ClientFactory                  s3_client.S3ClientFactory
+	client                       client.Client
+	managementClusterClient      *alias.ManagementClusterClient
+	certManagerClient            cmclient.Interface
+	gatewayClient                gwclient.Interface
+	etcdClientFactory            etcd_client.EtcdClientFactory
+	s3ClientFactory              s3_client.S3ClientFactory
+	ciliumClientFactory          func(ctx context.Context) (ciliumclient.Interface, error)
+	workloadClusterClientFactory func(
+		ctx context.Context,
+		managementClusterClient *alias.ManagementClusterClient,
+		cluster *capiv2.Cluster,
+		controllerKubeconfigName string,
+	) (*alias.WorkloadClusterClient, ciliumclient.Interface, error)
 	recorder                         record.EventRecorder
-	managementCluster                workload.ManagementCluster
 	worldComponent                   string
 	controllerNamespace              string
 	controllerComponent              string
@@ -338,9 +347,9 @@ func (r *hostedControlPlaneReconciler) resolveOwnerRefsToHostedControlPlanes(
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=get
 //+kubebuilder:rbac:groups="",resources=events,verbs=create
 
-func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, err error) {
+func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	return tracing.WithSpan(ctx, r.tracer, "Reconcile",
-		func(ctx context.Context, span trace.Span) (ctrl.Result, error) {
+		func(ctx context.Context, span trace.Span) (_ ctrl.Result, retErr error) {
 			span.SetAttributes(
 				attribute.String("reconcile.id", string(controller.ReconcileIDFromContext(ctx))),
 				attribute.String("namespace", req.Namespace),
@@ -355,16 +364,18 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				return reconcile.Result{}, fmt.Errorf("failed to get HostedControlPlane: %w", err)
 			}
 
-			ctx = recorder.IntoContext(ctx, recorder.New(r.recorder, hostedControlPlane))
-
 			patchHelper, err := patch.NewHelper(hostedControlPlane, r.client)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to create patch helper for HostedControlPlane: %w", err)
 			}
 
+			hostedControlPlane.Status.ExternalManagedControlPlane = ptr.To(true)
+
+			ctx = recorder.IntoContext(ctx, recorder.New(r.recorder, hostedControlPlane))
+
 			defer func() {
-				if patchErr := r.patch(ctx, patchHelper, hostedControlPlane); patchErr != nil {
-					err = errors.Join(err, patchErr)
+				if err := r.patch(ctx, patchHelper, hostedControlPlane); err != nil {
+					retErr = errors.Join(retErr, err)
 				}
 			}()
 
@@ -388,7 +399,7 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				if err != nil {
 					return ctrl.Result{}, fmt.Errorf("failed to verify paused condition: %w", err)
 				}
-				return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+				return ctrl.Result{RequeueAfter: 10 * time.Second}, retErr
 			}
 
 			if !hostedControlPlane.DeletionTimestamp.IsZero() {
@@ -410,7 +421,12 @@ func (r *hostedControlPlaneReconciler) patch(
 		func(ctx context.Context, span trace.Span) error {
 			hostedControlPlane.Status.Conditions = slices.Map(hostedControlPlane.Status.Conditions,
 				func(condition metav1.Condition, _ int) metav1.Condition {
-					condition.Reason = slices.PascalCase(strings.ReplaceAll(condition.Reason, " ", "_"))
+					condition.Reason = strings.Join(
+						slices.Map(strings.Split(condition.Reason, ","), func(subReason string, index int) string {
+							return slices.PascalCase(strings.ReplaceAll(subReason, " ", "_"))
+						}),
+						",",
+					)
 					return condition
 				})
 			applicableConditions := slices.FilterMap(hostedControlPlane.Status.Conditions,
@@ -423,13 +439,15 @@ func (r *hostedControlPlaneReconciler) patch(
 					}
 				},
 			)
-			if err := conditions.SetSummaryCondition(
-				hostedControlPlane,
-				hostedControlPlane,
-				capiv2.ReadyCondition,
-				conditions.ForConditionTypes(applicableConditions),
-			); err != nil {
-				return errorsUtil.IfErrErrorf("failed to set summary condition: %w", err)
+			if len(applicableConditions) > 0 {
+				if err := conditions.SetSummaryCondition(
+					hostedControlPlane,
+					hostedControlPlane,
+					capiv2.ReadyCondition,
+					conditions.ForConditionTypes(applicableConditions),
+				); err != nil {
+					return errorsUtil.IfErrErrorf("failed to set summary condition: %w", err)
+				}
 			}
 
 			options = append(options,
@@ -452,7 +470,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 	cluster *capiv2.Cluster,
 ) (ctrl.Result, error) {
 	return tracing.WithSpan(ctx, r.tracer, "ReconcileNormal",
-		func(ctx context.Context, span trace.Span) (_ ctrl.Result, reterr error) {
+		func(ctx context.Context, span trace.Span) (ctrl.Result, error) {
 			if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.client,
 				hostedControlPlane, r.finalizer,
 			); err != nil || finalizerAdded {
@@ -460,7 +478,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 			}
 			span.SetAttributes(
 				attribute.String("hostedcontrolplane.version", hostedControlPlane.Spec.Version),
-				attribute.Int("hostedcontrolplane.replicas", int(*hostedControlPlane.Spec.Replicas)),
+				attribute.Int("hostedcontrolplane.replicas", int(hostedControlPlane.Spec.ReplicasOrDefault())),
 			)
 
 			type Phase struct {
@@ -523,15 +541,15 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 
 			var ciliumClient ciliumclient.Interface
 
-			groups, err := r.kubernetesClient.Discovery().ServerGroups()
+			groups, err := r.managementClusterClient.Discovery().ServerGroups()
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to discover server groups: %w", err)
 			}
 			if slices.SomeBy(groups.Groups, func(group metav1.APIGroup) bool {
 				return group.Name == ciliumv2.SchemeGroupVersion.Group
 			}) {
-				ciliumClient, err = ciliumclient.NewForConfig(r.restConfig)
-				if err != nil {
+				ciliumClient, err = r.ciliumClientFactory(ctx)
+				if err != nil && !errors.Is(err, workload.ErrCiliumNotInstalled) {
 					return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to create cilium client: %w", err)
 				}
 			}
@@ -544,13 +562,13 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.konnectivityServerAudience,
 			)
 			kubeconfigReconciler := kubeconfig.NewKubeconfigReconciler(
-				r.kubernetesClient,
+				r.managementClusterClient,
 				r.apiServerServicePort,
 				r.konnectivityClientKubeconfigName,
 				r.controllerKubeconfigName,
 			)
 			etcdClusterReconciler := etcd_cluster.NewEtcdClusterReconciler(
-				r.kubernetesClient,
+				r.managementClusterClient,
 				ciliumClient,
 				r.recorder,
 				r.etcdServerPort,
@@ -564,7 +582,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.controllerComponent,
 			)
 			apiServerResourcesReconciler := apiserverresources.NewApiServerResourcesReconciler(
-				r.kubernetesClient,
+				r.managementClusterClient,
 				ciliumClient,
 				r.worldComponent,
 				serviceCIDR,
@@ -589,8 +607,14 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.apiServerServicePort,
 			)
 			workloadClusterReconciler := workload.NewWorkloadClusterReconciler(
-				r.kubernetesClient,
-				r.managementCluster,
+				r.managementClusterClient,
+				func(
+					ctx context.Context, managementClusterClient *alias.ManagementClusterClient, cluster *capiv2.Cluster,
+				) (*alias.WorkloadClusterClient, ciliumclient.Interface, error) {
+					return r.workloadClusterClientFactory(
+						ctx, managementClusterClient, cluster, r.controllerKubeconfigName,
+					)
+				},
 				r.caCertificatesDuration,
 				r.certificatesDuration,
 				serviceDomain,
@@ -668,17 +692,14 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 
 			logger := logr.FromContextAsSlogLogger(ctx)
 			for _, phase := range phases {
-				notReadyReason, err := tracing.WithSpan(
-					ctx,
-					r.tracer,
-					phase.Name,
+				switch notReadyReason, err := tracing.WithSpan(ctx, r.tracer, phase.Name,
 					func(ctx context.Context, _ trace.Span) (string, error) {
-						return phase.Reconcile(logr.NewContextWithSlogLogger(
-							ctx, logger.With("phase", phase.Name)), hostedControlPlane, cluster,
+						return phase.Reconcile(
+							logr.NewContextWithSlogLogger(ctx, logger.With("phase", phase.Name)),
+							hostedControlPlane, cluster,
 						)
 					},
-				)
-				switch {
+				); {
 				case err != nil:
 					conditions.Set(hostedControlPlane, metav1.Condition{
 						Type:    string(phase.Condition),

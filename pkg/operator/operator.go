@@ -11,13 +11,16 @@ import (
 	"os"
 
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
+	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/go-logr/logr"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/hostedcontrolplane"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/etc"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/logging"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
@@ -29,6 +32,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"google.golang.org/grpc/grpclog"
 	"k8s.io/client-go/kubernetes"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -41,10 +45,10 @@ import (
 
 var hostedControlPlaneControllerName = "hcp-controller"
 
-func Start(ctx context.Context, version string, operatorConfig etc.Config) (err error) {
+func Start(ctx context.Context, version string, operatorConfig etc.Config) (retErr error) {
 	ctx = configureLogging(ctx, operatorConfig.LogFormat, operatorConfig.LogLevel)
 
-	scheme, err := NewScheme()
+	scheme, err := hostedcontrolplane.NewScheme()
 	if err != nil {
 		return fmt.Errorf("failed to create scheme: %w", err)
 	}
@@ -99,8 +103,8 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (err 
 		return err
 	}
 	defer func() {
-		if shutdownErr := tp.Shutdown(ctx); shutdownErr != nil {
-			err = errors.Join(err, fmt.Errorf("shutting down trace provider: %w", shutdownErr))
+		if err := tp.Shutdown(ctx); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("shutting down trace provider: %w", err))
 		}
 	}()
 
@@ -164,6 +168,10 @@ func setupControllers(
 		return fmt.Errorf("failed to create kubernetes client: %w", err)
 	}
 
+	managementClusterClient := alias.ManagementClusterClient{
+		Interface: kubernetesClient,
+	}
+
 	certManagerClient, err := cmclient.NewForConfig(mgr.GetConfig())
 	if err != nil {
 		return fmt.Errorf("failed to create cert-manager client: %w", err)
@@ -175,16 +183,31 @@ func setupControllers(
 	}
 
 	if err := hostedcontrolplane.NewHostedControlPlaneReconciler(
-		mgr.GetConfig(),
 		client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
-		kubernetesClient,
+		&managementClusterClient,
 		certManagerClient,
 		gatewayClient,
+		func(ctx context.Context) (ciliumclient.Interface, error) {
+			return workload.GetCiliumClient(kubernetesClient, mgr.GetConfig())
+		},
+		func(
+			ctx context.Context,
+			managementClusterClient *alias.ManagementClusterClient,
+			cluster *capiv2.Cluster,
+			controllerKubeconfigName string,
+		) (*alias.WorkloadClusterClient, ciliumclient.Interface, error) {
+			return workload.GetWorkloadClusterClient(
+				ctx,
+				managementClusterClient,
+				cluster,
+				tracingWrapper,
+				controllerKubeconfigName,
+			)
+		},
 		etcd_client.NewEtcdClient,
 		s3_client.NewS3Client,
 		mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
 		controllerNamespace,
-		tracingWrapper,
 	).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}
