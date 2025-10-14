@@ -81,10 +81,10 @@ func NewS3ClientStub() *S3ClientStub {
 	return &S3ClientStub{}
 }
 
-func (s *S3ClientStub) Upload(_ context.Context, body io.ReadCloser) (err error) {
+func (s *S3ClientStub) Upload(_ context.Context, body io.ReadCloser) (retErr error) {
 	defer func() {
-		if closeErr := body.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("failed to close body reader: %w", closeErr))
+		if err := body.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("failed to close body reader: %w", err))
 		}
 	}()
 	if s.UploadError != nil {

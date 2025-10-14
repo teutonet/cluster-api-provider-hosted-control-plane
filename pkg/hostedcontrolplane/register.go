@@ -1,5 +1,5 @@
 // Package operator contains the whole schema for the operator.
-package operator
+package hostedcontrolplane
 
 import (
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -20,6 +21,8 @@ func NewScheme() (*runtime.Scheme, error) {
 	scheme := runtime.NewScheme()
 
 	addToSchemeFuncs := []func(*runtime.Scheme) error{
+		v1alpha1.AddToScheme,
+		apiextensionsv1.AddToScheme,
 		appsv1.AddToScheme,
 		capiv2.AddToScheme,
 		certmanagerv1.AddToScheme,
@@ -29,7 +32,6 @@ func NewScheme() (*runtime.Scheme, error) {
 		gwv1alpha2.Install,
 		networkingv1.AddToScheme,
 		policyv1.AddToScheme,
-		v1alpha1.AddToScheme,
 		v1beta2.AddToScheme,
 	}
 

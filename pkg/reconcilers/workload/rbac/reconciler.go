@@ -26,7 +26,7 @@ type RBACReconciler interface {
 }
 
 func NewRBACReconciler(
-	kubernetesClient alias.WorkloadClusterClient,
+	managementClusterClient *alias.WorkloadClusterClient,
 	kubeadmKubeletConfigMapNamespace string,
 	kubeadmConfigConfigMapName string,
 	kubeletConfigMapName string,
@@ -34,7 +34,7 @@ func NewRBACReconciler(
 	clusterInfoConfigMapName string,
 ) RBACReconciler {
 	return &rbacReconciler{
-		kubernetesClient:                 kubernetesClient,
+		managementClusterClient:          managementClusterClient,
 		tracer:                           tracing.GetTracer("rbac"),
 		kubeadmKubeletConfigMapNamespace: kubeadmKubeletConfigMapNamespace,
 		kubeadmConfigConfigMapName:       kubeadmConfigConfigMapName,
@@ -45,7 +45,7 @@ func NewRBACReconciler(
 }
 
 type rbacReconciler struct {
-	kubernetesClient                 alias.WorkloadClusterClient
+	managementClusterClient          *alias.WorkloadClusterClient
 	tracer                           string
 	kubeadmConfigConfigMapName       string
 	kubeletConfigMapName             string
@@ -106,9 +106,7 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 
 			logger := logr.FromContextAsSlogLogger(ctx)
 			for _, phase := range phases {
-				notReadyReasons, err := tracing.WithSpan(
-					ctx,
-					rr.tracer,
+				notReadyReasons, err := tracing.WithSpan(ctx, rr.tracer,
 					phase.Name,
 					func(ctx context.Context, _ trace.Span) ([]string, error) {
 						ctx = logr.NewContextWithSlogLogger(ctx, logger.With("phase", phase.Name))
@@ -118,7 +116,7 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 							return nil, fmt.Errorf("failed to generate %s: %w", phase.Name, err)
 						}
 						for _, clusterRole := range resources.ClusterRoles {
-							clusterRoleInterface := rr.kubernetesClient.RbacV1().ClusterRoles()
+							clusterRoleInterface := rr.managementClusterClient.RbacV1().ClusterRoles()
 							_, err := clusterRoleInterface.
 								Apply(ctx, clusterRole, operatorutil.ApplyOptions)
 							if err != nil {
@@ -144,7 +142,7 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 						}
 
 						for _, clusterRoleBinding := range resources.ClusterRoleBindings {
-							clusterRoleBindingInterface := rr.kubernetesClient.RbacV1().ClusterRoleBindings()
+							clusterRoleBindingInterface := rr.managementClusterClient.RbacV1().ClusterRoleBindings()
 							_, err := clusterRoleBindingInterface.
 								Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
 							if err != nil {
@@ -171,7 +169,7 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 						}
 
 						for _, role := range resources.Roles {
-							roleInterface := rr.kubernetesClient.RbacV1().Roles(*role.Namespace)
+							roleInterface := rr.managementClusterClient.RbacV1().Roles(*role.Namespace)
 							_, err := roleInterface.
 								Apply(ctx, role, operatorutil.ApplyOptions)
 							if err != nil {
@@ -200,7 +198,8 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 						}
 
 						for _, roleBinding := range resources.RoleBindings {
-							roleBindingInterface := rr.kubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace)
+							roleBindingInterface := rr.managementClusterClient.RbacV1().
+								RoleBindings(*roleBinding.Namespace)
 							_, err := roleBindingInterface.
 								Apply(ctx, roleBinding, operatorutil.ApplyOptions)
 							if err != nil {

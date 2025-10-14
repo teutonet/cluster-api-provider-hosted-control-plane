@@ -16,7 +16,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
@@ -32,7 +31,7 @@ import (
 type ConfigReconciler interface {
 	ReconcileClusterInfoConfigMap(
 		ctx context.Context,
-		managementClient kubernetes.Interface,
+		managementClient *alias.ManagementClusterClient,
 		cluster *capiv2.Cluster,
 	) error
 	ReconcileKubeadmConfig(
@@ -46,7 +45,7 @@ type ConfigReconciler interface {
 }
 
 func NewConfigReconciler(
-	kubernetesClient alias.WorkloadClusterClient,
+	managementClusterClient *alias.WorkloadClusterClient,
 	caCertificateDuration time.Duration,
 	certificateDuration time.Duration,
 	serviceDomain string,
@@ -62,8 +61,8 @@ func NewConfigReconciler(
 ) ConfigReconciler {
 	return &configReconciler{
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
-			KubernetesClient: kubernetesClient,
-			Tracer:           tracing.GetTracer("config"),
+			WorkloadClusterClient: managementClusterClient,
+			Tracer:                tracing.GetTracer("config"),
 		},
 		caCertificateDuration:           caCertificateDuration,
 		certificateDuration:             certificateDuration,
@@ -100,7 +99,7 @@ var _ ConfigReconciler = &configReconciler{}
 
 func (cr *configReconciler) ReconcileClusterInfoConfigMap(
 	ctx context.Context,
-	managementClient kubernetes.Interface,
+	managementClient *alias.ManagementClusterClient,
 	cluster *capiv2.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, cr.Tracer, "ReconcileClusterInfoConfigMap",

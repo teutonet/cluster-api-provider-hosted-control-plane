@@ -97,11 +97,7 @@ func (i *infrastructureClusterReconciler) SyncControlPlaneEndpoint(
 				ctx, i.client, cluster.Spec.InfrastructureRef, cluster.Namespace,
 			)
 			if err != nil {
-				return "", fmt.Errorf("failed to get infrastructure cluster reference: %w", err)
-			}
-
-			if err := i.client.Get(ctx, client.ObjectKeyFromObject(infraCluster), infraCluster); err != nil {
-				return "", fmt.Errorf("failed to get infrastructure cluster: %w", err)
+				return "", fmt.Errorf("failed to get infrastructure cluster object from reference: %w", err)
 			}
 
 			patchHelper, err := patch.NewHelper(infraCluster, i.client)

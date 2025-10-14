@@ -20,6 +20,7 @@ import (
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -28,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 	kubenames "k8s.io/kubernetes/cmd/kube-controller-manager/names"
@@ -60,7 +60,7 @@ type ApiServerResourcesReconciler interface {
 }
 
 func NewApiServerResourcesReconciler(
-	kubernetesClient kubernetes.Interface,
+	managementClusterClient *alias.ManagementClusterClient,
 	ciliumClient ciliumclient.Interface,
 	worldComponent string,
 	serviceCIDR string,
@@ -77,10 +77,10 @@ func NewApiServerResourcesReconciler(
 ) ApiServerResourcesReconciler {
 	return &apiServerResourcesReconciler{
 		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
-			KubernetesClient: kubernetesClient,
-			CiliumClient:     ciliumClient,
-			WorldComponent:   worldComponent,
-			Tracer:           tracing.GetTracer("apiServerResources"),
+			ManagementClusterClient: managementClusterClient,
+			CiliumClient:            ciliumClient,
+			WorldComponent:          worldComponent,
+			Tracer:                  tracing.GetTracer("apiServerResources"),
 		},
 		worldComponent:                      worldComponent,
 		serviceCIDR:                         serviceCIDR,
@@ -381,7 +381,7 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				ctx,
 				hostedControlPlane,
 				cluster,
-				*hostedControlPlane.Spec.Replicas,
+				hostedControlPlane.Spec.ReplicasOrDefault(),
 				hostedControlPlane.Spec.Deployment.APIServer.PriorityClassName,
 				arr.componentAPIServer,
 				nil,
@@ -486,7 +486,7 @@ func (arr *apiServerResourcesReconciler) reconcileControllerManagerDeployment(
 				ctx,
 				hostedControlPlane,
 				cluster,
-				hostedControlPlane.Spec.Deployment.ControllerManager.Replicas,
+				hostedControlPlane.Spec.Deployment.ControllerManager.ReplicaCount(1),
 				hostedControlPlane.Spec.Deployment.ControllerManager.PriorityClassName,
 				arr.componentControllerManager,
 				map[int32][]networkpolicy.IngressNetworkPolicyTarget{},
@@ -530,7 +530,7 @@ func (arr *apiServerResourcesReconciler) reconcileSchedulerDeployment(
 				ctx,
 				hostedControlPlane,
 				cluster,
-				hostedControlPlane.Spec.Deployment.Scheduler.Replicas,
+				hostedControlPlane.Spec.Deployment.Scheduler.ReplicaCount(1),
 				hostedControlPlane.Spec.Deployment.Scheduler.PriorityClassName,
 				arr.componentScheduler,
 				map[int32][]networkpolicy.IngressNetworkPolicyTarget{},
@@ -887,19 +887,21 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 		"etcd-keyfile":  path.Join(certificatesDir, konstants.APIServerEtcdClientKeyName),
 	}
 
-	if auditConfig := hostedControlPlane.Spec.Deployment.APIServer.Audit; auditConfig != nil {
+	if auditConfig := hostedControlPlane.Spec.Deployment.APIServer.Audit; auditConfig != nil &&
+		auditConfigVolumeMount != nil {
 		args["audit-policy-file"] = path.Join(
 			*auditConfigVolumeMount.MountPath,
 			arr.auditPolicyFileName,
 		)
+		mode := auditConfig.ModeOrDefault()
 		if auditConfig.Webhook != nil {
-			args["audit-webhook-mode"] = auditConfig.Mode
+			args["audit-webhook-mode"] = mode
 			args["audit-webhook-config-file"] = path.Join(
 				*auditConfigVolumeMount.MountPath,
 				arr.auditWebhookConfigFileName,
 			)
 		} else {
-			args["audit-log-mode"] = auditConfig.Mode
+			args["audit-log-mode"] = mode
 			args["audit-log-path"] = "-"
 		}
 	}
@@ -952,7 +954,7 @@ func (arr *apiServerResourcesReconciler) createKonnectivityContainer(
 			"proxy-server",
 			minorVersion,
 		)).
-		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.APIServer.Konnectivity.ImagePullPolicy).
+		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.APIServer.Konnectivity.ImagePullPolicyOrDefault()).
 		WithArgs(arr.buildKonnectivityServerArgs(
 			ctx,
 			hostedControlPlane,
@@ -992,7 +994,7 @@ func (arr *apiServerResourcesReconciler) createAuditWebhookSidecarContainer(
 	return corev1ac.Container().
 		WithName("audit-webhook").
 		WithImage(operatorutil.ResolveNginxImage(auditConfig.Webhook.Image)).
-		WithImagePullPolicy(auditConfig.Webhook.ImagePullPolicy).
+		WithImagePullPolicy(auditConfig.Webhook.ImagePullPolicyOrDefault()).
 		WithCommand("nginx").
 		WithArgs(operatorutil.ArgsToSlice(
 			ctx,
@@ -1092,7 +1094,7 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 			"kube-apiserver",
 			hostedControlPlane.Spec.Version,
 		)).
-		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.APIServer.ImagePullPolicy).
+		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.APIServer.ImagePullPolicyOrDefault()).
 		WithCommand("kube-apiserver").
 		WithArgs(arr.buildAPIServerArgs(
 			ctx, hostedControlPlane, cluster,
@@ -1135,7 +1137,7 @@ func (arr *apiServerResourcesReconciler) createSchedulerContainer(
 			"kube-scheduler",
 			hostedControlPlane.Spec.Version,
 		)).
-		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.Scheduler.ImagePullPolicy).
+		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.Scheduler.ImagePullPolicyOrDefault()).
 		WithCommand("kube-scheduler").
 		WithArgs(arr.buildSchedulerArgs(ctx, hostedControlPlane, schedulerKubeconfigVolumeMount)...).
 		WithPorts(probePort).
@@ -1166,7 +1168,7 @@ func (arr *apiServerResourcesReconciler) createControllerManagerContainer(
 			"kube-controller-manager",
 			hostedControlPlane.Spec.Version,
 		)).
-		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.ControllerManager.ImagePullPolicy).
+		WithImagePullPolicy(hostedControlPlane.Spec.Deployment.ControllerManager.ImagePullPolicyOrDefault()).
 		WithCommand("kube-controller-manager").
 		WithArgs(arr.buildControllerManagerArgs(
 			ctx,
@@ -1192,12 +1194,13 @@ func (arr *apiServerResourcesReconciler) buildSchedulerArgs(
 ) []string {
 	kubeconfigPath := path.Join(*schedulerKubeconfigVolumeMount.MountPath, konstants.SchedulerKubeConfigFileName)
 
+	leaderElect := hostedControlPlane.Spec.Deployment.Scheduler.ReplicaCount(1) > 1
 	args := map[string]string{
 		"authentication-kubeconfig": kubeconfigPath,
 		"authorization-kubeconfig":  kubeconfigPath,
 		"kubeconfig":                kubeconfigPath,
 		"bind-address":              "0.0.0.0",
-		"leader-elect":              strconv.FormatBool(hostedControlPlane.Spec.Deployment.Scheduler.Replicas > 1),
+		"leader-elect":              strconv.FormatBool(leaderElect),
 	}
 
 	return operatorutil.ArgsToSlice(
@@ -1222,7 +1225,7 @@ func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 	// TODO: use map[string]any as soon as https://github.com/kubernetes-sigs/controller-tools/issues/636 is resolved
 	certificatesDir := *controllerManagerCertificatesVolumeMount.MountPath
 	enabledControllers := []string{"*", kubenames.BootstrapSignerController, kubenames.TokenCleanerController}
-	leaderElect := hostedControlPlane.Spec.Deployment.ControllerManager.Replicas > 1
+	leaderElect := hostedControlPlane.Spec.Deployment.ControllerManager.ReplicaCount(1) > 1
 	args := map[string]string{
 		"allocate-node-cidrs":              "false",
 		"authentication-kubeconfig":        kubeconfigPath,
@@ -1415,12 +1418,9 @@ func (arr *apiServerResourcesReconciler) getAuditWebhookAuthenticationToken(
 	authentication v1alpha1.AuditWebhookAuthentication,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 ) ([]byte, error) {
-	secretNamespace := hostedControlPlane.Namespace
+	secretNamespace := ptr.Deref(authentication.SecretNamespace, hostedControlPlane.Namespace)
 	secretName := authentication.SecretName
-	if authentication.SecretNamespace != "" {
-		secretNamespace = authentication.SecretNamespace
-	}
-	secret, err := arr.KubernetesClient.CoreV1().Secrets(secretNamespace).
+	secret, err := arr.ManagementClusterClient.CoreV1().Secrets(secretNamespace).
 		Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -1430,11 +1430,12 @@ func (arr *apiServerResourcesReconciler) getAuditWebhookAuthenticationToken(
 			err,
 		)
 	}
-	token, ok := secret.Data[authentication.TokenKey]
+	tokenKey := authentication.TokenKeyOrDefault()
+	token, ok := secret.Data[tokenKey]
 	if !ok {
 		return nil, fmt.Errorf(
 			"failed to get audit webhook target authentication token key %s in secret %s/%s: %w",
-			authentication.TokenKey,
+			tokenKey,
 			secretNamespace,
 			secretName,
 			errWebhookSecretIsMissingKey,

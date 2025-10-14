@@ -6,7 +6,9 @@ import (
 	"net"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/config"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/coredns"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/konnectivity"
@@ -15,7 +17,6 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -31,8 +32,8 @@ type WorkloadClusterReconciler interface {
 }
 
 func NewWorkloadClusterReconciler(
-	kubernetesClient kubernetes.Interface,
-	managementCluster ManagementCluster,
+	managementClusterClient *alias.ManagementClusterClient,
+	workloadClusterClientFactory WorkloadClusterClientFactory,
 	caCertificateDuration time.Duration,
 	certificateDuration time.Duration,
 	serviceDomain string,
@@ -45,8 +46,8 @@ func NewWorkloadClusterReconciler(
 	konnectivityServicePort int32,
 ) WorkloadClusterReconciler {
 	return &workloadClusterReconciler{
-		kubernetesClient:                    kubernetesClient,
-		managementCluster:                   managementCluster,
+		managementClusterClient:             managementClusterClient,
+		workloadClusterClientFactory:        workloadClusterClientFactory,
 		caCertificateDuration:               caCertificateDuration,
 		certificateDuration:                 certificateDuration,
 		serviceDomain:                       serviceDomain,
@@ -69,8 +70,8 @@ func NewWorkloadClusterReconciler(
 }
 
 type workloadClusterReconciler struct {
-	kubernetesClient                    kubernetes.Interface
-	managementCluster                   ManagementCluster
+	managementClusterClient             *alias.ManagementClusterClient
+	workloadClusterClientFactory        WorkloadClusterClientFactory
 	caCertificateDuration               time.Duration
 	certificateDuration                 time.Duration
 	serviceDomain                       string
@@ -107,8 +108,9 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				Name         string
 			}
 
-			workloadClusterClient, workloadClusterCiliumClient, err := wr.managementCluster.GetWorkloadClusterClient(
+			workloadClusterClient, workloadClusterCiliumClient, err := wr.workloadClusterClientFactory(
 				ctx,
+				wr.managementClusterClient,
 				cluster,
 			)
 			if err != nil {
@@ -176,7 +178,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 					Reconcile: func(ctx context.Context, cluster *capiv2.Cluster) (string, error) {
 						return "", configReconciler.ReconcileClusterInfoConfigMap(
 							ctx,
-							wr.kubernetesClient,
+							wr.managementClusterClient,
 							cluster,
 						)
 					},
@@ -205,7 +207,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 						return kubeProxyReconciler.ReconcileKubeProxy(
 							ctx,
 							hostedControlPlane, cluster,
-							hostedControlPlane.Spec.KubeProxy.Disabled,
+							!hostedControlPlane.Spec.KubeProxy.Enabled(),
 						)
 					},
 					Condition:    v1alpha1.WorkloadKubeProxyReadyCondition,
@@ -229,8 +231,15 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				},
 			}
 
+			logger := logr.FromContextAsSlogLogger(ctx)
 			for _, phase := range workloadPhases {
-				switch notReadyReason, err := phase.Reconcile(ctx, cluster); {
+				switch notReadyReason, err := tracing.WithSpan(ctx, wr.tracer, phase.Name,
+					func(ctx context.Context, span trace.Span) (string, error) {
+						return phase.Reconcile(
+							logr.NewContextWithSlogLogger(ctx, logger.With("phase", phase.Name)),
+							cluster,
+						)
+					}); {
 				case err != nil:
 					conditions.Set(hostedControlPlane, metav1.Condition{
 						Type:    string(phase.Condition),

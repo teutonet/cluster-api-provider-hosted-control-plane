@@ -21,9 +21,9 @@ import (
 )
 
 type WorkloadResourceReconciler struct {
-	Tracer           string
-	KubernetesClient alias.WorkloadClusterClient
-	CiliumClient     ciliumclient.Interface
+	Tracer                string
+	WorkloadClusterClient *alias.WorkloadClusterClient
+	CiliumClient          ciliumclient.Interface
 }
 
 func (wr *WorkloadResourceReconciler) ReconcileService(
@@ -44,7 +44,7 @@ func (wr *WorkloadResourceReconciler) ReconcileService(
 			)
 			service, ready, err := reconcileService(
 				ctx,
-				wr.KubernetesClient,
+				wr.WorkloadClusterClient,
 				namespace,
 				name,
 				nil,
@@ -84,7 +84,7 @@ func (wr *WorkloadResourceReconciler) ReconcileConfigmap(
 				name,
 				reconcileConfigmap(
 					ctx,
-					wr.KubernetesClient,
+					wr.WorkloadClusterClient,
 					namespace,
 					name,
 					deleteResource,
@@ -121,7 +121,7 @@ func (wr *WorkloadResourceReconciler) ReconcileDeployment(
 			)
 			deployment, ready, err := reconcileDeployment(
 				ctx,
-				wr.KubernetesClient,
+				wr.WorkloadClusterClient,
 				wr.CiliumClient,
 				namespace,
 				name,
@@ -166,9 +166,9 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 			)
 			daemonSet, ready, err := reconcileWorkload(
 				ctx,
-				wr.KubernetesClient,
+				wr.WorkloadClusterClient,
 				wr.CiliumClient,
-				wr.KubernetesClient.AppsV1().DaemonSets(namespace),
+				wr.WorkloadClusterClient.AppsV1().DaemonSets(namespace),
 				appsv1.SchemeGroupVersion.String(),
 				"DaemonSet",
 				namespace,

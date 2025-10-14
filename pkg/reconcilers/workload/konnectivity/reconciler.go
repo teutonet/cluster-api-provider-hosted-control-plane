@@ -37,7 +37,7 @@ type KonnectivityReconciler interface {
 }
 
 func NewKonnectivityReconciler(
-	kubernetesClient alias.WorkloadClusterClient,
+	managementClusterClient *alias.WorkloadClusterClient,
 	ciliumClient ciliumclient.Interface,
 	konnectivityNamespace string,
 	konnectivityServiceAccount string,
@@ -46,9 +46,9 @@ func NewKonnectivityReconciler(
 ) KonnectivityReconciler {
 	return &konnectivityReconciler{
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
-			KubernetesClient: kubernetesClient,
-			CiliumClient:     ciliumClient,
-			Tracer:           tracing.GetTracer("konnectivity"),
+			WorkloadClusterClient: managementClusterClient,
+			CiliumClient:          ciliumClient,
+			Tracer:                tracing.GetTracer("konnectivity"),
 		},
 		konnectivityServerAudience:          konnectivityServerAudience,
 		konnectivityServicePort:             konnectivityServicePort,
@@ -94,10 +94,7 @@ func (kr *konnectivityReconciler) ReconcileKonnectivity(
 
 			logger := logr.FromContextAsSlogLogger(ctx)
 			for _, phase := range phases {
-				notReadyReason, err := tracing.WithSpan(
-					ctx,
-					kr.Tracer,
-					phase.Name,
+				notReadyReason, err := tracing.WithSpan(ctx, kr.Tracer, phase.Name,
 					func(ctx context.Context, _ trace.Span) (string, error) {
 						return phase.Reconcile(logr.NewContextWithSlogLogger(ctx, logger.With("phase", phase.Name)))
 					},
@@ -122,7 +119,7 @@ func (kr *konnectivityReconciler) reconcileKonnectivityRBAC(ctx context.Context)
 				kr.konnectivityNamespace,
 			)
 
-			_, err := kr.KubernetesClient.CoreV1().
+			_, err := kr.WorkloadClusterClient.CoreV1().
 				ServiceAccounts(*serviceAccount.Namespace).
 				Apply(ctx, serviceAccount, operatorutil.ApplyOptions)
 			if err != nil {
@@ -136,7 +133,7 @@ func (kr *konnectivityReconciler) reconcileKonnectivityRBAC(ctx context.Context)
 						WithResources("leases").
 						WithVerbs("watch", "list"),
 				)
-			_, err = kr.KubernetesClient.RbacV1().Roles(*role.Namespace).
+			_, err = kr.WorkloadClusterClient.RbacV1().Roles(*role.Namespace).
 				Apply(ctx, role, operatorutil.ApplyOptions)
 			if err != nil {
 				return "", fmt.Errorf("failed to apply konnectivity agent role: %w", err)
@@ -156,11 +153,11 @@ func (kr *konnectivityReconciler) reconcileKonnectivityRBAC(ctx context.Context)
 						WithNamespace(*serviceAccount.Namespace),
 				)
 
-			_, err = kr.KubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
+			_, err = kr.WorkloadClusterClient.RbacV1().RoleBindings(*roleBinding.Namespace).
 				Apply(ctx, roleBinding, operatorutil.ApplyOptions)
 			if err != nil {
 				if apierrors.IsInvalid(err) {
-					if err := kr.KubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace).
+					if err := kr.WorkloadClusterClient.RbacV1().RoleBindings(*roleBinding.Namespace).
 						Delete(ctx, *roleBinding.Name, metav1.DeleteOptions{}); err != nil {
 						return "", fmt.Errorf(
 							"failed to delete invalid konnectivity agent role binding %s/%s: %w",
@@ -188,11 +185,11 @@ func (kr *konnectivityReconciler) reconcileKonnectivityRBAC(ctx context.Context)
 						WithNamespace(*serviceAccount.Namespace),
 				)
 
-			_, err = kr.KubernetesClient.RbacV1().ClusterRoleBindings().
+			_, err = kr.WorkloadClusterClient.RbacV1().ClusterRoleBindings().
 				Apply(ctx, clusterRoleBinding, operatorutil.ApplyOptions)
 			if err != nil {
 				if apierrors.IsInvalid(err) {
-					if err := kr.KubernetesClient.RbacV1().ClusterRoleBindings().
+					if err := kr.WorkloadClusterClient.RbacV1().ClusterRoleBindings().
 						Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{}); err != nil {
 						return "", fmt.Errorf(
 							"failed to delete invalid konnectivity agent cluster role binding %s: %w",
@@ -255,7 +252,7 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDeployment(
 					"proxy-agent",
 					minorVersion,
 				)).
-				WithImagePullPolicy(hostedControlPlane.Spec.KonnectivityClient.ImagePullPolicy).
+				WithImagePullPolicy(hostedControlPlane.Spec.KonnectivityClient.ImagePullPolicyOrDefault()).
 				WithArgs(kr.buildKonnectivityClientArgs(
 					ctx,
 					hostedControlPlane,
@@ -280,7 +277,7 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDeployment(
 				WithPorts(healthPort).
 				WithVolumeMounts(serviceAccountTokenVolumeMount)
 
-			nodes, err := kr.KubernetesClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+			nodes, err := kr.WorkloadClusterClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 			if err != nil {
 				return "", fmt.Errorf("failed to list nodes: %w", err)
 			}
@@ -291,7 +288,10 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDeployment(
 				"konnectivity-agent",
 				false,
 				int32(
-					math.Min(float64(len(nodes.Items)), float64(hostedControlPlane.Spec.KonnectivityClient.Replicas)),
+					math.Min(
+						float64(len(nodes.Items)),
+						float64(hostedControlPlane.Spec.KonnectivityClient.ReplicaCount(2)),
+					),
 				),
 				reconcilers.PodOptions{
 					ServiceAccountName: kr.konnectivityServiceAccountName,

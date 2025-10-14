@@ -13,12 +13,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go4.org/readerutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -42,23 +43,23 @@ var _ S3Client = &s3Client{}
 
 type S3ClientFactory = func(
 	ctx context.Context,
-	kubernetesClient kubernetes.Interface,
+	managementClusterClient *alias.ManagementClusterClient,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 ) (S3Client, error)
 
 func NewS3Client(
 	ctx context.Context,
-	kubernetesClient kubernetes.Interface,
+	managementClusterClient *alias.ManagementClusterClient,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 ) (S3Client, error) {
 	return tracing.WithSpan(ctx, tracer, "NewS3Client", func(ctx context.Context, span trace.Span) (S3Client, error) {
 		etcdBackupSecretConfig := hostedControlPlane.Spec.ETCD.Backup.Secret
-		secretNamespace := etcdBackupSecretConfig.Namespace
+		secretNamespace := ptr.Deref(etcdBackupSecretConfig.Namespace, hostedControlPlane.Namespace)
 		secretName := etcdBackupSecretConfig.Name
-		accessKeyIDKey := etcdBackupSecretConfig.AccessKeyIDKey
-		secretAccessKeyKey := etcdBackupSecretConfig.SecretAccessKeyKey
+		accessKeyIDKey := etcdBackupSecretConfig.AccessKeyIDKeyOrDefault()
+		secretAccessKeyKey := etcdBackupSecretConfig.SecretAccessKeyKeyOrDefault()
 		spanAttributes := []attribute.KeyValue{
 			attribute.String("etcd.backup.s3.secret.namespace", secretNamespace),
 			attribute.String("etcd.backup.s3.secret.name", secretName),
@@ -70,7 +71,7 @@ func NewS3Client(
 			attribute.String("etcd.backup.schedule", hostedControlPlane.Spec.ETCD.Backup.Schedule),
 		}
 		span.SetAttributes(spanAttributes...)
-		s3Secret, err := kubernetesClient.CoreV1().Secrets(secretNamespace).
+		s3Secret, err := managementClusterClient.CoreV1().Secrets(secretNamespace).
 			Get(ctx, secretName, metav1.GetOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to get S3 credentials secret: %w", err)
@@ -107,11 +108,11 @@ func NewS3Client(
 }
 
 func (s *s3Client) Upload(ctx context.Context, body io.ReadCloser) error {
-	return tracing.WithSpan1(ctx, tracer, "Upload", func(ctx context.Context, span trace.Span) (err error) {
+	return tracing.WithSpan1(ctx, tracer, "Upload", func(ctx context.Context, span trace.Span) (retErr error) {
 		span.SetAttributes(s.spanAttributes...)
 		defer func() {
 			if closeErr := body.Close(); closeErr != nil {
-				err = errors.Join(err, fmt.Errorf("failed to close body reader: %w", closeErr))
+				retErr = errors.Join(retErr, fmt.Errorf("failed to close body reader: %w", closeErr))
 			}
 		}()
 		countingReader := readerutil.CountingReader{Reader: body}

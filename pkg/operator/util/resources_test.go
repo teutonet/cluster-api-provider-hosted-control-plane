@@ -23,7 +23,7 @@ func TestResourceRequirementsToResourcesApplyConfiguration(t *testing.T) {
 
 type resourceTestCase struct {
 	name     string
-	input    corev1.ResourceRequirements
+	input    *corev1.ResourceRequirements
 	validate func(Gomega, *corev1ac.ResourceRequirementsApplyConfiguration)
 }
 
@@ -56,7 +56,7 @@ func getBasicResourceTestCases() []resourceTestCase {
 	return []resourceTestCase{
 		{
 			name:  "empty resource requirements",
-			input: corev1.ResourceRequirements{},
+			input: &corev1.ResourceRequirements{},
 			validate: func(g Gomega, result *corev1ac.ResourceRequirementsApplyConfiguration) {
 				g.Expect(result).NotTo(BeNil())
 				validateResourceLimitsAndRequests(g, result, nil, nil)
@@ -65,7 +65,7 @@ func getBasicResourceTestCases() []resourceTestCase {
 		},
 		{
 			name: "resource requirements with limits only",
-			input: corev1.ResourceRequirements{
+			input: &corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("100m"),
 					corev1.ResourceMemory: resource.MustParse("256Mi"),
@@ -81,7 +81,7 @@ func getBasicResourceTestCases() []resourceTestCase {
 		},
 		{
 			name: "resource requirements with requests only",
-			input: corev1.ResourceRequirements{
+			input: &corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("50m"),
 					corev1.ResourceMemory: resource.MustParse("128Mi"),
@@ -97,7 +97,7 @@ func getBasicResourceTestCases() []resourceTestCase {
 		},
 		{
 			name: "resource requirements with both limits and requests",
-			input: corev1.ResourceRequirements{
+			input: &corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("200m"),
 					corev1.ResourceMemory: resource.MustParse("512Mi"),
@@ -128,7 +128,7 @@ func getAdvancedResourceTestCases() []resourceTestCase {
 	return []resourceTestCase{
 		{
 			name: "resource requirements with claims",
-			input: corev1.ResourceRequirements{
+			input: &corev1.ResourceRequirements{
 				Claims: []corev1.ResourceClaim{
 					{
 						Name:    "gpu-claim-1",
@@ -161,7 +161,7 @@ func getAdvancedResourceTestCases() []resourceTestCase {
 		},
 		{
 			name: "comprehensive resource requirements",
-			input: corev1.ResourceRequirements{
+			input: &corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
 					corev1.ResourceCPU:              resource.MustParse("1000m"),
 					corev1.ResourceMemory:           resource.MustParse("1Gi"),
@@ -204,7 +204,7 @@ func getAdvancedResourceTestCases() []resourceTestCase {
 		},
 		{
 			name: "custom resource types",
-			input: corev1.ResourceRequirements{
+			input: &corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
 					"example.com/custom-resource": resource.MustParse("5"),
 					"nvidia.com/gpu":              resource.MustParse("1"),
@@ -237,7 +237,7 @@ func TestResourceRequirementsToResourcesApplyConfigurationReturnType(t *testing.
 		},
 	}
 
-	result := ResourceRequirementsToResourcesApplyConfiguration(input)
+	result := ResourceRequirementsToResourcesApplyConfiguration(&input)
 
 	g.Expect(result).NotTo(BeNil())
 

@@ -7,19 +7,18 @@ import (
 
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/go-logr/logr"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
@@ -45,15 +44,15 @@ type KubeProxyReconciler interface {
 }
 
 func NewKubeProxyReconciler(
-	kubernetesClient alias.WorkloadClusterClient,
+	managementClusterClient *alias.WorkloadClusterClient,
 	ciliumClient ciliumclient.Interface,
 	podCIDR string,
 ) KubeProxyReconciler {
 	return &kubeProxyReconciler{
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
-			KubernetesClient: kubernetesClient,
-			CiliumClient:     ciliumClient,
-			Tracer:           tracing.GetTracer("kubeproxy"),
+			WorkloadClusterClient: managementClusterClient,
+			CiliumClient:          ciliumClient,
+			Tracer:                tracing.GetTracer("kubeproxy"),
 		},
 		podCIDR:                 podCIDR,
 		kubeProxyNamespace:      metav1.NamespaceSystem,
@@ -115,10 +114,7 @@ func (kr *kubeProxyReconciler) ReconcileKubeProxy(
 
 			logger := logr.FromContextAsSlogLogger(ctx)
 			for _, phase := range phases {
-				notReadyReason, err := tracing.WithSpan(
-					ctx,
-					kr.Tracer,
-					phase.Name,
+				notReadyReason, err := tracing.WithSpan(ctx, kr.Tracer, phase.Name,
 					func(ctx context.Context, _ trace.Span) (string, error) {
 						return phase.Reconcile(
 							logr.NewContextWithSlogLogger(ctx, logger.With("phase", phase.Name)),
@@ -146,7 +142,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(
 		func(ctx context.Context, span trace.Span) error {
 			serviceAccount := corev1ac.ServiceAccount(kr.kubeProxyServiceAccount, kr.kubeProxyNamespace)
 
-			serviceAccountInterface := kr.KubernetesClient.CoreV1().
+			serviceAccountInterface := kr.WorkloadClusterClient.CoreV1().
 				ServiceAccounts(*serviceAccount.Namespace)
 			if deleteResource {
 				err := serviceAccountInterface.
@@ -174,7 +170,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(
 					WithNamespace(*serviceAccount.Namespace),
 				)
 
-			clusterRoleBindingInterface := kr.KubernetesClient.RbacV1().ClusterRoleBindings()
+			clusterRoleBindingInterface := kr.WorkloadClusterClient.RbacV1().ClusterRoleBindings()
 			if deleteResource {
 				err := clusterRoleBindingInterface.
 					Delete(ctx, *clusterRoleBinding.Name, metav1.DeleteOptions{})
@@ -198,7 +194,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(
 						WithResourceNames(kr.kubeProxyConfigMapName),
 				)
 
-			roleInterface := kr.KubernetesClient.RbacV1().Roles(*role.Namespace)
+			roleInterface := kr.WorkloadClusterClient.RbacV1().Roles(*role.Namespace)
 			if deleteResource {
 				err := roleInterface.
 					Delete(ctx, *role.Name, metav1.DeleteOptions{})
@@ -224,7 +220,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(
 					WithName(konstants.NodeBootstrapTokenAuthGroup),
 				)
 
-			roleBindingInterface := kr.KubernetesClient.RbacV1().RoleBindings(*roleBinding.Namespace)
+			roleBindingInterface := kr.WorkloadClusterClient.RbacV1().RoleBindings(*roleBinding.Namespace)
 			if deleteResource {
 				err := roleBindingInterface.
 					Delete(ctx, *roleBinding.Name, metav1.DeleteOptions{})
@@ -355,7 +351,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 					hostedControlPlane.Spec.KubeProxy.Image,
 					hostedControlPlane.Spec.Version,
 				)).
-				WithImagePullPolicy(hostedControlPlane.Spec.KubeProxy.ImagePullPolicy).
+				WithImagePullPolicy(hostedControlPlane.Spec.KubeProxy.ImagePullPolicyOrDefault()).
 				WithCommand("/usr/local/bin/kube-proxy").
 				WithArgs(kr.buildArgs(ctx, hostedControlPlane, kubeProxyConfigVolumeMount)...).
 				WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(

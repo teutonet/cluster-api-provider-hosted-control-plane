@@ -33,7 +33,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			namespace:      "test-namespace",
 			configMapNames: []string{"test-config"},
 			setupConfigMaps: func(client *fake.Clientset, namespace string, g Gomega) {
-				_, err := client.CoreV1().ConfigMaps(namespace).Create(
+				g.Expect(client.CoreV1().ConfigMaps(namespace).Create(
 					t.Context(),
 					&corev1.ConfigMap{
 						ObjectMeta: metav1.ObjectMeta{
@@ -46,8 +46,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 						},
 					},
 					metav1.CreateOptions{},
-				)
-				g.Expect(err).NotTo(HaveOccurred())
+				)).Error().NotTo(HaveOccurred())
 			},
 			expectError:    false,
 			expectedLength: 32,
@@ -81,12 +80,11 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 				}
 
 				for _, cm := range configMaps {
-					_, err := client.CoreV1().ConfigMaps(namespace).Create(
+					g.Expect(client.CoreV1().ConfigMaps(namespace).Create(
 						t.Context(),
 						cm,
 						metav1.CreateOptions{},
-					)
-					g.Expect(err).NotTo(HaveOccurred())
+					)).Error().NotTo(HaveOccurred())
 				}
 			},
 			expectError:    false,
@@ -97,7 +95,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			namespace:      "test-namespace",
 			configMapNames: []string{"binary-config"},
 			setupConfigMaps: func(client *fake.Clientset, namespace string, g Gomega) {
-				_, err := client.CoreV1().ConfigMaps(namespace).Create(
+				g.Expect(client.CoreV1().ConfigMaps(namespace).Create(
 					t.Context(),
 					&corev1.ConfigMap{
 						ObjectMeta: metav1.ObjectMeta{
@@ -112,8 +110,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 						},
 					},
 					metav1.CreateOptions{},
-				)
-				g.Expect(err).NotTo(HaveOccurred())
+				)).Error().NotTo(HaveOccurred())
 			},
 			expectError:    false,
 			expectedLength: 32,
@@ -131,7 +128,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 			namespace:      "test-namespace",
 			configMapNames: []string{"existing", "non-existent"},
 			setupConfigMaps: func(client *fake.Clientset, namespace string, g Gomega) {
-				_, err := client.CoreV1().ConfigMaps(namespace).Create(
+				g.Expect(client.CoreV1().ConfigMaps(namespace).Create(
 					t.Context(),
 					&corev1.ConfigMap{
 						ObjectMeta: metav1.ObjectMeta{
@@ -143,8 +140,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 						},
 					},
 					metav1.CreateOptions{},
-				)
-				g.Expect(err).NotTo(HaveOccurred())
+				)).Error().NotTo(HaveOccurred())
 			},
 			expectError:    true,
 			expectedLength: 0,
@@ -194,7 +190,7 @@ func TestCalculateConfigMapChecksum_Consistency(t *testing.T) {
 	g := NewWithT(t)
 	fakeClient := fake.NewClientset()
 
-	_, err := fakeClient.CoreV1().ConfigMaps(namespace).Create(
+	g.Expect(fakeClient.CoreV1().ConfigMaps(namespace).Create(
 		t.Context(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
@@ -207,8 +203,7 @@ func TestCalculateConfigMapChecksum_Consistency(t *testing.T) {
 			},
 		},
 		metav1.CreateOptions{},
-	)
-	g.Expect(err).NotTo(HaveOccurred())
+	)).Error().NotTo(HaveOccurred())
 
 	// Calculate checksum multiple times
 	checksum1, err := CalculateConfigMapChecksum(
@@ -256,12 +251,11 @@ func TestCalculateConfigMapChecksum_Ordering(t *testing.T) {
 	}
 
 	for _, cm := range configMaps {
-		_, err := fakeClient.CoreV1().ConfigMaps(namespace).Create(
+		g.Expect(fakeClient.CoreV1().ConfigMaps(namespace).Create(
 			t.Context(),
 			cm,
 			metav1.CreateOptions{},
-		)
-		g.Expect(err).NotTo(HaveOccurred())
+		)).Error().NotTo(HaveOccurred())
 	}
 
 	// Calculate checksum with different order
@@ -288,7 +282,7 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 	g := NewWithT(t)
 	fakeClient := fake.NewClientset()
 
-	_, err := fakeClient.CoreV1().ConfigMaps(namespace).Create(
+	g.Expect(fakeClient.CoreV1().ConfigMaps(namespace).Create(
 		t.Context(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
@@ -300,8 +294,7 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 			},
 		},
 		metav1.CreateOptions{},
-	)
-	g.Expect(err).NotTo(HaveOccurred())
+	)).Error().NotTo(HaveOccurred())
 
 	checksum1, err := CalculateConfigMapChecksum(
 		t.Context(),
@@ -311,7 +304,7 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 	)
 	g.Expect(err).NotTo(HaveOccurred())
 
-	_, err = fakeClient.CoreV1().ConfigMaps(namespace).Update(
+	g.Expect(fakeClient.CoreV1().ConfigMaps(namespace).Update(
 		t.Context(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
@@ -324,8 +317,7 @@ func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
 			},
 		},
 		metav1.UpdateOptions{},
-	)
-	g.Expect(err).NotTo(HaveOccurred())
+	)).Error().NotTo(HaveOccurred())
 
 	checksum2, err := CalculateConfigMapChecksum(
 		t.Context(),
