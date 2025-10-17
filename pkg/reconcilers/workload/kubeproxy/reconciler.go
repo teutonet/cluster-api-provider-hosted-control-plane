@@ -278,6 +278,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(
 				},
 				ClusterCIDR:        kr.podCIDR,
 				MetricsBindAddress: "0.0.0.0:10249",
+				NodePortAddresses:  []string{"primary"},
 			}
 
 			kubeconfigBytes, err := clientcmd.Write(*kubeconfig)
@@ -364,12 +365,6 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 							WithFieldPath("spec.nodeName"),
 						),
 					),
-					corev1ac.EnvVar().WithName("NODE_IP").
-						WithValueFrom(corev1ac.EnvVarSource().
-							WithFieldRef(corev1ac.ObjectFieldSelector().
-								WithFieldPath("status.hostIP"),
-							),
-						),
 				).
 				WithVolumeMounts(kubeProxyConfigVolumeMount, xtablesLockVolumeMount, modulesVolumeMount)
 
@@ -424,10 +419,8 @@ func (kr *kubeProxyReconciler) buildArgs(
 	kubeProxyConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 ) []string {
 	args := map[string]string{
-		"config":             path.Join(*kubeProxyConfigVolumeMount.MountPath, kr.kubeProxyConfigMapKey),
-		"hostname-override":  "$(NODE_NAME)",
-		"nodeport-addresses": "primary",
-		"bind-address":       "$(NODE_IP)",
+		"config":            path.Join(*kubeProxyConfigVolumeMount.MountPath, kr.kubeProxyConfigMapKey),
+		"hostname-override": "$(NODE_NAME)",
 	}
 	return operatorutil.ArgsToSlice(ctx, hostedControlPlane.Spec.KubeProxy.Args, args)
 }
