@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.1.1...v1.2.0) (2025-10-18)
+
+
+### Features
+
+* add whole lifecycle test ([#26](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/26)) ([2cb6170](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/2cb617000197236f65314b68f413004beb6c9827))
+
+
+### Bug Fixes
+
+* don't set NODE_IP for kubeproxy, otherwise it fails without cloud provider ([#27](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/27)) ([609f3c7](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/609f3c70f1f7702605ad9fec718a627b7af02437))
+
 ## [1.1.1](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.1.0...v1.1.1) (2025-10-01)
 
 
