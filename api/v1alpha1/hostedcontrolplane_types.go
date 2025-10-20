@@ -17,7 +17,7 @@ import (
 //+kubebuilder:resource:path=hostedcontrolplanes,scope=Namespaced,categories=cluster-api,shortName=hcp
 //+kubebuilder:subresource:status
 //+kubebuilder:storageversion
-//+kubebuilder:printcolumn:name="Initialized",type=boolean,JSONPath=`.status.initialized`
+//+kubebuilder:printcolumn:name="Initialized",type=boolean,JSONPath=`.status.initialization.controlPlaneInitialized`
 //+kubebuilder:printcolumn:name="API Server Available",type=string,JSONPath=`.status.conditions[?(@.type == "Ready")].status`
 //+kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 //+kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
@@ -243,6 +243,8 @@ type HostedControlPlaneStatus struct {
 	//+kubebuilder:validation:Optional
 	UpdatedReplicas int32 `json:"updatedReplicas,omitempty"`
 	//+kubebuilder:validation:Optional
+	UpToDateReplicas int32 `json:"upToDateReplicas,omitempty"`
+	//+kubebuilder:validation:Optional
 	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
 	//+kubebuilder:validation:Optional
 	UnavailableReplicas int32 `json:"unavailableReplicas,omitempty"`
@@ -251,12 +253,17 @@ type HostedControlPlaneStatus struct {
 	// https://cluster-api.sigs.k8s.io/developer/providers/contracts/control-plane
 
 	//+kubebuilder:validation:Optional
-	Initialized bool `json:"initialized"`
+	Initialization HostedControlPlaneInitializationStatus `json:"initialization,omitempty"`
 	//+kubebuilder:validation:Optional
 	Ready bool `json:"ready"`
 	//+kubebuilder:validation:Optional
 	Version                     string `json:"version,omitempty"`
 	ExternalManagedControlPlane *bool  `json:"externalManagedControlPlane"`
+}
+
+type HostedControlPlaneInitializationStatus struct {
+	//+kubebuilder:validation:Optional
+	ControlPlaneInitialized *bool `json:"controlPlaneInitialized,omitempty"`
 }
 
 //+kubebuilder:object:root=true

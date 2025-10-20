@@ -409,6 +409,7 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				hostedControlPlane.Status.UnavailableReplicas = deployment.Status.UnavailableReplicas
 				hostedControlPlane.Status.ReadyReplicas = deployment.Status.ReadyReplicas
 				hostedControlPlane.Status.UpdatedReplicas = deployment.Status.UpdatedReplicas
+				hostedControlPlane.Status.UpToDateReplicas = deployment.Status.UpdatedReplicas
 				return ready, nil
 			}
 		},
