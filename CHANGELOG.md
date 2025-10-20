@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.2.0...v1.2.1) (2025-10-20)
+
+
+### Bug Fixes
+
+* **ci:** apparently hidden in changelog means ignored completely ([0d1733e](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/0d1733eb6901230026d7ed4d6629d4d661e08141))
+
 ## [1.2.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.1.1...v1.2.0) (2025-10-18)
 
 
