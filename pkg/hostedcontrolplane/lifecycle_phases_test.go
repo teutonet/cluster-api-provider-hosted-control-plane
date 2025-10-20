@@ -1392,7 +1392,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		return condition.Type != capiv2.PausedCondition && condition.Status != metav1.ConditionTrue
 	})).To(BeEmpty())
 	g.Expect(hcp.Status.Ready).To(BeTrue())
-	g.Expect(hcp.Status.Initialized).To(BeTrue())
+	g.Expect(hcp.Status.Initialization.ControlPlaneInitialized).To(PointTo(BeTrue()))
 
 	// Check that major conditions exist
 	majorConditions := []string{
