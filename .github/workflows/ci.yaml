@@ -28,6 +28,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # needed for finding the current version
 
       - uses: actions/setup-go@v6
         with:
