@@ -88,7 +88,21 @@ tasks:
     sources:
       - ./**/*.go
       - ./.golangci.yaml
-    cmd: "{{ .golangciLintCmd }} run --fix={{ .fix }}"
+      - ./metadata.yaml
+    cmds:
+      - "{{ .golangciLintCmd }} run --fix={{ .fix }}"
+      - |
+        set -x
+        declare -a supportedVersions
+        mapfile -t supportedVersions <<< "$(sed -n -r 's#^\s+cluster.x-k8s.io/(\S+): \S+#\1#gp' build/crds/controlplane.* | grep -v provider | sort -u)"
+        declare -a currentVersion
+        mapfile -t currentVersion <<< "$(echo {{ .version }} | sed -r 's#v([^.]+)\.([^.]+)\..*#\1\n\2#g')"
+        for version in "${supportedVersions[@]}"; do
+          if ! ({{ .qqCmd }} -r ".releaseSeries | map(select(.major == ${currentVersion[0]} and .minor == ${currentVersion[1]}))[0].contract" metadata.yaml | grep -q "$version"); then
+            echo "Make sure the current version is set inside the metadata.yaml 🙄" > /dev/stderr
+            exit 1
+          fi
+        done
     generates:
       - ./**/*.go
       - "{{ .artifactsDir }}/golangci-lint.json"

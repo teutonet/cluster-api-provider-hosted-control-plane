@@ -65,6 +65,13 @@ jobs:
           asset_path: ./build/control-plane-components.yaml
           asset_name: control-plane-components.yaml
           asset_content_type: application/yaml
+      - name: Upload metadata
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ needs.release-please.outputs.upload_url }}
+          asset_path: ./metadata.yaml
+          asset_name: metadata.yaml
+          asset_content_type: application/yaml
 
       - name: Release draft
         run: gh release edit ${{ needs.release-please.outputs.tag_name }} --draft=false
