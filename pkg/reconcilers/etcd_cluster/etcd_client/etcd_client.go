@@ -258,12 +258,10 @@ func callETCDFuncOnMember[R any](
 				}
 			}()
 
-			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-
 			var result R
-			_, _, err = slices.AttemptWithDelay(4, 5*time.Second, func(_ int, _ time.Duration) error {
-				var err error
+			_, _, err = slices.AttemptWithDelay(4, 5*time.Second, func(_ int, _ time.Duration) (err error) {
+				ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
 				result, err = etcdFunc(*etcdClient, ctx, endpoint)
 				return err
 			})
