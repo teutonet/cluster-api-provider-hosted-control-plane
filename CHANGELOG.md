@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.2.1...v1.2.2) (2025-10-24)
+
+
+### Bug Fixes
+
+* create a new ctx with cancel for each call ([#33](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/33)) ([2d6f7b8](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/2d6f7b860d0b80336769694016784f7af7d522d7))
+
 ## [1.2.1](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.2.0...v1.2.1) (2025-10-20)
 
 
