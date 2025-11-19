@@ -41,6 +41,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/cluster-bootstrap/token/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	"k8s.io/kubernetes/pkg/controller/certificates/rootcacertpublisher"
 	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -1414,6 +1415,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 }
 
 func simulateK8sAPI(ctx context.Context, kubernetesClient kubernetes.Interface, g *WithT) {
+	namespaces := []string{metav1.NamespaceSystem}
 	nodes, err := kubernetesClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	g.Expect(err).To(Succeed())
 	allNodesCount := int32(len(nodes.Items))
@@ -1421,6 +1423,7 @@ func simulateK8sAPI(ctx context.Context, kubernetesClient kubernetes.Interface, 
 	daemonSets, err := kubernetesClient.AppsV1().DaemonSets("").List(ctx, metav1.ListOptions{})
 	g.Expect(err).To(Succeed())
 	for _, daemonSet := range daemonSets.Items {
+		namespaces = append(namespaces, daemonSet.Namespace)
 		g.Expect(daemonSet.Spec.Template.Spec.NodeSelector).
 			To(BeEmpty(), "DaemonSet %s has a node selector, cannot scale reliably", daemonSet.Name)
 		daemonSetApplyConfiguration, err := appsv1ac.ExtractDaemonSet(&daemonSet, k8sFieldManager)
@@ -1440,6 +1443,7 @@ func simulateK8sAPI(ctx context.Context, kubernetesClient kubernetes.Interface, 
 	statefulSets, err := kubernetesClient.AppsV1().StatefulSets("").List(ctx, metav1.ListOptions{})
 	g.Expect(err).To(Succeed())
 	for _, statefulSet := range statefulSets.Items {
+		namespaces = append(namespaces, statefulSet.Namespace)
 		for _, persistentVolumeClaimTemplate := range statefulSet.Spec.VolumeClaimTemplates {
 			slices.RepeatBy(int(*statefulSet.Spec.Replicas), func(i int) bool {
 				g.Expect(kubernetesClient.CoreV1().PersistentVolumeClaims(statefulSet.Namespace).Apply(ctx,
@@ -1463,6 +1467,16 @@ func simulateK8sAPI(ctx context.Context, kubernetesClient kubernetes.Interface, 
 				return true
 			})
 		}
+	}
+
+	for _, namespace := range namespaces {
+		g.Expect(kubernetesClient.CoreV1().ConfigMaps(namespace).Apply(ctx,
+			corev1ac.ConfigMap(rootcacertpublisher.RootCACertConfigMapName, namespace).
+				WithData(map[string]string{
+					konstants.CACertName: "fake-root-ca-cert",
+				}),
+			k8sOptions,
+		)).Error().To(Succeed())
 	}
 }
 
