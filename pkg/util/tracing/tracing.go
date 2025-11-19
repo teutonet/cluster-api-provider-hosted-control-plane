@@ -12,9 +12,8 @@ import (
 	"golang.org/x/text/language"
 )
 
-var titleCaser = cases.Title(language.English)
-
 func GetTracer(components ...string) string {
+	titleCaser := cases.Title(language.English)
 	tracer := "HostedControlPlane" + strings.Join(slices.Map(components, func(component string, _ int) string {
 		return titleCaser.String(component)
 	}), "") + "Reconciler"
