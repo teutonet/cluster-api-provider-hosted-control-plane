@@ -7,6 +7,7 @@ import (
 
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	slices "github.com/samber/lo"
+	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
@@ -18,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	"k8s.io/kubernetes/pkg/controller/certificates/rootcacertpublisher"
 )
 
 type WorkloadResourceReconciler struct {
@@ -119,6 +121,9 @@ func (wr *WorkloadResourceReconciler) ReconcileDeployment(
 				attribute.Int("deployment.containers.count", len(containers)),
 				attribute.Int("deployment.volumes.count", len(volumes)),
 			)
+			if err := wr.addKubeCAChecksum(ctx, namespace, &podOptions); err != nil {
+				return nil, false, err
+			}
 			deployment, ready, err := reconcileDeployment(
 				ctx,
 				wr.WorkloadClusterClient,
@@ -164,6 +169,9 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 				attribute.Int("daemonset.containers.count", len(containers)),
 				attribute.Int("daemonset.volumes.count", len(volumes)),
 			)
+			if err := wr.addKubeCAChecksum(ctx, namespace, &podOptions); err != nil {
+				return nil, false, err
+			}
 			daemonSet, ready, err := reconcileWorkload(
 				ctx,
 				wr.WorkloadClusterClient,
@@ -208,4 +216,25 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 			return daemonSet, ready, err
 		},
 	)
+}
+
+func (wr *WorkloadResourceReconciler) addKubeCAChecksum(
+	ctx context.Context, namespace string, podOptions *PodOptions,
+) error {
+	// various components doesn't refresh the root CA cert, so we need to restart the pods when it changes
+	// TODO: keep until https://github.com/kubernetes-sigs/apiserver-network-proxy/issues/801 is resolved
+	// TODO: check coredns
+	// TODO: check kube-proxy
+	caCrtChecksum, err := operatorutil.CalculateConfigMapChecksum(ctx, wr.WorkloadClusterClient,
+		namespace,
+		[]string{rootcacertpublisher.RootCACertConfigMapName},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to calculate kube-root CA configmap checksum: %w", err)
+	}
+	if podOptions.Annotations == nil {
+		podOptions.Annotations = map[string]string{}
+	}
+	podOptions.Annotations["checksum/ca.crt"] = caCrtChecksum
+	return nil
 }
