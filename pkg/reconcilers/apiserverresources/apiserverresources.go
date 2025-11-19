@@ -852,6 +852,7 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 			return string(item)
 		})
 
+	jwksURI := fmt.Sprintf("https://%s/openid/v1/jwks", cluster.Spec.ControlPlaneEndpoint.String())
 	args := map[string]string{
 		"external-hostname":           cluster.Spec.ControlPlaneEndpoint.Host,
 		"advertise-address":           hostedControlPlane.Status.LegacyIP,
@@ -875,6 +876,7 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 		"requestheader-username-headers":     "X-Remote-User",
 		"secure-port":                        strconv.Itoa(int(*apiPort.ContainerPort)),
 		"service-account-issuer":             "https://kubernetes.default.svc",
+		"service-account-jwks-uri":           jwksURI,
 		"service-account-key-file":           path.Join(certificatesDir, konstants.ServiceAccountPublicKeyName),
 		"service-account-signing-key-file":   path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
 		"service-cluster-ip-range":           arr.serviceCIDR,
