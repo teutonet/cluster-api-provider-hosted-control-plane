@@ -303,7 +303,7 @@ tasks:
       vars:
         - KUBECONFIG
     env:
-      NAMESPACE: capi-hosted-control-plane-manager-system
+      NAMESPACE: capi-hosted-control-plane-system
       DEPLOYMENT_NAME: capi-hosted-control-plane-controller-manager
     # always run the cleanup stuff
     ignore_error: true

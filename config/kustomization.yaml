@@ -1,4 +1,4 @@
-namespace: capi-hosted-control-plane-manager-system
+namespace: capi-hosted-control-plane-system
 
 namePrefix: capi-hosted-control-plane-
 
