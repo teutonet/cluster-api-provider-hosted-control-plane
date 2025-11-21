@@ -151,6 +151,7 @@ tasks:
       - generate
     sources:
       - ./**/*.go
+      - go.mod
       - go.sum
       - exclude: pkg/**/*_test.go
     vars:
