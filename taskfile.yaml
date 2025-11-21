@@ -36,16 +36,16 @@ vars:
       kustomize:
         url: sigs.k8s.io/kustomize/kustomize/v5
         version: 5.7.1
-      qq:
-        url: github.com/JFryy/qq
-        version: 0.3.1
+      jq:
+        url: github.com/itchyny/gojq/cmd/gojq
+        version: 0.12.17
   controllerGenCmd: 'go run {{ (index .tools "controller-gen").url }}@v{{ (index .tools "controller-gen").version }}'
   conversionGenCmd: 'go run {{ (index .tools "conversion-gen").url }}@v{{ (index .tools "conversion-gen").version }}'
   golangciLintCmd: 'go run {{ (index .tools "golangci-lint").url }}@v{{ (index .tools "golangci-lint").version }}'
   gofumptCmd: 'go run {{ (index .tools "gofumpt").url }}@v{{ (index .tools "gofumpt").version }}'
   golinesCmd: 'go run {{ (index .tools "golines").url }}@v{{ (index .tools "golines").version }}'
   kustomizeCmd: 'go run {{ (index .tools "kustomize").url }}@v{{ (index .tools "kustomize").version }}'
-  qqCmd: 'go run {{ (index .tools "qq").url }}@v{{ (index .tools "qq").version }}'
+  jqCmd: 'go run {{ (index .tools "jq").url }}@v{{ (index .tools "jq").version }}'
   buildDir: build
   artifactsDir: _artifacts
   #  TODO: until https://github.com/go-task/task/issues/178 is done
@@ -64,8 +64,28 @@ tasks:
       - env -C {{ .buildDir }}/config {{ .kustomizeCmd }} create --resources ../../config
       - env -C {{ .buildDir }}/config {{ .kustomizeCmd }} edit set image controller-manager={{ .IMAGE }}
       - "{{ .kustomizeCmd }} build {{ .buildDir }}/config > {{ .buildDir }}/control-plane-components.yaml"
+      - |
+        declare -a supportedVersions
+        mapfile -t supportedVersions <<< "$(sed -n -r 's#^\s+cluster.x-k8s.io/(v\S+): \S+#\1#gp' {{ .buildDir }}/crds/controlplane.* | sort -u)"
+        declare -a currentVersion
+        mapfile -t currentVersion <<< "$({{ .jqCmd }} -r '.["."] | split(".") | "\(.[0])\n\(.[1])"' .github/release-please/manifest.json)"
+        (
+          cat <<EOF
+            apiVersion: clusterctl.cluster.x-k8s.io/v1alpha3
+            kind: Metadata
+            releaseSeries:
+        EOF
+          for version in "${supportedVersions[@]}"; do
+            cat <<EOF
+              - major: ${currentVersion[0]}
+                minor: ${currentVersion[1]}
+                contract: ${version}
+        EOF
+          done
+        ) | cut -c 5- > {{ .buildDir }}/metadata.yaml
     generates:
       - "{{ .buildDir }}/control-plane-components.yaml"
+      - "{{ .buildDir }}/metadata.yaml"
   generate:
     cmds:
       - task: generate-deepcopy
@@ -88,21 +108,7 @@ tasks:
     sources:
       - ./**/*.go
       - ./.golangci.yaml
-      - ./metadata.yaml
-    cmds:
-      - "{{ .golangciLintCmd }} run --fix={{ .fix }}"
-      - |
-        set -x
-        declare -a supportedVersions
-        mapfile -t supportedVersions <<< "$(sed -n -r 's#^\s+cluster.x-k8s.io/(\S+): \S+#\1#gp' build/crds/controlplane.* | grep -v provider | sort -u)"
-        declare -a currentVersion
-        mapfile -t currentVersion <<< "$(echo {{ .version }} | sed -r 's#v([^.]+)\.([^.]+)\..*#\1\n\2#g')"
-        for version in "${supportedVersions[@]}"; do
-          if ! ({{ .qqCmd }} -r ".releaseSeries | map(select(.major == ${currentVersion[0]} and .minor == ${currentVersion[1]}))[0].contract" metadata.yaml | grep -q "$version"); then
-            echo "Make sure the current version is set inside the metadata.yaml 🙄" > /dev/stderr
-            exit 1
-          fi
-        done
+    cmd: "{{ .golangciLintCmd }} run --fix={{ .fix }}"
     generates:
       - ./**/*.go
       - "{{ .artifactsDir }}/golangci-lint.json"
@@ -173,7 +179,7 @@ tasks:
       arch: '{{ .arch | default ARCH }}'
       oldDigests:
         sh: >-
-          (buildah manifest inspect {{ .IMAGE }} 2> /dev/null || echo '{}') | {{ .qqCmd }} -r '.manifests // [] | map(select(.platform.architecture == "{{ .arch }}")) | map(.digest)[]' 2>/dev/null || true
+          (buildah manifest inspect {{ .IMAGE }} 2> /dev/null || echo '{}') | {{ .jqCmd }} -r '.manifests // [] | map(select(.platform.architecture == "{{ .arch }}")) | map(.digest)[]' 2>/dev/null || true
     sources:
       - Containerfile
       - .containerignore
