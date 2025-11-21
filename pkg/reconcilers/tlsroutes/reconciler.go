@@ -112,7 +112,7 @@ func (trr *tlsRoutesReconciler) createTLSRoute(
 			WithRules(v1alpha2.TLSRouteRule().
 				WithBackendRefs(gwv1ac.BackendRef().
 					WithName(gwv1.ObjectName(names.GetServiceName(cluster))).
-					WithPort(gwv1.PortNumber(port)).
+					WithPort(port).
 					WithWeight(1),
 				),
 			),
