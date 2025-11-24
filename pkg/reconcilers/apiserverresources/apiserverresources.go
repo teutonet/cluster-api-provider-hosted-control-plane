@@ -405,10 +405,9 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 					return false, fmt.Errorf("failed to convert label selector: %w", err)
 				}
 				hostedControlPlane.Status.Selector = selector.String()
-				hostedControlPlane.Status.Replicas = deployment.Status.Replicas
-				hostedControlPlane.Status.UnavailableReplicas = deployment.Status.UnavailableReplicas
+				hostedControlPlane.Status.Replicas = hostedControlPlane.Spec.ReplicasOrDefault()
 				hostedControlPlane.Status.ReadyReplicas = deployment.Status.ReadyReplicas
-				hostedControlPlane.Status.UpdatedReplicas = deployment.Status.UpdatedReplicas
+				hostedControlPlane.Status.AvailableReplicas = deployment.Status.AvailableReplicas
 				hostedControlPlane.Status.UpToDateReplicas = deployment.Status.UpdatedReplicas
 				return ready, nil
 			}

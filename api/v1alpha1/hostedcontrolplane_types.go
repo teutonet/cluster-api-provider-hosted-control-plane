@@ -241,13 +241,11 @@ type HostedControlPlaneStatus struct {
 	//+kubebuilder:validation:Optional
 	Replicas int32 `json:"replicas,omitempty"`
 	//+kubebuilder:validation:Optional
-	UpdatedReplicas int32 `json:"updatedReplicas,omitempty"`
-	//+kubebuilder:validation:Optional
-	UpToDateReplicas int32 `json:"upToDateReplicas,omitempty"`
-	//+kubebuilder:validation:Optional
 	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
 	//+kubebuilder:validation:Optional
-	UnavailableReplicas int32 `json:"unavailableReplicas,omitempty"`
+	AvailableReplicas int32 `json:"availableReplicas,omitempty"`
+	//+kubebuilder:validation:Optional
+	UpToDateReplicas int32 `json:"upToDateReplicas,omitempty"`
 
 	// CAPI Contract fields
 	// https://cluster-api.sigs.k8s.io/developer/providers/contracts/control-plane

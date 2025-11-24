@@ -1,11 +1,5 @@
 package v1alpha1
 
-const (
-	// ConditionMissingReason is used when trying to mirror a condition that does not
-	// exist on the target object.
-	ConditionMissingReason = "ConditionMissing"
-)
-
 // HostedControlPlane.
 
 const (
