@@ -11,6 +11,7 @@ ansible/.venv
 
 ## e2e test suite output
 _artifacts/
+metadata.yaml
 
 ## From kubebuilder
 

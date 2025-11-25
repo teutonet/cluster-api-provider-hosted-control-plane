@@ -50,6 +50,9 @@ jobs:
         with:
           go-version-file: ./go.mod
 
+      - name: Download last metadata
+        run: gh release download -p metadata.yaml
+        continue-on-error: true
       - run: task build
 
       - name: Log in to Container Registry
