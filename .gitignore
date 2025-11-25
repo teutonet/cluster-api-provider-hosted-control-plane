@@ -8,6 +8,7 @@ ansible/.venv
 ###
 # Taskfile cache file
 .task
+.direnv/
 
 ## e2e test suite output
 _artifacts/
