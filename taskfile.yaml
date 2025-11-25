@@ -36,16 +36,17 @@ vars:
       kustomize:
         url: sigs.k8s.io/kustomize/kustomize/v5
         version: 5.7.1
-      jq:
-        url: github.com/itchyny/gojq/cmd/gojq
-        version: 0.12.17
+      # not the good yq, but the good one has no "just run" option
+      yq:
+        url: github.com/mikefarah/yq/v4
+        version: 4.49.2
   controllerGenCmd: 'go run {{ (index .tools "controller-gen").url }}@v{{ (index .tools "controller-gen").version }}'
   conversionGenCmd: 'go run {{ (index .tools "conversion-gen").url }}@v{{ (index .tools "conversion-gen").version }}'
   golangciLintCmd: 'go run {{ (index .tools "golangci-lint").url }}@v{{ (index .tools "golangci-lint").version }}'
   gofumptCmd: 'go run {{ (index .tools "gofumpt").url }}@v{{ (index .tools "gofumpt").version }}'
   golinesCmd: 'go run {{ (index .tools "golines").url }}@v{{ (index .tools "golines").version }}'
   kustomizeCmd: 'go run {{ (index .tools "kustomize").url }}@v{{ (index .tools "kustomize").version }}'
-  jqCmd: 'go run {{ (index .tools "jq").url }}@v{{ (index .tools "jq").version }}'
+  yqCmd: 'go run {{ (index .tools "yq").url }}@v{{ (index .tools "yq").version }}'
   buildDir: build
   artifactsDir: _artifacts
   #  TODO: until https://github.com/go-task/task/issues/178 is done
@@ -68,21 +69,18 @@ tasks:
         declare -a supportedVersions
         mapfile -t supportedVersions <<< "$(sed -n -r 's#^\s+cluster.x-k8s.io/(v\S+): \S+#\1#gp' {{ .buildDir }}/crds/controlplane.* | sort -u)"
         declare -a currentVersion
-        mapfile -t currentVersion <<< "$({{ .jqCmd }} -r '.["."] | split(".") | "\(.[0])\n\(.[1])"' .github/release-please/manifest.json)"
-        (
-          cat <<EOF
+        mapfile -t currentVersion <<< "$({{ .yqCmd }} -r '.["."] | split(".") | "\(.[0])\n\(.[1])"' .github/release-please/manifest.json)"
+        if ! [[ -f metadata.yaml ]]; then
+          cat <<EOF | cut -c 5- > metadata.yaml
             apiVersion: clusterctl.cluster.x-k8s.io/v1alpha3
             kind: Metadata
-            releaseSeries:
+            releaseSeries: []
         EOF
-          for version in "${supportedVersions[@]}"; do
-            cat <<EOF
-              - major: ${currentVersion[0]}
-                minor: ${currentVersion[1]}
-                contract: ${version}
-        EOF
-          done
-        ) | cut -c 5- > {{ .buildDir }}/metadata.yaml
+        fi
+        for version in "${supportedVersions[@]}"; do
+          MAJOR="${currentVersion[0]}" MINOR="${currentVersion[1]}" VERSION="$version" {{ .yqCmd }} -i '.releaseSeries = (.releaseSeries + [{"major":env(MAJOR),"minor":env(MINOR),"contract":strenv(VERSION)}] | unique | sort_by(.major, .minor) | reverse)' metadata.yaml
+        done
+        mv metadata.yaml {{ .buildDir }}/metadata.yaml
     generates:
       - "{{ .buildDir }}/control-plane-components.yaml"
       - "{{ .buildDir }}/metadata.yaml"
@@ -179,7 +177,7 @@ tasks:
       arch: '{{ .arch | default ARCH }}'
       oldDigests:
         sh: >-
-          (buildah manifest inspect {{ .IMAGE }} 2> /dev/null || echo '{}') | {{ .jqCmd }} -r '.manifests // [] | map(select(.platform.architecture == "{{ .arch }}")) | map(.digest)[]' 2>/dev/null || true
+          (buildah manifest inspect {{ .IMAGE }} 2> /dev/null || echo '{}') | {{ .yqCmd }} -r '.manifests // [] | map(select(.platform.architecture == "{{ .arch }}")) | map(.digest)[]' 2>/dev/null || true
     sources:
       - Containerfile
       - .containerignore

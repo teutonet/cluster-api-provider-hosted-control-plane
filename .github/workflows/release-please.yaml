@@ -50,6 +50,9 @@ jobs:
         with:
           go-version-file: ./go.mod
 
+      - name: Download last metadata
+        run: gh release download -p metadata.yaml $(gh release list --exclude-drafts --exclude-pre-releases --order desc --limit 1 --json tagName --jq '.[0].tagName')
+        continue-on-error: true
       - run: task build
 
       - name: Log in to Container Registry
