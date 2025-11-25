@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.4.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.2.2...v1.4.0) (2025-11-25)
+
+
+### Features
+
+* add hash for kube-root-ca.crt configmap to konnectivity-agent ([#38](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/38)) ([9f4e977](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/9f4e9777ff3c4b55206d62e683414dccf0045c3c))
+* auto-generate the metadata.yaml instead of manually adjusting it ([#42](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/42)) ([4a29346](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/4a2934667d62dca2fc1120396faf1e167246261c))
+* update k8s dependencies + dependants ([#41](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/41)) ([885dcb5](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/885dcb554d04fbb6c19f6186fe4cfee68022686e))
+
+
+### Bug Fixes
+
+* always create new titleCaser ([#37](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/37)) ([bafb5a1](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/bafb5a138b2f9e0761550bf6fd8d3e2e945113e6))
+* oidc jwks conformance ([#39](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/39)) ([5925f36](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/5925f361a4470d321743a1a85994da5ff147705b))
+* README formatting ([b3b3dea](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/b3b3dea6de1f0d68a63fc2e40f5359cd76c38ae9))
+* use conditional error, otherwise the operator is stuck after etcd ([4b095bf](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/4b095bf5bacfdb87eace89340c2a9113f902a216))
+* use correct namespace for dev ([#36](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/36)) ([7f5e3f4](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/7f5e3f45cc4ed4a6063cd0013dec5855f7b16980))
+
 ## [1.2.2](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.2.1...v1.2.2) (2025-10-24)
 
 
