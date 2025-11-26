@@ -586,6 +586,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				ciliumClient,
 				r.worldComponent,
 				serviceCIDR,
+				podCIDR,
 				r.apiServerComponentLabel,
 				r.apiServerServicePort,
 				r.apiServerServiceLegacyPortName,

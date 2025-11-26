@@ -64,6 +64,7 @@ func NewApiServerResourcesReconciler(
 	ciliumClient ciliumclient.Interface,
 	worldComponent string,
 	serviceCIDR string,
+	podCIDR string,
 	apiServerComponentLabel string,
 	apiServerServicePort int32,
 	apiServerServiceLegacyPortName string,
@@ -84,6 +85,7 @@ func NewApiServerResourcesReconciler(
 		},
 		worldComponent:                      worldComponent,
 		serviceCIDR:                         serviceCIDR,
+		podCIDR:                             podCIDR,
 		apiServerServicePort:                apiServerServicePort,
 		apiServerServiceLegacyPortName:      apiServerServiceLegacyPortName,
 		etcdComponentLabel:                  etcdComponentLabel,
@@ -115,6 +117,7 @@ type apiServerResourcesReconciler struct {
 	reconcilers.ManagementResourceReconciler
 	worldComponent                      string
 	serviceCIDR                         string
+	podCIDR                             string
 	apiServerServicePort                int32
 	apiServerServiceLegacyPortName      string
 	etcdComponentLabel                  string
@@ -1229,7 +1232,7 @@ func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 	enabledControllers := []string{"*", kubenames.BootstrapSignerController, kubenames.TokenCleanerController}
 	leaderElect := hostedControlPlane.Spec.Deployment.ControllerManager.ReplicaCount(1) > 1
 	args := map[string]string{
-		"allocate-node-cidrs":              "false",
+		"cluster-cidr":                     arr.podCIDR,
 		"authentication-kubeconfig":        kubeconfigPath,
 		"authorization-kubeconfig":         kubeconfigPath,
 		"kubeconfig":                       kubeconfigPath,
