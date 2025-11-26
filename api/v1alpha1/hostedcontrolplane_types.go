@@ -125,7 +125,7 @@ type ScalablePod struct {
 type KubeProxyComponent struct {
 	Pod `json:",inline"`
 	//+kubebuilder:validation:Optional
-	Disabled *bool `json:"enabled,omitempty"`
+	Disabled *bool `json:"disabled,omitempty"`
 }
 
 type ETCDComponent struct {
