@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.4.0...v1.5.0) (2025-11-26)
+
+
+### Features
+
+* add pod cidr to ControllerManager fix: json name of disabled field for KubeProxy ([#57](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/57)) ([d8a44cd](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/d8a44cdab080fa873cd9302f318604d9a1770948))
+
 ## [1.4.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.2.2...v1.4.0) (2025-11-25)
 
 
