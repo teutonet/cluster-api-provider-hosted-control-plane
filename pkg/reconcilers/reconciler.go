@@ -80,6 +80,7 @@ type ContainerOptions struct {
 
 type reconcileClient[applyConfiguration any, result any] interface {
 	Apply(ctx context.Context, configuration *applyConfiguration, options metav1.ApplyOptions) (*result, error)
+	Get(ctx context.Context, name string, options metav1.GetOptions) (*result, error)
 	Delete(ctx context.Context, name string, options metav1.DeleteOptions) error
 }
 
@@ -115,12 +116,16 @@ func reconcileWorkload[RA any, RSA any, R any](
 	mutateFuncs ...func(*RA) *RA,
 ) (*R, bool, error) {
 	if deleteResource {
-		if err := client.Delete(
-			ctx,
-			name,
-			metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
-		); err != nil && !apierrors.IsNotFound(err) {
-			return nil, false, fmt.Errorf("failed to delete %s %s: %w", kind, name, err)
+		if _, err := client.Get(ctx, name, metav1.GetOptions{}); err == nil {
+			if err := client.Delete(
+				ctx,
+				name,
+				metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
+			); err != nil {
+				return nil, false, fmt.Errorf("failed to delete %s %s: %w", kind, name, err)
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return nil, false, fmt.Errorf("failed to get %s %s: %w", kind, name, err)
 		}
 		return nil, true, nil
 	}
@@ -165,14 +170,18 @@ func reconcileWorkload[RA any, RSA any, R any](
 					cause.Field == "spec" &&
 					specUpdateForbiddenErrorMessageRegex.MatchString(cause.Message)
 			}) {
-				if err := client.Delete(
-					ctx,
-					name,
-					metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
-				); err != nil {
-					return nil, false, fmt.Errorf(
-						"failed to delete existing %s %s: %w", kind, name, err,
-					)
+				if _, err := client.Get(ctx, name, metav1.GetOptions{}); err == nil {
+					if err := client.Delete(
+						ctx,
+						name,
+						metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
+					); err != nil {
+						return nil, false, fmt.Errorf(
+							"failed to delete existing %s %s: %w", kind, name, err,
+						)
+					}
+				} else if !apierrors.IsNotFound(err) {
+					return nil, false, fmt.Errorf("failed to get existing %s %s: %w", kind, name, err)
 				}
 				return nil, false, nil
 			}
@@ -212,7 +221,7 @@ func reconcileWorkload[RA any, RSA any, R any](
 	return appliedResource, true, nil
 }
 
-//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=create;patch;delete
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;create;patch;delete
 
 func reconcileDeployment(
 	ctx context.Context,
@@ -293,6 +302,9 @@ func reconcileDeployment(
 	return deployment, true, nil
 }
 
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;delete
+//+kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;delete
+
 func reconcileNetworkPolicy(
 	ctx context.Context,
 	kubernetesClient kubernetes.Interface,
@@ -315,17 +327,25 @@ func reconcileNetworkPolicy(
 			}
 
 			if deleteResource || ciliumClient != nil {
-				if err := networkPolicyInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil &&
-					!apierrors.IsNotFound(err) {
-					return fmt.Errorf("failed to delete network policy %s/%s: %w", namespace, name, err)
+				if _, err := networkPolicyInterface.Get(ctx, name, metav1.GetOptions{}); err == nil {
+					if err := networkPolicyInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+						return fmt.Errorf("failed to delete network policy %s/%s: %w", namespace, name, err)
+					}
+				} else if !apierrors.IsNotFound(err) {
+					return fmt.Errorf("failed to get network policy %s/%s: %w", namespace, name, err)
 				}
-				if deleteResource {
-					if err := ciliumNetworkPolicyInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil &&
-						!apierrors.IsNotFound(err) {
+			}
+			if deleteResource && ciliumClient != nil {
+				if _, err := ciliumNetworkPolicyInterface.Get(ctx, name, metav1.GetOptions{}); err == nil {
+					if err := ciliumNetworkPolicyInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 						return fmt.Errorf("failed to delete cilium network policy %s/%s: %w", namespace, name, err)
 					}
-					return nil
+				} else if !apierrors.IsNotFound(err) {
+					return fmt.Errorf("failed to get cilium network policy %s/%s: %w", namespace, name, err)
 				}
+			}
+			if deleteResource {
+				return nil
 			}
 
 			if ciliumClient != nil {
@@ -355,7 +375,7 @@ func reconcileNetworkPolicy(
 	)
 }
 
-//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=create;patch;delete
+//+kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=create;patch
 
 func reconcileKubernetesNetworkPolicy(
 	ctx context.Context,
@@ -437,7 +457,7 @@ func reconcileKubernetesNetworkPolicy(
 	)
 }
 
-//+kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;create;update;delete
+//+kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;create;update
 
 //nolint:funlen // large function due to conversion logic, no big deal
 func reconcileCiliumNetworkPolicy(
@@ -716,7 +736,7 @@ func convertToRules[AC any, PORT any, PEER any, NPT interface{}](
 	})
 }
 
-//+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=create;patch;delete
+//+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;create;patch;delete
 
 func reconcilePodDisruptionBudget(
 	ctx context.Context,
@@ -729,9 +749,13 @@ func reconcilePodDisruptionBudget(
 ) error {
 	podDisruptionBudgetInterface := kubernetesClient.PolicyV1().PodDisruptionBudgets(namespace)
 	if mode.Value == 0 {
-		if err := podDisruptionBudgetInterface.
-			Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete pod disruption budget %s/%s: %w", namespace, name, err)
+		if _, err := podDisruptionBudgetInterface.Get(ctx, name, metav1.GetOptions{}); err == nil {
+			if err := podDisruptionBudgetInterface.
+				Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+				return fmt.Errorf("failed to delete pod disruption budget %s/%s: %w", namespace, name, err)
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get pod disruption budget %s/%s: %w", namespace, name, err)
 		}
 		return nil
 	}
@@ -829,7 +853,7 @@ func reconcileService(
 	return service, ready, nil
 }
 
-//+kubebuilder:rbac:groups="",resources=secrets,verbs=create;patch;delete
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;patch;delete
 
 func reconcileSecret(
 	ctx context.Context,
@@ -848,10 +872,12 @@ func reconcileSecret(
 
 	secretInterface := kubernetesClient.CoreV1().Secrets(namespace)
 	if deleteResource {
-		err := secretInterface.
-			Delete(ctx, name, metav1.DeleteOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete secret %s/%s: %w", namespace, name, err)
+		if _, err := secretInterface.Get(ctx, name, metav1.GetOptions{}); err == nil {
+			if err := secretInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+				return fmt.Errorf("failed to delete secret %s/%s: %w", namespace, name, err)
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get secret %s/%s: %w", namespace, name, err)
 		}
 		return nil
 	}
@@ -870,7 +896,7 @@ func reconcileSecret(
 	return errorsUtil.IfErrErrorf("failed to apply secret %s/%s: %w", namespace, name, err)
 }
 
-//+kubebuilder:rbac:groups="",resources=configmaps,verbs=create;patch;delete
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;create;patch;delete
 
 func reconcileConfigmap(
 	ctx context.Context,
@@ -888,10 +914,12 @@ func reconcileConfigmap(
 
 	configMapInterface := kubernetesClient.CoreV1().ConfigMaps(namespace)
 	if deleteResource {
-		err := configMapInterface.
-			Delete(ctx, name, metav1.DeleteOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete configmap %s/%s: %w", namespace, name, err)
+		if _, err := configMapInterface.Get(ctx, name, metav1.GetOptions{}); err == nil {
+			if err := configMapInterface.Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+				return fmt.Errorf("failed to delete configmap %s/%s: %w", namespace, name, err)
+			}
+		} else if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get configmap %s/%s: %w", namespace, name, err)
 		}
 		return nil
 	}
