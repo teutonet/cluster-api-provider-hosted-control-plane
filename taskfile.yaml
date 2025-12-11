@@ -36,6 +36,9 @@ vars:
       kustomize:
         url: sigs.k8s.io/kustomize/kustomize/v5
         version: 5.7.1
+      grype:
+        url: github.com/anchore/grype/cmd/grype
+        version: 0.104.2
       # not the good yq, but the good one has no "just run" option
       yq:
         url: github.com/mikefarah/yq/v4
@@ -46,6 +49,7 @@ vars:
   gofumptCmd: 'go run {{ (index .tools "gofumpt").url }}@v{{ (index .tools "gofumpt").version }}'
   golinesCmd: 'go run {{ (index .tools "golines").url }}@v{{ (index .tools "golines").version }}'
   kustomizeCmd: 'go run {{ (index .tools "kustomize").url }}@v{{ (index .tools "kustomize").version }}'
+  grypeCmd: 'go run {{ (index .tools "grype").url }}@v{{ (index .tools "grype").version }}'
   yqCmd: 'go run {{ (index .tools "yq").url }}@v{{ (index .tools "yq").version }}'
   buildDir: build
   artifactsDir: _artifacts
@@ -97,12 +101,18 @@ tasks:
     cmds:
       - "{{ .gofumptCmd }} -w api cmd pkg"
       - "{{ .golinesCmd }} --ignore-generated --ignored-dirs=.go -m 120 -w ."
+  vulnerabilities:
+    sources:
+      - go.mod
+      - go.sum
+    cmd: "{{ .grypeCmd }} --name cacpphcp dir:. --exclude ./build --by-cve --fail-on negligible"
   lint:
     vars:
       fix: '{{ .fix | default "false" }}'
     deps:
       - artifacts-dir
       - format
+      - vulnerabilities
     sources:
       - ./**/*.go
       - ./.golangci.yaml
@@ -271,8 +281,8 @@ tasks:
     internal: true
     sources:
       - '**/*.go'
-    generates:
       - go.mod
+    generates:
       - go.sum
     cmd: go mod tidy
   clean-files:
