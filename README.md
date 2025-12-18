@@ -96,13 +96,13 @@ graph TB
 kubectl apply -f https://github.com/teutonet/cluster-api-provider-hosted-control-plane/releases/latest/download/control-plane-components.yaml
 
 # Or install a specific version
-kubectl apply -f https://github.com/teutonet/cluster-api-provider-hosted-control-plane/releases/download/v0.1.0/control-plane-components.yaml
+kubectl apply -f https://github.com/teutonet/cluster-api-provider-hosted-control-plane/releases/download/v1.5.0/control-plane-components.yaml
 ```
 
 ### Verify Installation
 
 ```bash
-kubectl get pods -n cluster-api-provider-hosted-control-plane-system
+kubectl get pods -n capi-hosted-control-plane-system
 ```
 
 ## 📖 Usage
