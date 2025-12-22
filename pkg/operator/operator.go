@@ -29,7 +29,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.38.0"
 	"google.golang.org/grpc/grpclog"
 	"k8s.io/client-go/kubernetes"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"

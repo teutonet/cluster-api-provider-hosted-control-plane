@@ -220,7 +220,7 @@ linters:
           alias: clientv3
 
         # OpenTelemetry
-        - pkg: go.opentelemetry.io/otel/semconv/v1.37.0
+        - pkg: go.opentelemetry.io/otel/semconv/v1.38.0
           alias: semconv
 
         # hcp
