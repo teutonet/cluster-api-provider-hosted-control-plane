@@ -625,7 +625,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.konnectivityNamespace,
 				r.konnectivityServiceAccount,
 				r.konnectivityServerAudience,
-				r.apiServerServicePort,
+				r.konnectivityServicePort,
 			)
 
 			phases := []Phase{
