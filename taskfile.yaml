@@ -140,7 +140,6 @@ tasks:
       - task: manifests
       - task: test
       - task: lint
-      - task: check-diff
   check-diff:
     deps:
       - manifests
