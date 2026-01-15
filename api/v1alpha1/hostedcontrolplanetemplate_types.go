@@ -16,8 +16,8 @@ type HostedControlPlaneTemplate struct {
 	//+kubebuilder:validation:Optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	//+kubebuilder:validation:Optional
-	Spec HostedControlPlaneTemplateSpec `json:"spec,omitempty"`
+	//+kubebuilder:validation:Required
+	Spec HostedControlPlaneTemplateSpec `json:"spec"`
 }
 
 type HostedControlPlaneTemplateSpec struct {
