@@ -34,7 +34,12 @@ Hosted control planes break this coupling by running control plane components as
 
 ### 🔧 Advanced Features
 
-- **Network Policy Support**: Component-based access control
+- **Network Policy Support**: Component-based access control with automatic policy generation
+  - When [Cilium](https://cilium.io/) is detected, Cilium Network Policies are created instead of vanilla Kubernetes
+    Network Policies (recommended)
+  - Cilium policies provide enhanced capabilities such as DNS-based filtering, allowing workload pods to communicate
+    only with their specific control plane endpoints
+  - Falls back to vanilla Kubernetes Network Policies when Cilium is not available
 
 ## 🏛️ Architecture
 
@@ -85,7 +90,7 @@ graph TB
 ### Prerequisites
 
 - Kubernetes cluster (management cluster) v1.28+
-- Cluster API v1.10+ installed
+- Cluster API v1.11+ installed
 - cert-manager for certificate management
 - Gateway API CRDs (for traffic routing)
 
@@ -159,7 +164,7 @@ spec:
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - kubectl
 - [Task](https://taskfile.dev) (for building and testing)
 
@@ -214,13 +219,13 @@ for details on:
 
 ## 📋 Compatibility
 
-| Component    | Version          |
-| ------------ | ---------------- |
-| Kubernetes   | v1.28+           |
-| Cluster API  | v1.10+           |
-| cert-manager | v1.18+           |
-| Gateway API  | v1.3+ (optional) |
-| Go           | 1.24+            |
+| Component    | Version |
+| ------------ | ------- |
+| Kubernetes   | v1.28+  |
+| Cluster API  | v1.11+  |
+| cert-manager | v1.18+  |
+| Gateway API  | v1.3+   |
+| Go           | 1.25+   |
 
 ## 🛣️ Roadmap
 
