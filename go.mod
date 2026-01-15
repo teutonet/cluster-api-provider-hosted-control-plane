@@ -16,7 +16,7 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/onsi/gomega v1.38.3
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/samber/lo v1.51.0
+	github.com/samber/lo v1.52.0
 	go.etcd.io/etcd/api/v3 v3.6.6
 	go.etcd.io/etcd/client/v3 v3.6.6
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0
