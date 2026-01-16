@@ -173,7 +173,7 @@ tasks:
       CGO_ENABLED: '0'
       GOARCH: '{{ .arch }}'
       GOOS: linux
-    cmd: go build -ldflags="-X=main.version={{ .version }} -s -w" -o {{ .buildDir }}/manager-{{ .arch }} ./cmd/hosted-control-plane-controller/main.go
+    cmd: go build -ldflags="-X=main.version={{ .version }} -s -w" -trimpath -o {{ .buildDir }}/manager-{{ .arch }} ./cmd/hosted-control-plane-controller/main.go
     generates:
       - "{{ .buildDir }}/manager-{{ .arch }}"
     status:
