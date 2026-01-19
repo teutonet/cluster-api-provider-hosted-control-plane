@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.93.2
 	github.com/blang/semver/v4 v4.0.0
 	github.com/caarlos0/env/v6 v6.10.1
-	github.com/cert-manager/cert-manager v1.19.1
+	github.com/cert-manager/cert-manager v1.19.2
 	github.com/cilium/cilium v1.18.4
 	github.com/coredns/corefile-migration v1.0.29
 	github.com/go-logr/logr v1.4.3
