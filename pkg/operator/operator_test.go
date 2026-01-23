@@ -42,6 +42,8 @@ func Test_newResource(t *testing.T) {
 			_, err := newResource(tt.args.serviceName, tt.args.version)
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).NotTo(HaveOccurred())
 			}
 		})
 	}

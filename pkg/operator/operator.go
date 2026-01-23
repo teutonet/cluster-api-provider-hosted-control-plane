@@ -243,10 +243,11 @@ func setupTracerProvider(ctx context.Context, serviceName string, version string
 }
 
 func newResource(serviceName string, version string) (*resource.Resource, error) {
+	defaultResource := resource.Default()
 	serviceResource, err := resource.Merge(
-		resource.Default(),
+		defaultResource,
 		resource.NewWithAttributes(
-			semconv.SchemaURL,
+			defaultResource.SchemaURL(),
 			semconv.ServiceName(serviceName),
 			semconv.ServiceVersion(version),
 		),
