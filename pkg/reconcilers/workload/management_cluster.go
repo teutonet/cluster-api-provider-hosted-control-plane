@@ -38,18 +38,19 @@ func GetWorkloadClusterClient(
 	managementClusterClient *alias.ManagementClusterClient,
 	cluster *capiv2.Cluster,
 	tracingWrapper func(http.RoundTripper) http.RoundTripper,
-	controllerKubeconfigName string,
+	controllerUsername string,
 ) (*alias.WorkloadClusterClient, ciliumclient.Interface, error) {
 	return tracing.WithSpan3(ctx, "managementCluster", "GetWorkloadClusterClient",
 		func(ctx context.Context, span trace.Span) (*alias.WorkloadClusterClient, ciliumclient.Interface, error) {
+			kubeconfigSecretName := names.GetKubeconfigSecretName(cluster, controllerUsername)
 			span.SetAttributes(
 				attribute.String(
 					"kubeconfig.secret.name",
-					names.GetKubeconfigSecretName(cluster, controllerKubeconfigName),
+					kubeconfigSecretName,
 				),
 			)
 			kubeConfigSecret, err := managementClusterClient.CoreV1().Secrets(cluster.Namespace).
-				Get(ctx, names.GetKubeconfigSecretName(cluster, controllerKubeconfigName), metav1.GetOptions{})
+				Get(ctx, kubeconfigSecretName, metav1.GetOptions{})
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to get kubeconfig for workload cluster: %w", err)
 			}
@@ -63,12 +64,12 @@ func GetWorkloadClusterClient(
 			restConfig.Timeout = 10 * time.Second
 			restConfig.Wrap(tracingWrapper)
 
-			workloadClustermanagementClusterClient, err := kubernetes.NewForConfig(restConfig)
+			workloadClusterClientSet, err := kubernetes.NewForConfig(restConfig)
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to create Kubernetes client for workload cluster: %w", err)
+				return nil, nil, fmt.Errorf("failed to create Kubernetes clientSet for workload cluster: %w", err)
 			}
 			workloadClusterClient := alias.WorkloadClusterClient{
-				Interface: workloadClustermanagementClusterClient,
+				Interface: workloadClusterClientSet,
 			}
 
 			ciliumClient, err := GetCiliumClient(workloadClusterClient, restConfig)

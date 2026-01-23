@@ -276,15 +276,15 @@ func (arr *apiServerResourcesReconciler) reconcileAuditConfig(
 
 			return arr.ReconcileSecret(
 				ctx,
-				hostedControlPlane,
-				cluster,
-				"audit",
+				operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
+				names.GetControlPlaneLabels(cluster, "audit"),
 				hostedControlPlane.Namespace,
 				names.GetAuditWebhookSecretName(cluster),
 				deleteConfig,
 				slices.MapValues(data, func(value string, _ string) []byte {
 					return []byte(value)
 				}),
+				corev1.SecretTypeOpaque,
 			)
 		})
 }

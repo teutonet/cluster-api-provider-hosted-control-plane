@@ -101,6 +101,7 @@ tasks:
     cmds:
       - "{{ .gofumptCmd }} -w api cmd pkg"
       - "{{ .golinesCmd }} --ignore-generated --ignored-dirs=.go -m 120 -w ."
+      - "{{ .golangciLintCmd }} fmt"
   vulnerabilities:
     sources:
       - go.mod
@@ -361,10 +362,8 @@ tasks:
       - api/**/*.go
       - exclude: api/**/zz_generated.deepcopy.go
       - exclude: api/**/zz_generated.conversion.go
-      - pkg/**/*.go
-      - exclude: pkg/**/*_test.go
     cmds:
-      - "{{ .controllerGenCmd }} crd paths=./api/... paths=./pkg/... output:crd:artifacts:config={{ .buildDir }}/crds"
+      - "{{ .controllerGenCmd }} crd paths=./api/... output:crd:artifacts:config={{ .buildDir }}/crds"
     generates:
       - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanes.yaml"
       - "{{ .buildDir }}/crds/controlplane.cluster.x-k8s.io_hostedcontrolplanetemplates.yaml"

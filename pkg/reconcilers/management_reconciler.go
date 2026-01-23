@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -74,13 +75,13 @@ func (mr *ManagementResourceReconciler) ReconcileService(
 
 func (mr *ManagementResourceReconciler) ReconcileSecret(
 	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
-	cluster *capiv2.Cluster,
-	component string,
+	ownerReferenceApplyConfiguration *metav1ac.OwnerReferenceApplyConfiguration,
+	labels map[string]string,
 	namespace string,
 	name string,
 	deleteResource bool,
 	data map[string][]byte,
+	secretType corev1.SecretType,
 ) error {
 	return tracing.WithSpan1(ctx, mr.Tracer, "ReconcileSecret",
 		func(ctx context.Context, span trace.Span) error {
@@ -88,20 +89,25 @@ func (mr *ManagementResourceReconciler) ReconcileSecret(
 				attribute.String("secret.namespace", namespace),
 				attribute.String("secret.name", name),
 			)
-			return errorsUtil.IfErrErrorf("failed to reconcile secret %s/%s into management cluster: %w",
+			err := reconcileSecret(
+				ctx,
+				mr.ManagementClusterClient,
 				namespace,
 				name,
-				reconcileSecret(
-					ctx,
-					mr.ManagementClusterClient,
+				deleteResource,
+				ownerReferenceApplyConfiguration,
+				labels,
+				data,
+				secretType,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to reconcile secret %s/%s into management cluster: %w",
 					namespace,
 					name,
-					deleteResource,
-					operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane),
-					names.GetControlPlaneLabels(cluster, component),
-					data,
-				),
-			)
+					err,
+				)
+			}
+			return nil
 		},
 	)
 }

@@ -361,6 +361,94 @@ func TestGetKonnectivityTLSRouteName(t *testing.T) {
 	}
 }
 
+func TestGetCustomKubeconfigCertificateName(t *testing.T) {
+	tests := []struct {
+		name        string
+		clusterName string
+		username    string
+		expected    string
+	}{
+		{
+			name:        "basic username",
+			clusterName: "test-cluster",
+			username:    "ci-user",
+			expected:    "test-cluster-custom-ci-user",
+		},
+		{
+			name:        "username with dashes",
+			clusterName: "prod",
+			username:    "backup-agent-v2",
+			expected:    "prod-custom-backup-agent-v2",
+		},
+		{
+			name:        "short cluster name",
+			clusterName: "c1",
+			username:    "admin",
+			expected:    "c1-custom-admin",
+		},
+		{
+			name:        "empty username",
+			clusterName: "test",
+			username:    "",
+			expected:    "test-custom-",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			cluster := &capiv2.Cluster{}
+			cluster.Name = tt.clusterName
+			result := GetCustomKubeconfigCertificateName(cluster, tt.username)
+			g.Expect(result).To(Equal(tt.expected))
+		})
+	}
+}
+
+func TestGetCustomKubeconfigSecretName(t *testing.T) {
+	tests := []struct {
+		name        string
+		clusterName string
+		username    string
+		expected    string
+	}{
+		{
+			name:        "basic username",
+			clusterName: "test-cluster",
+			username:    "ci-user",
+			expected:    "test-cluster-ci-user-kubeconfig",
+		},
+		{
+			name:        "username with dashes",
+			clusterName: "prod",
+			username:    "backup-agent",
+			expected:    "prod-backup-agent-kubeconfig",
+		},
+		{
+			name:        "monitoring user",
+			clusterName: "dev-cluster",
+			username:    "monitoring",
+			expected:    "dev-cluster-monitoring-kubeconfig",
+		},
+		{
+			name:        "empty username",
+			clusterName: "test",
+			username:    "",
+			expected:    "test--kubeconfig",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			cluster := &capiv2.Cluster{}
+			cluster.Name = tt.clusterName
+			result := GetCustomKubeconfigSecretName(cluster, tt.username)
+			g.Expect(result).To(Equal(tt.expected))
+		})
+	}
+}
+
 // Test multiple certificate name functions together since they follow the same pattern.
 func TestCertificateNames(t *testing.T) {
 	cluster := &capiv2.Cluster{}

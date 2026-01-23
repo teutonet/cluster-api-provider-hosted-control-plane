@@ -10,7 +10,6 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	corev1 "k8s.io/api/core/v1"
 )
 
 type ArgOption struct {
@@ -89,8 +88,8 @@ func ArgsToSlice(
 				attribute.String("controllerValue", controllerArgs[key]),
 			))
 
-			eventRecorder.Eventf(
-				corev1.EventTypeWarning, argumentOverriddenEvent,
+			eventRecorder.Warnf(
+				argumentOverriddenEvent,
 				"User argument overridden by controller: %s (userValue=%s, controllerValue=%s)",
 				key, userArgs[key], controllerArgs[key],
 			)

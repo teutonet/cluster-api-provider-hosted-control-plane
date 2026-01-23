@@ -196,14 +196,14 @@ func setupControllers(
 			ctx context.Context,
 			managementClusterClient *alias.ManagementClusterClient,
 			cluster *capiv2.Cluster,
-			controllerKubeconfigName string,
+			controllerUsername string,
 		) (*alias.WorkloadClusterClient, ciliumclient.Interface, error) {
 			return workload.GetWorkloadClusterClient(
 				ctx,
 				managementClusterClient,
 				cluster,
 				tracingWrapper,
-				controllerKubeconfigName,
+				controllerUsername,
 			)
 		},
 		etcd_client.NewEtcdClient,

@@ -72,6 +72,10 @@ func GetAdminCertificateName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-admin"
 }
 
+func GetAdminKubeconfigCertificateName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-admin"
+}
+
 func GetAdminKubeconfigCertificateSecretName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-admin"
 }
@@ -116,8 +120,16 @@ func GetControlPlaneControllerKubeconfigCertificateSecretName(cluster *capiv2.Cl
 	return cluster.Name + "-control-plane-controller"
 }
 
-func GetKubeconfigSecretName(cluster *capiv2.Cluster, kubeconfigName string) string {
-	return cluster.Name + "-" + kubeconfigName + "-kubeconfig"
+func GetKubeconfigSecretName(cluster *capiv2.Cluster, username string) string {
+	return cluster.Name + "-" + username + "-kubeconfig"
+}
+
+func GetCustomKubeconfigCertificateName(cluster *capiv2.Cluster, username string) string {
+	return cluster.Name + "-custom-" + username
+}
+
+func GetCustomKubeconfigSecretName(cluster *capiv2.Cluster, username string) string {
+	return cluster.Name + "-" + username + "-kubeconfig"
 }
 
 func GetEtcdCAName(cluster *capiv2.Cluster) string {

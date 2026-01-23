@@ -7,12 +7,15 @@ import (
 	. "github.com/onsi/gomega"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
@@ -132,12 +135,17 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 			)
 
 			if !tt.expectedError {
-				kubeconfig, err := getConcreteReconciler(reconciler).generateKubeconfig(
+				certSecret, err := kubeClient.CoreV1().
+					Secrets(tt.cluster.Namespace).
+					Get(ctx, "test-cluster-admin", metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+
+				kubeconfig, err := getConcreteReconciler(reconciler).generateKubeconfigFromSecret(
 					ctx,
 					tt.cluster,
 					tt.cluster.Spec.ControlPlaneEndpoint,
 					"admin",
-					"test-cluster-admin",
+					certSecret,
 				)
 				g.Expect(err).NotTo(HaveOccurred())
 
@@ -147,13 +155,9 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 				g.Expect(kubeconfig.AuthInfos["admin"].ClientCertificateData).ToNot(BeEmpty())
 				g.Expect(kubeconfig.AuthInfos["admin"].ClientKeyData).ToNot(BeEmpty())
 			} else {
-				g.Expect(getConcreteReconciler(reconciler).generateKubeconfig(
-					ctx,
-					tt.cluster,
-					tt.cluster.Spec.ControlPlaneEndpoint,
-					"admin",
-					"test-cluster-admin",
-				)).Error().To(HaveOccurred())
+				// When expectedError is true, either the cert secret or CA secret is missing
+				err := reconciler.ReconcileKubeconfigs(ctx, tt.hostedControlPlane, tt.cluster)
+				g.Expect(err).To(HaveOccurred())
 			}
 		})
 	}
@@ -253,9 +257,11 @@ func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
 					ManagementClusterClient: managementClusterClient,
 				},
 			}
-			kubeconfig, err := getConcreteReconciler(
-				reconciler,
-			).generateKubeconfig(ctx, tt.cluster, endpoint, userName, certSecretName)
+
+			certSecret, err := kubeClient.CoreV1().Secrets("default").Get(ctx, certSecretName, metav1.GetOptions{})
+			g.Expect(err).NotTo(HaveOccurred())
+
+			kubeconfig, err := reconciler.generateKubeconfigFromSecret(ctx, tt.cluster, endpoint, userName, certSecret)
 			g.Expect(err).NotTo(HaveOccurred())
 
 			g.Expect(kubeconfig.Clusters).To(HaveKey(tt.cluster.Name))
@@ -302,7 +308,13 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 		},
 	}
 	endpoint := capiv2.APIEndpoint{Host: "api.example.com", Port: 443}
-	kubeconfig1, err := reconciler.generateKubeconfig(ctx, cluster, endpoint, "admin", "test-cluster-admin-kubeconfig")
+
+	certSecret1, err := kubeClient.CoreV1().
+		Secrets(cluster.Namespace).
+		Get(ctx, "test-cluster-admin-kubeconfig", metav1.GetOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	kubeconfig1, err := reconciler.generateKubeconfigFromSecret(ctx, cluster, endpoint, "admin", certSecret1)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	updatedCertSecret := oldCertSecret.DeepCopy()
@@ -313,7 +325,12 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 		ctx, updatedCertSecret, metav1.UpdateOptions{})
 	g.Expect(err).NotTo(HaveOccurred())
 
-	kubeconfig2, err := reconciler.generateKubeconfig(ctx, cluster, endpoint, "admin", "test-cluster-admin-kubeconfig")
+	certSecret2, err := kubeClient.CoreV1().
+		Secrets(cluster.Namespace).
+		Get(ctx, "test-cluster-admin-kubeconfig", metav1.GetOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	kubeconfig2, err := reconciler.generateKubeconfigFromSecret(ctx, cluster, endpoint, "admin", certSecret2)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	authInfo1 := kubeconfig1.AuthInfos["admin"]
@@ -371,9 +388,10 @@ func TestKubeconfigReconciler_MultiUserScenarios(t *testing.T) {
 	kubeconfigs := make(map[string]*api.Config)
 
 	for _, user := range users {
-		kubeconfig, err := getConcreteReconciler(
-			reconciler,
-		).generateKubeconfig(ctx, cluster, endpoint, user.name, user.secretName)
+		certSecret, err := kubeClient.CoreV1().Secrets("default").Get(ctx, user.secretName, metav1.GetOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+
+		kubeconfig, err := reconciler.generateKubeconfigFromSecret(ctx, cluster, endpoint, user.name, certSecret)
 		g.Expect(err).NotTo(HaveOccurred())
 		kubeconfigs[user.name] = kubeconfig
 	}
@@ -414,8 +432,281 @@ func createCertificateSecret(name, namespace string, isCA bool) *corev1.Secret {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
+			UID:       types.UID(fmt.Sprintf("uid-%s", name)),
 		},
 		Type: corev1.SecretTypeTLS,
 		Data: data,
 	}
+}
+
+// createStandardCertificateSecrets creates all the certificate secrets required by ReconcileKubeconfigs
+// for standard kubeconfigs (admin, controller-manager, scheduler, konnectivity-client, control-plane-controller).
+func createStandardCertificateSecrets(clusterName, namespace string) []*corev1.Secret {
+	return []*corev1.Secret{
+		createCertificateSecret(clusterName+"-ca", namespace, true),
+		createCertificateSecret(clusterName+"-admin", namespace, false),
+		createCertificateSecret(clusterName+"-controller-manager", namespace, false),
+		createCertificateSecret(clusterName+"-scheduler", namespace, false),
+		createCertificateSecret(clusterName+"-konnectivity-client", namespace, false),
+		createCertificateSecret(clusterName+"-control-plane-controller", namespace, false),
+	}
+}
+
+func TestKubeconfigReconciler_CustomKubeconfigs_Creation(t *testing.T) {
+	tests := []struct {
+		name              string
+		customKubeconfigs map[string]v1alpha1.KubeconfigEndpointType
+		expectedSecrets   []string
+		expectedEndpoints map[string]string
+	}{
+		{
+			name: "create kubeconfig with external endpoint",
+			customKubeconfigs: map[string]v1alpha1.KubeconfigEndpointType{
+				"ci-user": v1alpha1.KubeconfigEndpointTypeExternal,
+			},
+			expectedSecrets: []string{"test-cluster-ci-user-kubeconfig"},
+			expectedEndpoints: map[string]string{
+				"ci-user": "https://api.test-cluster.example.com:443",
+			},
+		},
+		{
+			name: "create kubeconfig with internal endpoint",
+			customKubeconfigs: map[string]v1alpha1.KubeconfigEndpointType{
+				"backup-agent": v1alpha1.KubeconfigEndpointTypeInternal,
+			},
+			expectedSecrets: []string{"test-cluster-backup-agent-kubeconfig"},
+			expectedEndpoints: map[string]string{
+				"backup-agent": "https://s-test-cluster:443",
+			},
+		},
+		{
+			name: "create multiple kubeconfigs with mixed endpoints",
+			customKubeconfigs: map[string]v1alpha1.KubeconfigEndpointType{
+				"ci-user":      v1alpha1.KubeconfigEndpointTypeExternal,
+				"backup-agent": v1alpha1.KubeconfigEndpointTypeInternal,
+			},
+			expectedSecrets: []string{
+				"test-cluster-ci-user-kubeconfig",
+				"test-cluster-backup-agent-kubeconfig",
+			},
+			expectedEndpoints: map[string]string{
+				"ci-user":      "https://api.test-cluster.example.com:443",
+				"backup-agent": "https://s-test-cluster:443",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := t.Context()
+			g := NewWithT(t)
+
+			secrets := createStandardCertificateSecrets("test-cluster", "default")
+			for username := range tt.customKubeconfigs {
+				certName := names.GetCustomKubeconfigCertificateName(
+					&capiv2.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "test-cluster"}},
+					username,
+				)
+				secrets = append(secrets, createCertificateSecret(certName, "default", false))
+			}
+
+			kubeClient := fake.NewClientset(slices.Map(secrets,
+				func(s *corev1.Secret, _ int) runtime.Object {
+					return s
+				},
+			)...)
+			managementClusterClient := &alias.ManagementClusterClient{
+				Interface: kubeClient,
+			}
+
+			hostedControlPlane := &v1alpha1.HostedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-hcp",
+					Namespace: "default",
+					UID:       "test-uid",
+				},
+				Spec: v1alpha1.HostedControlPlaneSpec{
+					Version: "v1.28.0",
+					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+						CustomKubeconfigs: tt.customKubeconfigs,
+					},
+				},
+			}
+			cluster := &capiv2.Cluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "default",
+				},
+				Spec: capiv2.ClusterSpec{
+					ControlPlaneEndpoint: capiv2.APIEndpoint{
+						Host: "api.test-cluster.example.com",
+						Port: 443,
+					},
+				},
+			}
+
+			reconciler := NewKubeconfigReconciler(
+				managementClusterClient,
+				443,
+				"konnectivity-client",
+				"controller",
+			)
+
+			err := reconciler.ReconcileKubeconfigs(ctx, hostedControlPlane, cluster)
+			g.Expect(err).NotTo(HaveOccurred())
+
+			for _, expectedSecret := range tt.expectedSecrets {
+				secret, err := kubeClient.CoreV1().Secrets("default").Get(ctx, expectedSecret, metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(secret).NotTo(BeNil())
+				g.Expect(secret.Data).To(HaveKey("value"))
+
+				kubeconfig, err := clientcmd.Load(secret.Data["value"])
+				g.Expect(err).NotTo(HaveOccurred())
+
+				for username, expectedEndpoint := range tt.expectedEndpoints {
+					if names.GetCustomKubeconfigSecretName(cluster, username) == expectedSecret {
+						g.Expect(kubeconfig.Clusters).To(HaveLen(1))
+						for _, clusterConfig := range kubeconfig.Clusters {
+							g.Expect(clusterConfig.Server).To(Equal(expectedEndpoint),
+								"endpoint mismatch for user %s", username)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestKubeconfigReconciler_CustomKubeconfigs_LabelsAndOwnerReference(t *testing.T) {
+	ctx := t.Context()
+	g := NewWithT(t)
+
+	cluster := &capiv2.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster",
+			Namespace: "default",
+		},
+		Spec: capiv2.ClusterSpec{
+			ControlPlaneEndpoint: capiv2.APIEndpoint{
+				Host: "api.test-cluster.example.com",
+				Port: 443,
+			},
+		},
+	}
+
+	username := "ci-user"
+	certName := names.GetCustomKubeconfigCertificateName(cluster, username)
+
+	secrets := createStandardCertificateSecrets("test-cluster", "default")
+	secrets = append(secrets, createCertificateSecret(certName, "default", false))
+
+	kubeClient := fake.NewClientset(slices.Map(secrets,
+		func(s *corev1.Secret, _ int) runtime.Object {
+			return s
+		},
+	)...)
+	managementClusterClient := &alias.ManagementClusterClient{
+		Interface: kubeClient,
+	}
+
+	hostedControlPlane := &v1alpha1.HostedControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-hcp",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: v1alpha1.HostedControlPlaneSpec{
+			Version: "v1.28.0",
+			HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+				CustomKubeconfigs: map[string]v1alpha1.KubeconfigEndpointType{
+					username: v1alpha1.KubeconfigEndpointTypeExternal,
+				},
+			},
+		},
+	}
+
+	reconciler := NewKubeconfigReconciler(
+		managementClusterClient,
+		443,
+		"konnectivity-client",
+		"controller",
+	)
+
+	err := reconciler.ReconcileKubeconfigs(ctx, hostedControlPlane, cluster)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	secretName := names.GetCustomKubeconfigSecretName(cluster, username)
+	secret, err := kubeClient.CoreV1().Secrets("default").Get(ctx, secretName, metav1.GetOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	// Verify labels
+	g.Expect(secret.Labels).To(HaveKeyWithValue("cluster.x-k8s.io/cluster-name", "test-cluster"))
+	g.Expect(secret.Labels).To(HaveKeyWithValue(names.CustomKubeconfigLabel, "true"))
+	g.Expect(secret.Labels).To(HaveKeyWithValue(names.CustomKubeconfigUsernameLabel, username))
+	g.Expect(secret.Labels).To(HaveKeyWithValue("app.kubernetes.io/component", "kubeconfig"))
+
+	// Verify owner reference points to certificate secret
+	g.Expect(secret.OwnerReferences).To(HaveLen(1))
+	ownerRef := secret.OwnerReferences[0]
+	g.Expect(ownerRef.APIVersion).To(Equal("v1"))
+	g.Expect(ownerRef.Kind).To(Equal("Secret"))
+	g.Expect(ownerRef.Name).To(Equal(certName))
+
+	// Verify the UID matches the certificate secret's UID
+	certSecret, err := kubeClient.CoreV1().Secrets("default").Get(ctx, certName, metav1.GetOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(ownerRef.UID).To(Equal(certSecret.UID))
+}
+
+func TestKubeconfigReconciler_CustomKubeconfigs_MissingCertificate(t *testing.T) {
+	ctx := t.Context()
+	g := NewWithT(t)
+
+	cluster := &capiv2.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster",
+			Namespace: "default",
+		},
+		Spec: capiv2.ClusterSpec{
+			ControlPlaneEndpoint: capiv2.APIEndpoint{
+				Host: "api.test-cluster.example.com",
+				Port: 443,
+			},
+		},
+	}
+
+	standardSecrets := createStandardCertificateSecrets("test-cluster", "default")
+	kubeClient := fake.NewClientset(
+		slices.Map(standardSecrets, func(s *corev1.Secret, _ int) runtime.Object { return s })...)
+	managementClusterClient := &alias.ManagementClusterClient{
+		Interface: kubeClient,
+	}
+
+	hostedControlPlane := &v1alpha1.HostedControlPlane{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-hcp",
+			Namespace: "default",
+			UID:       "test-uid",
+		},
+		Spec: v1alpha1.HostedControlPlaneSpec{
+			Version: "v1.28.0",
+			HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+				CustomKubeconfigs: map[string]v1alpha1.KubeconfigEndpointType{
+					"missing-cert-user": v1alpha1.KubeconfigEndpointTypeExternal,
+				},
+			},
+		},
+	}
+
+	reconciler := NewKubeconfigReconciler(
+		managementClusterClient,
+		443,
+		"konnectivity-client",
+		"controller",
+	)
+
+	err := reconciler.ReconcileKubeconfigs(ctx, hostedControlPlane, cluster)
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("failed to reconcile kubeconfig"))
 }
