@@ -160,6 +160,13 @@ DNS provider, you may need:
 - A deeper wildcard record that matches the three-label prefix, for example: `*.*.*.clusters.example.com`
 - Or explicit DNS records for each required Konnectivity hostname
 
+### cert-manager Configuration
+
+cert-manager must be configured to enable secret owner reference propagation. This ensures that certificate secrets are
+properly garbage collected when the owning Certificate resource is deleted.
+
+For more details, see the [cert-manager documentation on secret owner references](https://cert-manager.io/docs/usage/certificate/#cleaning-up-secrets-when-certificates-are-deleted).
+
 ### Install the Provider
 
 ```bash
