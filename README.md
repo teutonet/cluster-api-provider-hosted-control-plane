@@ -91,8 +91,74 @@ graph TB
 
 - Kubernetes cluster (management cluster) v1.28+
 - Cluster API v1.11+ installed
-- cert-manager for certificate management
-- Gateway API CRDs (for traffic routing)
+- cert-manager v1.18+ for certificate management
+- Gateway API v1.3+ CRDs installed
+- A Gateway with a TLS wildcard listener (see [Gateway and DNS Configuration](#gateway-and-dns-configuration))
+
+### Gateway and DNS Configuration
+
+The provider requires a Gateway with a **TLS listener using a wildcard hostname**. This is used to route traffic to
+hosted control planes.
+
+#### Gateway Setup
+
+Create a Gateway with a TLS passthrough listener:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: capi
+  namespace: capi-system
+spec:
+  gatewayClassName: your-gateway-class # e.g., cilium, envoy, etc.
+  listeners:
+    - name: tls-passthrough
+      protocol: TLS
+      # this is the exposed port, the number here might be different
+      # depending on your gateway-api provider
+      port: 443
+      hostname: "*.clusters.example.com" # Must be a wildcard
+      tls:
+        mode: Passthrough
+      allowedRoutes:
+        namespaces:
+          from: All
+```
+
+**Important**: The listener **must** use:
+
+- `protocol: TLS` (not HTTPS)
+- A wildcard hostname (e.g., `*.clusters.example.com`)
+- `tls.mode: Passthrough` to allow the API server to terminate TLS
+
+#### DNS Configuration
+
+Configure DNS to resolve the wildcard domain to your Gateway's external IP/hostname.
+
+Each cluster gets an endpoint derived from the wildcard:
+
+```
+<cluster-name>.<cluster-namespace>.<wildcard-domain>
+```
+
+For example, with hostname `*.clusters.example.com`:
+
+- Cluster `prod` in namespace `default` → `prod.default.clusters.example.com`
+- Cluster `staging` in namespace `team-a` → `staging.team-a.clusters.example.com`
+
+**Konnectivity subdomain**: The Konnectivity server (used for node-to-control-plane communication) requires an
+additional `konnectivity.` prefix:
+
+```
+konnectivity.<cluster-name>.<cluster-namespace>.<wildcard-domain>
+```
+
+This means your DNS setup must handle requests like `konnectivity.prod.default.clusters.example.com`. Depending on your
+DNS provider, you may need:
+
+- A deeper wildcard record that matches the three-label prefix, for example: `*.*.*.clusters.example.com`
+- Or explicit DNS records for each required Konnectivity hostname
 
 ### Install the Provider
 
@@ -124,6 +190,8 @@ spec:
   version: v1.33.0
   replicas: 3
   gateway:
+    # Reference to the Gateway with a TLS wildcard listener
+    # See "Gateway and DNS Configuration" section above
     name: capi
     namespace: capi-system
 ```
