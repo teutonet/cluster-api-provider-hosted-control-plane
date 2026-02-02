@@ -13,12 +13,12 @@ import (
 
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
 )
 
 func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
@@ -92,9 +92,9 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			recorder := record.NewFakeRecorder(100)
+			fakeRecorder := recorder.NewInfiniteReturningFakeEventRecorder()
 			reconciler := &etcdClusterReconciler{
-				recorder:                   recorder,
+				recorder:                   fakeRecorder,
 				etcdServerStorageBuffer:    tt.etcdServerStorageBuffer,
 				etcdServerStorageIncrement: tt.etcdServerStorageIncrement,
 			}
@@ -105,7 +105,7 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 
 			if tt.hostedControlPlane.Spec.ETCD.AutoGrow != nil && *tt.hostedControlPlane.Spec.ETCD.AutoGrow &&
 				result.Cmp(tt.hostedControlPlane.Status.ETCDVolumeSize) > 0 {
-				g.Expect(recorder.Events).To(Receive(
+				g.Expect(fakeRecorder.Events).To(ContainElement(
 					ContainSubstring(etcdVolumeSizeReCalculatedEvent),
 				))
 			}
@@ -114,9 +114,8 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 }
 
 func TestEtcdClusterReconciler_ErrorHandling_InvalidVolumeData(t *testing.T) {
-	recorder := record.NewFakeRecorder(100)
 	reconciler := &etcdClusterReconciler{
-		recorder:                   recorder,
+		recorder:                   recorder.NewInfiniteDiscardingFakeEventRecorder(),
 		etcdServerStorageBuffer:    resource.MustParse("2Gi"),
 		etcdServerStorageIncrement: resource.MustParse("10Gi"),
 	}
@@ -229,9 +228,9 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			recorder := record.NewFakeRecorder(100)
+			fakeRecorder := recorder.NewInfiniteReturningFakeEventRecorder()
 			reconciler := &etcdClusterReconciler{
-				recorder:                   recorder,
+				recorder:                   fakeRecorder,
 				etcdServerStorageBuffer:    resource.MustParse("3Gi"),
 				etcdServerStorageIncrement: resource.MustParse("10Gi"),
 			}
@@ -256,11 +255,11 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 			g.Expect(result.Cmp(expectedQuantity)).To(Equal(0))
 
 			if tt.expectedGrowth {
-				g.Expect(recorder.Events).To(Receive(
+				g.Expect(fakeRecorder.Events).To(ContainElement(
 					ContainSubstring(etcdVolumeSizeReCalculatedEvent),
 				))
 			} else {
-				g.Expect(recorder.Events).ToNot(Receive(
+				g.Expect(fakeRecorder.Events).ToNot(ContainElement(
 					ContainSubstring(etcdVolumeSizeReCalculatedEvent),
 				))
 			}
@@ -283,9 +282,8 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 			},
 		}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:                   recorder,
+			recorder:                   recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
 			etcdServerStorageIncrement: resource.MustParse("10Gi"),
 			etcdClientFactory:          nil,
@@ -320,9 +318,8 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 			},
 		}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:                   recorder,
+			recorder:                   recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
 			etcdServerStorageIncrement: resource.MustParse("10Gi"),
 			etcdClientFactory:          nil,
@@ -346,9 +343,8 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 
 		hcp := &v1alpha1.HostedControlPlane{}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:          recorder,
+			recorder:          recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdClientFactory: nil,
 		}
 
@@ -377,9 +373,8 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 			},
 		}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:          recorder,
+			recorder:          recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdClientFactory: nil,
 		}
 
@@ -411,9 +406,8 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 			},
 		}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:          recorder,
+			recorder:          recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdClientFactory: nil,
 		}
 
@@ -445,9 +439,8 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 			},
 		}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:          recorder,
+			recorder:          recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdClientFactory: nil,
 		}
 
@@ -462,9 +455,8 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 
 		hcp := &v1alpha1.HostedControlPlane{}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:          recorder,
+			recorder:          recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdClientFactory: nil,
 		}
 
@@ -499,9 +491,9 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			},
 		}
 
-		recorder := record.NewFakeRecorder(100)
+		fakeRecorder := recorder.NewInfiniteReturningFakeEventRecorder()
 		reconciler := &etcdClusterReconciler{
-			recorder:          recorder,
+			recorder:          fakeRecorder,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -518,7 +510,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
 		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
 
-		g.Expect(recorder.Events).To(Receive(
+		g.Expect(fakeRecorder.Events).To(ContainElement(
 			And(
 				ContainSubstring("EtcdBackup"),
 				ContainSubstring("Created etcd backup"),
@@ -546,9 +538,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			},
 		}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:          recorder,
+			recorder:          recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -585,9 +576,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			},
 		}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:          recorder,
+			recorder:          recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -624,9 +614,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			},
 		}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:          recorder,
+			recorder:          recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -662,9 +651,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			},
 		}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:          recorder,
+			recorder:          recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -708,9 +696,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			},
 		}
 
-		recorder := record.NewFakeRecorder(100)
 		reconciler := &etcdClusterReconciler{
-			recorder:          recorder,
+			recorder:          recorder.NewInfiniteDiscardingFakeEventRecorder(),
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,

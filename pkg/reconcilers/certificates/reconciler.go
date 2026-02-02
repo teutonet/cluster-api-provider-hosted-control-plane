@@ -110,6 +110,10 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 			if err != nil {
 				return "", fmt.Errorf("failed to patch self-signed issuer: %w", err)
 			}
+			operatorutil.EmitResourceApplyEvent(
+				ctx, "Issuer", rootIssuer.Namespace, rootIssuer.Name,
+				rootIssuer.Generation, cr.getIssuerReadyConditionObservedGeneration(rootIssuer),
+			)
 			if !cr.isIssuerReady(rootIssuer) {
 				return "root issuer not ready", nil
 			}
@@ -140,6 +144,10 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 			if err != nil {
 				return "", fmt.Errorf("failed to patch CA issuer: %w", err)
 			}
+			operatorutil.EmitResourceApplyEvent(
+				ctx, "Issuer", kubernetesCAIssuer.Namespace, kubernetesCAIssuer.Name,
+				kubernetesCAIssuer.Generation, cr.getIssuerReadyConditionObservedGeneration(kubernetesCAIssuer),
+			)
 			if !cr.isIssuerReady(kubernetesCAIssuer) {
 				return "kubernetes CA issuer not ready", nil
 			}
@@ -167,9 +175,15 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 					frontProxyCACertificate.Spec.SecretName,
 				)
 
-				if frontProxyCAIssuer, err := issuerClient.Apply(ctx, frontProxyCAIssuerAC, operatorutil.ApplyOptions); err != nil {
+				frontProxyCAIssuer, err := issuerClient.Apply(ctx, frontProxyCAIssuerAC, operatorutil.ApplyOptions)
+				if err != nil {
 					return "", fmt.Errorf("failed to patch front-proxy CA issuer: %w", err)
-				} else if !cr.isIssuerReady(frontProxyCAIssuer) {
+				}
+				operatorutil.EmitResourceApplyEvent(
+					ctx, "Issuer", frontProxyCAIssuer.Namespace, frontProxyCAIssuer.Name,
+					frontProxyCAIssuer.Generation, cr.getIssuerReadyConditionObservedGeneration(frontProxyCAIssuer),
+				)
+				if !cr.isIssuerReady(frontProxyCAIssuer) {
 					notReadyReasons = append(notReadyReasons, "front-proxy CA issuer not ready")
 				}
 			}
@@ -195,9 +209,15 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 					etcdCACertificate.Spec.SecretName,
 				)
 
-				if etcdCAIssuer, err := issuerClient.Apply(ctx, etcdCAIssuerAC, operatorutil.ApplyOptions); err != nil {
+				etcdCAIssuer, err := issuerClient.Apply(ctx, etcdCAIssuerAC, operatorutil.ApplyOptions)
+				if err != nil {
 					return "", fmt.Errorf("failed to patch etcd CA issuer: %w", err)
-				} else if !cr.isIssuerReady(etcdCAIssuer) {
+				}
+				operatorutil.EmitResourceApplyEvent(
+					ctx, "Issuer", etcdCAIssuer.Namespace, etcdCAIssuer.Name,
+					etcdCAIssuer.Generation, cr.getIssuerReadyConditionObservedGeneration(etcdCAIssuer),
+				)
+				if !cr.isIssuerReady(etcdCAIssuer) {
 					notReadyReasons = append(notReadyReasons, "etcd CA issuer not ready")
 				}
 			}
@@ -503,6 +523,12 @@ func (cr *certificateReconciler) reconcileCertificate(
 				return nil, false, fmt.Errorf("failed to patch certificate %s: %w", *certificateAC.Name, err)
 			}
 
+			observedGeneration := cr.getReadyConditionObservedGeneration(certificate)
+			operatorutil.EmitResourceApplyEvent(
+				ctx, "Certificate", certificate.Namespace, certificate.Name,
+				certificate.Generation, observedGeneration,
+			)
+
 			return certificate, cr.isCertificateReady(certificate), nil
 		},
 	)
@@ -517,6 +543,17 @@ func (cr *certificateReconciler) isCertificateReady(
 	})
 }
 
+func (cr *certificateReconciler) getReadyConditionObservedGeneration(
+	certificate *certmanagerv1.Certificate,
+) int64 {
+	for _, condition := range certificate.Status.Conditions {
+		if condition.Type == certmanagerv1.CertificateConditionReady {
+			return condition.ObservedGeneration
+		}
+	}
+	return 0
+}
+
 func (cr *certificateReconciler) isIssuerReady(
 	issuer *certmanagerv1.Issuer,
 ) bool {
@@ -524,4 +561,15 @@ func (cr *certificateReconciler) isIssuerReady(
 		return condition.Type == certmanagerv1.IssuerConditionReady &&
 			condition.Status == certmanagermetav1.ConditionTrue
 	})
+}
+
+func (cr *certificateReconciler) getIssuerReadyConditionObservedGeneration(
+	issuer *certmanagerv1.Issuer,
+) int64 {
+	for _, condition := range issuer.Status.Conditions {
+		if condition.Type == certmanagerv1.IssuerConditionReady {
+			return condition.ObservedGeneration
+		}
+	}
+	return 0
 }

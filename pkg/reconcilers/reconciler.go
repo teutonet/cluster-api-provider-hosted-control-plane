@@ -110,6 +110,7 @@ func reconcileWorkload[RA any, RSA any, R any](
 	) *RSA,
 	setSpecTemplate func(resourceSpecApplyConfiguration *RSA, template *corev1ac.PodTemplateSpecApplyConfiguration) *RSA,
 	getUID func(resource *R) types.UID,
+	getGenerationInfo func(resource *R) (generation, observedGeneration int64),
 	podTemplateSpecApplyConfiguration *corev1ac.PodTemplateSpecApplyConfiguration,
 	readinessCheck func(*R) bool,
 	mutateFuncs ...func(*RA) *RA,
@@ -183,6 +184,9 @@ func reconcileWorkload[RA any, RSA any, R any](
 		)
 	}
 
+	generation, observedGeneration := getGenerationInfo(appliedResource)
+	operatorutil.EmitResourceApplyEvent(ctx, kind, namespace, name, generation, observedGeneration)
+
 	if err := reconcileNetworkPolicy(
 		ctx,
 		kubernetesClient,
@@ -252,6 +256,9 @@ func reconcileDeployment(
 		(*appsv1ac.DeploymentSpecApplyConfiguration).WithSelector,
 		(*appsv1ac.DeploymentSpecApplyConfiguration).WithTemplate,
 		(*appsv1.Deployment).GetUID,
+		func(d *appsv1.Deployment) (int64, int64) {
+			return d.Generation, d.Status.ObservedGeneration
+		},
 		podTemplateSpec.WithSpec(podTemplateSpec.Spec.
 			WithTopologySpreadConstraints(
 				operatorutil.CreatePodTopologySpreadConstraints(metav1ac.LabelSelector().WithMatchLabels(labels)),
@@ -756,13 +763,22 @@ func reconcilePodDisruptionBudget(
 			WithOwnerReferences(ownerReference)
 	}
 
-	_, err := podDisruptionBudgetInterface.
+	appliedPDB, err := podDisruptionBudgetInterface.
 		Apply(
 			ctx,
 			podDisruptionBudgetApplyConfiguration,
 			operatorutil.ApplyOptions,
 		)
-	return errorsUtil.IfErrErrorf("failed to apply pod disruption budget %s/%s: %w", namespace, name, err)
+	if err != nil {
+		return errorsUtil.IfErrErrorf("failed to apply pod disruption budget %s/%s: %w", namespace, name, err)
+	}
+
+	operatorutil.EmitResourceApplyEvent(
+		ctx, "PodDisruptionBudget", namespace, name,
+		appliedPDB.Generation, appliedPDB.Status.ObservedGeneration,
+	)
+
+	return nil
 }
 
 //+kubebuilder:rbac:groups="",resources=services,verbs=create;patch;delete
@@ -1026,6 +1042,9 @@ func reconcileStatefulset(
 		(*appsv1ac.StatefulSetSpecApplyConfiguration).WithSelector,
 		(*appsv1ac.StatefulSetSpecApplyConfiguration).WithTemplate,
 		(*appsv1.StatefulSet).GetUID,
+		func(s *appsv1.StatefulSet) (int64, int64) {
+			return s.Generation, s.Status.ObservedGeneration
+		},
 		podTemplateSpec.WithSpec(podTemplateSpec.Spec.
 			WithTopologySpreadConstraints(
 				operatorutil.CreatePodTopologySpreadConstraints(metav1ac.LabelSelector().WithMatchLabels(labels)),

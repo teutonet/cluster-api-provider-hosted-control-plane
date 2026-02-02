@@ -195,6 +195,9 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 				(*appsv1ac.DaemonSetSpecApplyConfiguration).WithSelector,
 				(*appsv1ac.DaemonSetSpecApplyConfiguration).WithTemplate,
 				(*appsv1.DaemonSet).GetUID,
+				func(d *appsv1.DaemonSet) (int64, int64) {
+					return d.Generation, d.Status.ObservedGeneration
+				},
 				createPodTemplateSpec(podOptions, nil, containers, volumes),
 				func(daemonSet *appsv1.DaemonSet) bool {
 					return arePodsReady(

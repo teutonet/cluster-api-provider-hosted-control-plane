@@ -3,8 +3,14 @@ package recorder
 import (
 	"context"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/component-base/tracing"
+)
+
+const (
+	NoEventRecorderInContextMessage = "no event recorder found in context, using a no-op recorder"
 )
 
 type Recorder interface {
@@ -33,8 +39,13 @@ func FromContext(ctx context.Context) Recorder {
 			return r
 		}
 	}
+
+	tracing.SpanFromContext(ctx).AddEvent(NoEventRecorderInContextMessage)
+	if logger := logr.FromContextAsSlogLogger(ctx); logger != nil {
+		logger.WarnContext(ctx, NoEventRecorderInContextMessage)
+	}
 	return &recorder{
-		eventRecorder: record.NewFakeRecorder(100),
+		eventRecorder: NewInfiniteDiscardingFakeEventRecorder(),
 		object:        &runtime.Unknown{},
 	}
 }

@@ -19,6 +19,7 @@ import (
 	types2 "github.com/onsi/gomega/types"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
@@ -38,7 +39,6 @@ import (
 	v2 "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/cluster-bootstrap/token/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/pkg/controller/certificates/rootcacertpublisher"
@@ -264,7 +264,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		workloadClusterClientFactory,
 		etcdClientFactory,
 		s3ClientFactory,
-		record.NewFakeRecorder(100),
+		recorder.NewInfiniteDiscardingFakeEventRecorder(),
 		"default",
 	)
 
