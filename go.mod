@@ -29,19 +29,19 @@ require (
 	go4.org v0.0.0-20201209231011-d4a079459e60
 	golang.org/x/text v0.31.0
 	google.golang.org/grpc v1.77.0
-	k8s.io/api v0.34.2
-	k8s.io/apiextensions-apiserver v0.34.2
-	k8s.io/apimachinery v0.34.2
-	k8s.io/apiserver v0.34.2
-	k8s.io/client-go v0.34.2
+	k8s.io/api v0.34.3
+	k8s.io/apiextensions-apiserver v0.34.3
+	k8s.io/apimachinery v0.34.3
+	k8s.io/apiserver v0.34.3
+	k8s.io/client-go v0.34.3
 	k8s.io/cluster-bootstrap v0.34.2
-	k8s.io/component-base v0.34.2
+	k8s.io/component-base v0.34.3
 	k8s.io/kube-proxy v0.34.2
 	k8s.io/kubelet v0.34.2
 	k8s.io/kubernetes v1.34.2
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
-	sigs.k8s.io/cluster-api v1.12.1
-	sigs.k8s.io/controller-runtime v0.22.4
+	sigs.k8s.io/cluster-api v1.12.2
+	sigs.k8s.io/controller-runtime v0.22.5
 	sigs.k8s.io/gateway-api v1.4.1
 )
 
