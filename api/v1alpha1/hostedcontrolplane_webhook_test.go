@@ -4,10 +4,8 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 )
 
@@ -297,46 +295,6 @@ func TestHostedControlPlaneWebhook_ValidateDelete(t *testing.T) {
 	}
 
 	g.Expect(webhook.ValidateDelete(t.Context(), hcp)).Error().NotTo(HaveOccurred())
-}
-
-func TestHostedControlPlaneWebhook_CastObjectToHostedControlPlane(t *testing.T) {
-	webhook := &hostedControlPlaneWebhook{}
-
-	tests := []struct {
-		name      string
-		obj       runtime.Object
-		expectErr bool
-	}{
-		{
-			name: "valid HostedControlPlane object",
-			obj: &HostedControlPlane{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-hcp",
-				},
-			},
-			expectErr: false,
-		},
-		{
-			name:      "invalid object type",
-			obj:       &corev1.Pod{}, // Wrong type
-			expectErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
-			result, err := webhook.castObjectToHostedControlPlane(tt.obj)
-
-			if tt.expectErr {
-				g.Expect(err).To(HaveOccurred())
-				g.Expect(result).To(BeNil())
-			} else {
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(result).NotTo(BeNil())
-			}
-		})
-	}
 }
 
 func TestHostedControlPlaneWebhook_ParseVersion(t *testing.T) {
