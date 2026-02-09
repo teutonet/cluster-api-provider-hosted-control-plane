@@ -206,6 +206,7 @@ func setupControllers(
 		},
 		etcd_client.NewEtcdClient,
 		s3_client.NewS3Client,
+		//nolint:staticcheck // this will be migrated later, but for now we need to overcome the PR deadlock.
 		mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
 		controllerNamespace,
 	).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
