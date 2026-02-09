@@ -11,18 +11,15 @@ import (
 	semver "github.com/blang/semver/v4"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/cluster-api/util/version"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 func (hcp *HostedControlPlane) SetupWebhookWithManager(mgr ctrl.Manager) error {
-	return errorsUtil.IfErrErrorf("failed to setup webhook: %w", ctrl.NewWebhookManagedBy(mgr).
-		For(hcp).
+	return errorsUtil.IfErrErrorf("failed to setup webhook: %w", ctrl.NewWebhookManagedBy(mgr, hcp).
 		WithValidator(NewHostedControlPlaneWebhook()).
 		Complete(),
 	)
@@ -42,17 +39,12 @@ func NewHostedControlPlaneWebhook() *hostedControlPlaneWebhook {
 	}
 }
 
-var _ webhook.CustomValidator = &hostedControlPlaneWebhook{}
+var _ admission.Validator[*HostedControlPlane] = &hostedControlPlaneWebhook{}
 
 func (w *hostedControlPlaneWebhook) ValidateCreate(
 	_ context.Context,
-	newObj runtime.Object,
+	newHostedControlPlane *HostedControlPlane,
 ) (admission.Warnings, error) {
-	newHostedControlPlane, err := w.castObjectToHostedControlPlane(newObj)
-	if err != nil {
-		return []string{}, err
-	}
-
 	fieldErrs := field.ErrorList{}
 
 	if _, fieldErr := w.parseVersion(newHostedControlPlane); fieldErr != nil {
@@ -86,16 +78,6 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 	return nil, nil
 }
 
-func (w *hostedControlPlaneWebhook) castObjectToHostedControlPlane(
-	obj runtime.Object,
-) (*HostedControlPlane, error) {
-	hostedControlPlane, ok := obj.(*HostedControlPlane)
-	if !ok {
-		return nil, apierrors.NewBadRequest("expected a HostedControlPlane but got wrong type")
-	}
-	return hostedControlPlane, nil
-}
-
 func (w *hostedControlPlaneWebhook) parseVersion(
 	hostedControlPlane *HostedControlPlane,
 ) (*semver.Version, *field.Error) {
@@ -112,18 +94,9 @@ func (w *hostedControlPlaneWebhook) parseVersion(
 
 func (w *hostedControlPlaneWebhook) ValidateUpdate(
 	ctx context.Context,
-	oldObj runtime.Object,
-	newObj runtime.Object,
+	oldHostedControlPlane *HostedControlPlane,
+	newHostedControlPlane *HostedControlPlane,
 ) (admission.Warnings, error) {
-	newHostedControlPlane, err := w.castObjectToHostedControlPlane(newObj)
-	if err != nil {
-		return []string{}, err
-	}
-	oldHostedControlPlane, err := w.castObjectToHostedControlPlane(oldObj)
-	if err != nil {
-		return []string{}, err
-	}
-
 	oldVersion, fieldErr := w.parseVersion(oldHostedControlPlane)
 	if fieldErr != nil {
 		return nil, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{fieldErr})
@@ -178,6 +151,6 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 	return warnings, nil
 }
 
-func (*hostedControlPlaneWebhook) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
+func (*hostedControlPlaneWebhook) ValidateDelete(_ context.Context, _ *HostedControlPlane) (admission.Warnings, error) {
 	return nil, nil
 }

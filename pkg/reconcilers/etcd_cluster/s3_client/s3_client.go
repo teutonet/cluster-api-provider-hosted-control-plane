@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
@@ -34,7 +34,7 @@ type S3Client interface {
 
 type s3Client struct {
 	spanAttributes []attribute.KeyValue
-	uploader       *manager.Uploader
+	uploader       *transfermanager.Client
 	bucket         string
 	keyTemplate    string
 }
@@ -96,11 +96,9 @@ func NewS3Client(
 		if err != nil {
 			return nil, fmt.Errorf("failed to load AWS config: %w", err)
 		}
-		uploader := manager.NewUploader(s3.NewFromConfig(defaultConfig))
-
 		return &s3Client{
 			spanAttributes: spanAttributes,
-			uploader:       uploader,
+			uploader:       transfermanager.New(s3.NewFromConfig(defaultConfig)),
 			bucket:         hostedControlPlane.Spec.ETCD.Backup.Bucket,
 			keyTemplate:    fmt.Sprintf("%s/%%s.etcd", cluster.Name),
 		}, nil
@@ -116,7 +114,7 @@ func (s *s3Client) Upload(ctx context.Context, body io.ReadCloser) error {
 			}
 		}()
 		countingReader := readerutil.CountingReader{Reader: body}
-		if result, err := s.uploader.Upload(ctx, &s3.PutObjectInput{
+		if result, err := s.uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
 			Bucket: aws.String(s.bucket),
 			Key:    aws.String(fmt.Sprintf(s.keyTemplate, time.Now().Format(time.RFC3339))),
 			Body:   countingReader,
@@ -124,7 +122,7 @@ func (s *s3Client) Upload(ctx context.Context, body io.ReadCloser) error {
 			return fmt.Errorf("failed to upload content to S3: %w", err)
 		} else {
 			span.SetAttributes(
-				attribute.String("etcd.backup.s3.upload.location", result.Location),
+				attribute.String("etcd.backup.s3.upload.location", *result.Location),
 				attribute.Int64("etcd.backup.s3.upload.bytes", *countingReader.N),
 			)
 		}
