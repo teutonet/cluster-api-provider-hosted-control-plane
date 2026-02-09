@@ -165,6 +165,12 @@ func withDeletion(hcp *v1alpha1.HostedControlPlane, finalizers []string) *v1alph
 	return newHCP
 }
 
+func withGeneration(hcp *v1alpha1.HostedControlPlane, generation int64) *v1alpha1.HostedControlPlane {
+	newHCP := hcp.DeepCopy()
+	newHCP.Generation = generation
+	return newHCP
+}
+
 func TestHostedControlPlaneReconciler_ReconcileWorkflow(t *testing.T) {
 	cluster := createTestCluster("test-cluster", "default")
 	tests := []struct {
@@ -471,6 +477,108 @@ func TestHostedControlPlaneReconciler_StatusConditions(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestHostedControlPlaneReconciler_ObservedGeneration(t *testing.T) {
+	scheme := runtime.NewScheme()
+	g := NewWithT(t)
+	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
+	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
+
+	tests := []struct {
+		name               string
+		hostedControlPlane *v1alpha1.HostedControlPlane
+		cluster            *capiv2.Cluster
+		expectedGeneration int64
+		expectError        bool
+		expectRequeue      bool
+	}{
+		{
+			name: "normal reconciliation should set observedGeneration",
+			hostedControlPlane: withGeneration(
+				withConditions(
+					withReplicas(
+						withOwnerReference(
+							createTestHostedControlPlane("test-hcp", "default"),
+							createTestCluster("test-cluster", "default"),
+						),
+						1,
+					),
+					[]metav1.Condition{{
+						Type:   capiv2.PausedCondition,
+						Status: metav1.ConditionFalse,
+						Reason: capiv2.NotPausedReason,
+					}},
+				),
+				2,
+			),
+			cluster: withEndpoint(
+				createTestClusterWithPausedCondition("test-cluster", "default", false),
+				createTestHostedControlPlane("test-hcp", "default"),
+			),
+			expectedGeneration: 2,
+		},
+		{
+			name: "no cluster should not set observedGeneration",
+			hostedControlPlane: withGeneration(
+				createTestHostedControlPlane("test-hcp", "default"),
+				3,
+			),
+			cluster:            nil,
+			expectedGeneration: 0,
+			expectRequeue:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := t.Context()
+			g := NewWithT(t)
+
+			objs := []client.Object{tt.hostedControlPlane}
+			if tt.cluster != nil {
+				objs = append(objs, tt.cluster)
+			}
+
+			fc := fakeClient.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(objs...).
+				WithStatusSubresource(&v1alpha1.HostedControlPlane{}).
+				WithStatusSubresource(&capiv2.Cluster{}).
+				Build()
+
+			reconciler := createTestReconciler(fc)
+
+			req := reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      tt.hostedControlPlane.Name,
+					Namespace: tt.hostedControlPlane.Namespace,
+				},
+			}
+
+			result, err := reconciler.Reconcile(ctx, req)
+
+			if tt.expectError {
+				g.Expect(err).To(HaveOccurred())
+			} else {
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+
+			if tt.expectRequeue {
+				g.Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			}
+
+			updatedHCP := &v1alpha1.HostedControlPlane{}
+			g.Expect(fc.Get(ctx, types.NamespacedName{
+				Name:      tt.hostedControlPlane.Name,
+				Namespace: tt.hostedControlPlane.Namespace,
+			}, updatedHCP)).To(Succeed())
+
+			g.Expect(updatedHCP.Status.ObservedGeneration).To(
+				Equal(tt.expectedGeneration),
+			)
+		})
+	}
 }
 
 func TestHostedControlPlaneReconciler_NonExistentResource(t *testing.T) {

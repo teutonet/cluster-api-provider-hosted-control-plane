@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	certmanagerv1ac "github.com/cert-manager/cert-manager/pkg/client/applyconfigurations/certmanager/v1"
@@ -74,13 +73,13 @@ type testPhase struct {
 	patchCluster func()
 	// Function to simulate external systems BEFORE reconciliation
 	// (e.g., cert-manager creating secrets, marking resources as ready)
-	simulateExternalSystems func(context.Context, *WithT)
+	simulateExternalSystems func(ctx context.Context, g *WithT)
 	verifyConditionsBefore  map[bool][]types2.GomegaMatcher
 	verifyConditionsAfter   map[bool][]types2.GomegaMatcher
 	// Custom resource verifications AFTER reconciliation and simulation
-	verifyResources func(context.Context, *WithT)
-	expectError     string
-	expectNoRequeue bool
+	verifyResources        func(ctx context.Context, g *WithT)
+	expectError            string
+	expectNoGenerationBump bool
 }
 
 func NewConditionVerification(
@@ -170,9 +169,10 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 
 	hcp := &v1alpha1.HostedControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-hcp",
-			Namespace: "default",
-			UID:       uuid.NewUUID(),
+			Name:       "test-hcp",
+			Namespace:  "default",
+			UID:        uuid.NewUUID(),
+			Generation: 1,
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion: capiv2.GroupVersion.String(),
@@ -278,7 +278,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 
 	phases := []testPhase{
 		{
-			name: "Verify Paused and ExternalManagedControlPlane Status",
+			name: "Verify Paused Status",
 			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 				false: {
 					NewConditionVerification(
@@ -287,7 +287,14 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			verifyResources: func(ctx context.Context, t *WithT) {
+			expectNoGenerationBump: true,
+			verifyResources: func(ctx context.Context, g *WithT) {
+				g.Expect(hcp.Status.ObservedGeneration).To(Equal(int64(0)))
+			},
+		},
+		{
+			name: "Verify ExternalManagedControlPlane Status",
+			verifyResources: func(ctx context.Context, g *WithT) {
 				g.Expect(hcp.Status.ExternalManagedControlPlane).To(PointTo(BeTrue()))
 			},
 		},
@@ -1135,6 +1142,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				)
 				g.Expect(err).To(Succeed())
 				g.Expect(apiServerDeployment.Spec.Replicas).To(PointTo(Equal(int32(3))))
+				g.Expect(hcp.Status.ObservedGeneration).To(Equal(int64(2)))
 			},
 			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 				false: {
@@ -1337,6 +1345,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		if phase.patchHCP != nil {
 			oldHcp := hcp.DeepCopy()
 			phase.patchHCP()
+			hcp.Generation += 1
 			g.Expect(hostedControlPlaneWebhook.ValidateUpdate(ctx, oldHcp, hcp)).Error().To(Succeed())
 			g.Expect(k8sClient.Update(ctx, hcp)).To(Succeed())
 		}
@@ -1359,7 +1368,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		}
 
 		t.Log("  Reconciling")
-		result, err := reconciler.Reconcile(ctx, req)
+		_, err := reconciler.Reconcile(ctx, req)
 
 		if phase.expectError != "" {
 			g.Expect(err).To(MatchError(ContainSubstring(phase.expectError)))
@@ -1367,15 +1376,17 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			g.Expect(err).To(Succeed())
 		}
 
-		if phase.expectNoRequeue {
-			g.Expect(result.RequeueAfter).To(Equal(time.Duration(0)))
-		}
-
 		g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(infraCluster), infraCluster)).To(Succeed())
 
 		g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), cluster)).To(Succeed())
 
 		g.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(hcp), hcp)).To(Succeed())
+
+		if !phase.expectNoGenerationBump {
+			g.Expect(hcp.Status.ObservedGeneration).To(Equal(hcp.Generation))
+		} else {
+			g.Expect(hcp.Status.ObservedGeneration).To(Not(Equal(hcp.Generation)))
+		}
 
 		if len(phase.verifyConditionsAfter) > 0 {
 			t.Log("  Verifying post-conditions")

@@ -374,12 +374,6 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 			ctx = recorder.IntoContext(ctx, recorder.New(r.recorder, hostedControlPlane))
 
-			defer func() {
-				if err := r.patch(ctx, patchHelper, hostedControlPlane); err != nil {
-					retErr = errors.Join(retErr, err)
-				}
-			}()
-
 			cluster, err := util.GetOwnerCluster(ctx, r.client, hostedControlPlane.ObjectMeta)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to retrieve owner Cluster: %w", err)
@@ -394,14 +388,20 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				attribute.String("cluster.name", cluster.Name),
 			)
 
-			if isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.client, cluster, hostedControlPlane); err != nil ||
-				isPaused ||
-				requeue {
+			isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.client, cluster, hostedControlPlane)
+			if err != nil || isPaused || requeue {
 				if err != nil {
 					return ctrl.Result{}, fmt.Errorf("failed to verify paused condition: %w", err)
 				}
 				return ctrl.Result{RequeueAfter: 10 * time.Second}, retErr
 			}
+
+			defer func() {
+				hostedControlPlane.Status.ObservedGeneration = hostedControlPlane.Generation
+				if err := r.patch(ctx, patchHelper, hostedControlPlane); err != nil {
+					retErr = errors.Join(retErr, err)
+				}
+			}()
 
 			if !hostedControlPlane.DeletionTimestamp.IsZero() {
 				return r.reconcileDelete(ctx, patchHelper, hostedControlPlane)
