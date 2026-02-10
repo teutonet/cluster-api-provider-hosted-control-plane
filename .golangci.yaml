@@ -254,6 +254,8 @@ linters:
         #   msg: Use 'logr.FromContextAsSlogLogger(ctx)' instead
         # - pattern: ^logr.Logger
         #   msg: Use slog instead
+        - pattern: ^(record|events)\.NewFakeRecorder(For)?$
+          msg: Use pkg/operator/util/recorder/fake_recorder.go instead.
     revive:
       rules:
         - name: exported

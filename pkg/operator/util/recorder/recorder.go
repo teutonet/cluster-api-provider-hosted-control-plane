@@ -36,7 +36,7 @@ func FromContext(ctx context.Context) Recorder {
 		}
 	}
 	return &recorder{
-		eventRecorder: record.NewFakeRecorder(100),
+		eventRecorder: &InfiniteDiscardingFakeRecorder{},
 		object:        &runtime.Unknown{},
 	}
 }
