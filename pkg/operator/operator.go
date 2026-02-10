@@ -182,6 +182,8 @@ func setupControllers(
 		return fmt.Errorf("failed to create gateway client: %w", err)
 	}
 
+	//nolint:nolintlint // linter is stupid I guess
+	//nolint:staticcheck // this will be migrated later, we first need to get over the PR deadlock.
 	if err := hostedcontrolplane.NewHostedControlPlaneReconciler(
 		client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
 		&managementClusterClient,
