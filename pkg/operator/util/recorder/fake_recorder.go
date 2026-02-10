@@ -5,38 +5,25 @@ import (
 
 	slices "github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 )
 
 type InfiniteDiscardingFakeRecorder struct{}
 
 var (
-	_ record.EventRecorder = &InfiniteDiscardingFakeRecorder{}
+	_ events.EventRecorder = &InfiniteDiscardingFakeRecorder{}
 	_ Recorder             = &InfiniteDiscardingFakeRecorder{}
 )
 
-func (*InfiniteDiscardingFakeRecorder) Event(_ runtime.Object, _, _, _ string) {
+func (*InfiniteDiscardingFakeRecorder) Eventf(_, _ runtime.Object, _, _, _, _ string, _ ...interface{}) {
 	// Discard the event
 }
 
-func (*InfiniteDiscardingFakeRecorder) Eventf(_ runtime.Object, _, _, _ string, _ ...interface{}) {
+func (*InfiniteDiscardingFakeRecorder) Warnf(_ runtime.Object, _, _, _ string, _ ...interface{}) {
 	// Discard the event
 }
 
-func (*InfiniteDiscardingFakeRecorder) AnnotatedEventf(
-	_ runtime.Object,
-	_ map[string]string,
-	_, _, _ string,
-	_ ...interface{},
-) {
-	// Discard the event
-}
-
-func (*InfiniteDiscardingFakeRecorder) Warnf(_ string, _ string, _ ...interface{}) {
-	// Discard the event
-}
-
-func (*InfiniteDiscardingFakeRecorder) Normalf(_ string, _ string, _ ...interface{}) {
+func (*InfiniteDiscardingFakeRecorder) Normalf(_ runtime.Object, _, _, _ string, _ ...interface{}) {
 	// Discard the event
 }
 
@@ -44,7 +31,7 @@ type InfiniteReturningFakeRecorder struct {
 	Events []string
 }
 
-var _ record.EventRecorder = &InfiniteReturningFakeRecorder{}
+var _ events.EventRecorder = &InfiniteReturningFakeRecorder{}
 
 func objectString(object runtime.Object) string {
 	if object == nil {
@@ -56,43 +43,29 @@ func objectString(object runtime.Object) string {
 	)
 }
 
-func annotationsString(annotations map[string]string) string {
-	if len(annotations) == 0 {
-		return ""
-	}
-
-	return " " + fmt.Sprint(annotations)
-}
-
 func (r *InfiniteReturningFakeRecorder) writeEvent(
-	object runtime.Object,
-	annotations map[string]string,
-	eventtype, reason, messageFmt string,
+	object, related runtime.Object,
+	eventtype, reason, action, note string,
 	args ...interface{},
 ) {
-	r.Events = append(r.Events, fmt.Sprintf(eventtype+" "+reason+" "+messageFmt, args...)+
-		objectString(object)+annotationsString(annotations))
+	r.Events = append(r.Events, fmt.Sprintf(eventtype+" "+reason+" "+action+" "+note, args...)+
+		objectString(object)+objectString(related))
 }
 
-func (r *InfiniteReturningFakeRecorder) Event(object runtime.Object, eventtype, reason, message string) {
-	r.writeEvent(object, nil, eventtype, reason, "%s", message)
+func (r *InfiniteReturningFakeRecorder) Event(
+	object, related runtime.Object,
+	eventtype, reason, action, note string,
+) {
+	r.writeEvent(object, related, eventtype, reason, action, "%s", note)
 }
 
 func (r *InfiniteReturningFakeRecorder) Eventf(
 	object runtime.Object,
-	eventtype, reason, messageFmt string,
+	related runtime.Object,
+	eventtype, reason, action, note string,
 	args ...interface{},
 ) {
-	r.writeEvent(object, nil, eventtype, reason, messageFmt, args...)
-}
-
-func (r *InfiniteReturningFakeRecorder) AnnotatedEventf(
-	object runtime.Object,
-	annotations map[string]string,
-	eventtype, reason, messageFmt string,
-	args ...interface{},
-) {
-	r.writeEvent(object, annotations, eventtype, reason, messageFmt, args...)
+	r.writeEvent(object, related, eventtype, reason, action, note, args...)
 }
 
 func NewInfiniteReturningFakeRecorder(object ...runtime.Object) (*InfiniteReturningFakeRecorder, Recorder) {

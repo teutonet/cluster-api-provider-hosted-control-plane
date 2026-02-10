@@ -5,20 +5,20 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 )
 
 type Recorder interface {
-	Warnf(reason string, messageFmt string, args ...interface{})
-	Normalf(reason string, messageFmt string, args ...interface{})
+	Warnf(related runtime.Object, reason string, action string, note string, args ...interface{})
+	Normalf(related runtime.Object, reason string, action string, note string, args ...interface{})
 }
 
 type recorder struct {
-	eventRecorder record.EventRecorder
+	eventRecorder events.EventRecorder
 	object        runtime.Object
 }
 
-func New(eventRecorder record.EventRecorder, object runtime.Object) Recorder {
+func New(eventRecorder events.EventRecorder, object runtime.Object) Recorder {
 	return &recorder{
 		eventRecorder: eventRecorder,
 		object:        object,
@@ -45,14 +45,14 @@ func IntoContext(ctx context.Context, recorder Recorder) context.Context {
 	return context.WithValue(ctx, recorderKey{}, recorder)
 }
 
-func (r *recorder) eventf(eventType, reason, messageFmt string, args ...interface{}) {
-	r.eventRecorder.Eventf(r.object, eventType, reason, messageFmt, args...)
+func (r *recorder) eventf(related runtime.Object, eventType, reason, action string, note string, args ...interface{}) {
+	r.eventRecorder.Eventf(related, r.object, eventType, reason, action, note, args...)
 }
 
-func (r *recorder) Warnf(reason string, messageFmt string, args ...interface{}) {
-	r.eventf(corev1.EventTypeWarning, reason, messageFmt, args...)
+func (r *recorder) Warnf(related runtime.Object, reason string, action string, note string, args ...interface{}) {
+	r.eventf(related, corev1.EventTypeWarning, reason, action, note, args...)
 }
 
-func (r *recorder) Normalf(reason string, messageFmt string, args ...interface{}) {
-	r.eventf(corev1.EventTypeNormal, reason, messageFmt, args...)
+func (r *recorder) Normalf(related runtime.Object, reason string, action string, note string, args ...interface{}) {
+	r.eventf(related, corev1.EventTypeNormal, reason, action, note, args...)
 }

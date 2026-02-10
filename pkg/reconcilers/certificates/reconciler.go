@@ -596,6 +596,8 @@ func (cr *certificateReconciler) cleanupOrphanedCustomCertificates(
 								return fmt.Errorf("failed to delete orphaned certificate %s: %w", cert.Name, err)
 							}
 							cr.recorder.Normalf(
+								&cert,
+								"CustomKubeconfigDeleted",
 								"CertificateDeleted",
 								"Deleted orphaned custom kubeconfig certificate %s for user %s",
 								cert.Name,

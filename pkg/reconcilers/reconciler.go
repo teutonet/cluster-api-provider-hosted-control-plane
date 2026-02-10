@@ -27,6 +27,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
@@ -92,6 +93,7 @@ func reconcileWorkload[RA any, RSA any, R any](
 	kubernetesClient kubernetes.Interface,
 	ciliumClient ciliumclient.Interface,
 	client reconcileClient[RA, R],
+	getObject func(*R) runtime.Object,
 	apiVersion string,
 	kind string,
 	namespace string,
@@ -178,6 +180,8 @@ func reconcileWorkload[RA any, RSA any, R any](
 				)
 			}
 			recorder.FromContext(ctx).Warnf(
+				getObject(appliedResource),
+				"ImmutableSpecField",
 				fmt.Sprintf("Deleted%s", kind),
 				"Deleted existing %s %s due to immutable spec fields", kind, name,
 			)
@@ -242,6 +246,7 @@ func reconcileDeployment(
 		kubernetesClient,
 		ciliumClient,
 		kubernetesClient.AppsV1().Deployments(namespace),
+		func(deployment *appsv1.Deployment) runtime.Object { return deployment },
 		appsv1.SchemeGroupVersion.String(),
 		kind,
 		namespace,
@@ -870,7 +875,7 @@ func reconcileSecret(
 			WithOwnerReferences(ownerReference)
 	}
 
-	_, err := secretInterface.
+	appliedSecret, err := secretInterface.
 		Apply(
 			ctx,
 			secretApplyConfiguration,
@@ -893,6 +898,8 @@ func reconcileSecret(
 				)
 			}
 			recorder.FromContext(ctx).Normalf(
+				appliedSecret,
+				"ImmutableTypeField",
 				"DeletedSecret",
 				"Deleted existing secret %s/%s due to immutable type field", namespace, name,
 			)
@@ -1051,6 +1058,7 @@ func reconcileStatefulset(
 		kubernetesClient,
 		ciliumClient,
 		statefulSetInterface,
+		func(statefulSet *appsv1.StatefulSet) runtime.Object { return statefulSet },
 		appsv1.SchemeGroupVersion.String(),
 		kind,
 		namespace,

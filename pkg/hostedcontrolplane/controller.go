@@ -39,7 +39,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	utilNet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -79,7 +79,7 @@ func NewHostedControlPlaneReconciler(
 	) (*alias.WorkloadClusterClient, ciliumclient.Interface, error),
 	etcdClientFactory etcd_client.EtcdClientFactory,
 	s3ClientFactory s3_client.S3ClientFactory,
-	recorder record.EventRecorder,
+	recorder events.EventRecorder,
 	controllerNamespace string,
 ) HostedControlPlaneReconciler {
 	return &hostedControlPlaneReconciler{
@@ -129,7 +129,7 @@ type hostedControlPlaneReconciler struct {
 		cluster *capiv2.Cluster,
 		controllerUsername string,
 	) (*alias.WorkloadClusterClient, ciliumclient.Interface, error)
-	recorder                       record.EventRecorder
+	recorder                       events.EventRecorder
 	worldComponent                 string
 	controllerNamespace            string
 	controllerComponent            string

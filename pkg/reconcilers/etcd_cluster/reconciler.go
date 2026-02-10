@@ -238,6 +238,8 @@ func (er *etcdClusterReconciler) reconcilePVCSizes(
 						)
 					}
 					er.recorder.Normalf(
+						&pvc,
+						"RequestedSizeChanged",
 						etcdVolumeResizeEvent,
 						"Resized etcd volume %s/%s from %s to %s",
 						pvc.Namespace, pvc.Name,
@@ -260,6 +262,8 @@ func (er *etcdClusterReconciler) getETCDVolumeSize(hostedControlPlane *v1alpha1.
 			newValue := hostedControlPlane.Status.ETCDVolumeSize.DeepCopy()
 			newValue.Add(er.etcdServerStorageIncrement)
 			er.recorder.Normalf(
+				nil,
+				"EtcdSpaceUsageCrossedThreshold",
 				etcdVolumeSizeReCalculatedEvent,
 				"Calculated new etcd volume size: from %s to %s",
 				hostedControlPlane.Status.ETCDVolumeSize.String(),
@@ -311,6 +315,8 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 					schedule.Next(hostedControlPlane.Status.ETCDLastBackupTime.Time),
 				)
 				er.recorder.Normalf(
+					nil,
+					"CronScheduleTriggered",
 					"EtcdBackup",
 					"Created etcd backup. Next backup scheduled at %s",
 					hostedControlPlane.Status.ETCDNextBackupTime.String(),
@@ -513,6 +519,8 @@ func (er *etcdClusterReconciler) etcdIsHealthy(
 					)
 				}
 				er.recorder.Normalf(
+					nil,
+					"AutoGrowEnabled",
 					"EtcdAlarmDisarm",
 					"Disarmed etcd alarm %s for member %d",
 					outdatedAlarm.Alarm.String(),

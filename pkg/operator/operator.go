@@ -182,8 +182,6 @@ func setupControllers(
 		return fmt.Errorf("failed to create gateway client: %w", err)
 	}
 
-	//nolint:nolintlint // linter is stupid I guess
-	//nolint:staticcheck // this will be migrated later, we first need to get over the PR deadlock.
 	if err := hostedcontrolplane.NewHostedControlPlaneReconciler(
 		client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
 		&managementClusterClient,
@@ -208,7 +206,7 @@ func setupControllers(
 		},
 		etcd_client.NewEtcdClient,
 		s3_client.NewS3Client,
-		mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
+		mgr.GetEventRecorder(hostedControlPlaneControllerName),
 		controllerNamespace,
 	).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)

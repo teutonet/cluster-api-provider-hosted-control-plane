@@ -82,13 +82,15 @@ func ArgsToSlice(
 				"controllerValue", controllerArgs[key],
 			)
 
-			span.AddEvent("Argument overridden", trace.WithAttributes(
+			span.AddEvent(argumentOverriddenEvent, trace.WithAttributes(
 				attribute.String("arg", key),
 				attribute.String("userValue", userArgs[key]),
 				attribute.String("controllerValue", controllerArgs[key]),
 			))
 
 			eventRecorder.Warnf(
+				nil,
+				"ControllerArgumentTakesPrecedence",
 				argumentOverriddenEvent,
 				"User argument overridden by controller: %s (userValue=%s, controllerValue=%s)",
 				key, userArgs[key], controllerArgs[key],
