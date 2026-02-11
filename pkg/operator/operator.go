@@ -14,7 +14,7 @@ import (
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/go-logr/logr"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	webhookv1alpha1 "github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1/webhook"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/hostedcontrolplane"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/etc"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
@@ -43,7 +43,9 @@ import (
 	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
 
-var hostedControlPlaneControllerName = "hcp-controller"
+const (
+	hostedControlPlaneControllerName = "hcp-controller"
+)
 
 func Start(ctx context.Context, version string, operatorConfig etc.Config) (retErr error) {
 	ctx = configureLogging(ctx, operatorConfig.LogFormat, operatorConfig.LogLevel)
@@ -211,7 +213,7 @@ func setupControllers(
 	).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}
-	if err := (&v1alpha1.HostedControlPlane{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := webhookv1alpha1.SetupWebhookWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to setup webhook for HostedControlPlane: %w", err)
 	}
 	return nil

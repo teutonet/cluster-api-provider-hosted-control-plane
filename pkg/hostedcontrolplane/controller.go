@@ -18,6 +18,7 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/apiserverresources"
@@ -105,8 +106,8 @@ func NewHostedControlPlaneReconciler(
 		etcdServerStorageIncrement:     resource.MustParse("1Gi"),
 		konnectivityNamespace:          metav1.NamespaceSystem,
 		konnectivityServiceAccount:     "konnectivity-agent",
-		konnectivityClientUsername:     "konnectivity-client",
-		controllerUsername:             "control-plane-controller",
+		konnectivityClientUsername:     importcycle.KonnectivityClientUsername,
+		controllerUsername:             importcycle.ControllerUsername,
 		konnectivityServerAudience:     "system:konnectivity-server",
 		apiServerServiceLegacyPortName: "legacy-api",
 		konnectivityServicePort:        int32(8132),

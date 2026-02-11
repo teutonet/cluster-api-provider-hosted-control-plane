@@ -230,6 +230,8 @@ linters:
           alias: controllerUtil
         - pkg: github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util
           alias: operatorutil
+        - pkg: github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1/webhook
+          alias: webhookv1alpha1
 
     nolintlint:
       allow-unused: false

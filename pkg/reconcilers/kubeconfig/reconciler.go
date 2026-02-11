@@ -58,8 +58,7 @@ type kubeconfigReconciler struct {
 
 var _ KubeconfigReconciler = &kubeconfigReconciler{}
 
-type kubeconfigConfig struct {
-	Username          string
+type KubeconfigConfig struct {
 	SecretName        string
 	CertificateName   string
 	ApiServerEndpoint capiv2.APIEndpoint
@@ -93,50 +92,26 @@ func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 				v1alpha1.KubeconfigEndpointTypeExternal: cluster.Spec.ControlPlaneEndpoint,
 				v1alpha1.KubeconfigEndpointTypeInternal: internalServiceEndpoint,
 			}
-			kubeconfigs := []kubeconfigConfig{
-				{
-					Username:          "admin",
-					SecretName:        fmt.Sprintf("%s-kubeconfig", cluster.Name),
-					CertificateName:   names.GetAdminKubeconfigCertificateName(cluster),
-					ApiServerEndpoint: cluster.Spec.ControlPlaneEndpoint,
-				},
-				{
-					Username:          konstants.KubeControllerManager,
-					CertificateName:   names.GetControllerManagerKubeconfigCertificateName(cluster),
-					ApiServerEndpoint: internalServiceEndpoint,
-				},
-				{
-					Username:          konstants.KubeScheduler,
-					CertificateName:   names.GetSchedulerKubeconfigCertificateName(cluster),
-					ApiServerEndpoint: internalServiceEndpoint,
-				},
-				{
-					Username:          kr.konnectivityClientUsername,
-					CertificateName:   names.GetKonnectivityClientKubeconfigCertificateName(cluster),
-					ApiServerEndpoint: localEndpoint,
-				},
-				{
-					Username:          kr.controllerUsername,
-					CertificateName:   names.GetControlPlaneControllerKubeconfigCertificateName(cluster),
-					ApiServerEndpoint: clusterInternalServiceEndpoint,
-				},
-			}
+			kubeconfigs := CreateBuiltinKubeconfigConfigs(
+				cluster,
+				internalServiceEndpoint, localEndpoint, clusterInternalServiceEndpoint,
+				kr.konnectivityClientUsername, kr.controllerUsername,
+			)
 
 			for username, endpointType := range hostedControlPlane.Spec.CustomKubeconfigs {
-				kubeconfigs = append(kubeconfigs, kubeconfigConfig{
-					Username:          username,
+				kubeconfigs[username] = KubeconfigConfig{
 					SecretName:        names.GetCustomKubeconfigSecretName(cluster, username),
 					CertificateName:   names.GetCustomKubeconfigCertificateName(cluster, username),
 					ApiServerEndpoint: endpointMap[endpointType],
 					AdditionalLabels:  names.GetCustomKubeconfigLabels(username),
-				})
+				}
 			}
 
-			for _, kubeconfig := range kubeconfigs {
+			for username, kubeconfig := range kubeconfigs {
 				if kubeconfig.SecretName == "" {
-					kubeconfig.SecretName = names.GetKubeconfigSecretName(cluster, kubeconfig.Username)
+					kubeconfig.SecretName = names.GetKubeconfigSecretName(cluster, username)
 				}
-				if err := kr.reconcileKubeconfig(ctx, cluster, kubeconfig); err != nil {
+				if err := kr.reconcileKubeconfig(ctx, cluster, username, kubeconfig); err != nil {
 					return fmt.Errorf("failed to reconcile kubeconfig: %w", err)
 				}
 			}
@@ -146,15 +121,49 @@ func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 	)
 }
 
+func CreateBuiltinKubeconfigConfigs(
+	cluster *capiv2.Cluster,
+	internalServiceEndpoint capiv2.APIEndpoint,
+	localEndpoint capiv2.APIEndpoint,
+	clusterInternalServiceEndpoint capiv2.APIEndpoint,
+	konnectivityClientUsername string,
+	controllerUsername string,
+) map[string]KubeconfigConfig {
+	return map[string]KubeconfigConfig{
+		"admin": {
+			SecretName:        fmt.Sprintf("%s-kubeconfig", cluster.Name),
+			CertificateName:   names.GetAdminKubeconfigCertificateName(cluster),
+			ApiServerEndpoint: cluster.Spec.ControlPlaneEndpoint,
+		},
+		konstants.KubeControllerManager: {
+			CertificateName:   names.GetControllerManagerKubeconfigCertificateName(cluster),
+			ApiServerEndpoint: internalServiceEndpoint,
+		},
+		konstants.KubeScheduler: {
+			CertificateName:   names.GetSchedulerKubeconfigCertificateName(cluster),
+			ApiServerEndpoint: internalServiceEndpoint,
+		},
+		konnectivityClientUsername: {
+			CertificateName:   names.GetKonnectivityClientKubeconfigCertificateName(cluster),
+			ApiServerEndpoint: localEndpoint,
+		},
+		controllerUsername: {
+			CertificateName:   names.GetControlPlaneControllerKubeconfigCertificateName(cluster),
+			ApiServerEndpoint: clusterInternalServiceEndpoint,
+		},
+	}
+}
+
 func (kr *kubeconfigReconciler) reconcileKubeconfig(
 	ctx context.Context,
 	cluster *capiv2.Cluster,
-	kubeconfigConfig kubeconfigConfig,
+	username string,
+	kubeconfigConfig KubeconfigConfig,
 ) error {
 	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeconfig",
 		func(ctx context.Context, span trace.Span) error {
 			span.SetAttributes(
-				attribute.String("kubeconfig.name", kubeconfigConfig.Username),
+				attribute.String("kubeconfig.name", username),
 				attribute.String("kubeconfig.certificate.name", kubeconfigConfig.CertificateName),
 			)
 
@@ -167,7 +176,7 @@ func (kr *kubeconfigReconciler) reconcileKubeconfig(
 			kubeconfig, err := kr.generateKubeconfigFromSecret(ctx,
 				cluster,
 				kubeconfigConfig.ApiServerEndpoint,
-				kubeconfigConfig.Username,
+				username,
 				certSecret,
 			)
 			if err != nil {

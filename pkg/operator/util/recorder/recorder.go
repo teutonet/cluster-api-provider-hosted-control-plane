@@ -46,7 +46,7 @@ func IntoContext(ctx context.Context, recorder Recorder) context.Context {
 }
 
 func (r *recorder) eventf(related runtime.Object, eventType, reason, action string, note string, args ...interface{}) {
-	r.eventRecorder.Eventf(related, r.object, eventType, reason, action, note, args...)
+	r.eventRecorder.Eventf(r.object, related, eventType, reason, action, note, args...)
 }
 
 func (r *recorder) Warnf(related runtime.Object, reason string, action string, note string, args ...interface{}) {

@@ -19,6 +19,7 @@ import (
 	types2 "github.com/onsi/gomega/types"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1/webhook"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
@@ -195,8 +196,6 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			},
 		},
 	}
-	hostedControlPlaneWebhook := v1alpha1.NewHostedControlPlaneWebhook()
-	g.Expect(hostedControlPlaneWebhook.ValidateCreate(ctx, hcp)).Error().To(Succeed())
 
 	gatewayClassName := "test-gateway-class"
 	gateway := &gwv1.Gateway{
@@ -224,6 +223,8 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		WithStatusSubresource(&v1alpha1.HostedControlPlane{}).
 		WithStatusSubresource(&capiv2.Cluster{}).
 		Build()
+	hostedControlPlaneWebhook := webhook.NewHostedControlPlaneWebhook(k8sClient)
+	g.Expect(hostedControlPlaneWebhook.ValidateCreate(ctx, hcp)).Error().To(Succeed())
 
 	managementClusterClient := &alias.ManagementClusterClient{Interface: fake.NewClientset()}
 	var managementClusterCiliumClient cmclient.Interface = nil
