@@ -25,6 +25,7 @@ import (
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
 	"k8s.io/utils/ptr"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 type CoreDNSReconciler interface {
@@ -367,7 +368,15 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 					DNSPolicy:          corev1.DNSDefault,
 					Tolerations: []*corev1ac.TolerationApplyConfiguration{
 						corev1ac.Toleration().
+							WithKey("CriticalAddonsOnly").
 							WithOperator(corev1.TolerationOpExists),
+						corev1ac.Toleration().
+							WithKey(capiv2.NodeUninitializedTaint.Key).
+							WithEffect(capiv2.NodeUninitializedTaint.Effect),
+						corev1ac.Toleration().
+							WithKey("node.cloudprovider.kubernetes.io/uninitialized").
+							WithEffect(corev1.TaintEffectNoSchedule).
+							WithValue("true"),
 					},
 				},
 				cr.coreDNSLabels,
