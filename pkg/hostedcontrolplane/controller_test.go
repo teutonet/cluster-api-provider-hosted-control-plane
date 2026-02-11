@@ -9,6 +9,7 @@ import (
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
@@ -17,7 +18,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -66,7 +66,7 @@ func createTestReconciler(client client.Client) HostedControlPlaneReconciler {
 		workloadClusterClientStubFactory,
 		etcdClientStubFactory,
 		s3ClientStubFactory,
-		record.NewFakeRecorder(100),
+		&recorder.InfiniteDiscardingFakeRecorder{},
 		"test-namespace",
 	)
 }

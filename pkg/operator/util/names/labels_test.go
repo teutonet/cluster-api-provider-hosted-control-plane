@@ -193,3 +193,90 @@ func TestGetControlPlaneLabelsSelectorConsistency(t *testing.T) {
 		})
 	}
 }
+
+func TestGetCustomKubeconfigLabel(t *testing.T) {
+	g := NewWithT(t)
+	result := GetCustomKubeconfigLabel()
+
+	g.Expect(result).To(HaveLen(1))
+	g.Expect(result).To(HaveKeyWithValue(CustomKubeconfigLabel, "true"))
+}
+
+func TestGetCustomKubeconfigUserLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		expected map[string]string
+	}{
+		{
+			name:     "basic username",
+			username: "ci-user",
+			expected: map[string]string{
+				CustomKubeconfigUsernameLabel: "ci-user",
+			},
+		},
+		{
+			name:     "username with dashes",
+			username: "backup-agent-v2",
+			expected: map[string]string{
+				CustomKubeconfigUsernameLabel: "backup-agent-v2",
+			},
+		},
+		{
+			name:     "empty username",
+			username: "",
+			expected: map[string]string{
+				CustomKubeconfigUsernameLabel: "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			result := GetCustomKubeconfigUserLabel(tt.username)
+			g.Expect(result).To(Equal(tt.expected))
+		})
+	}
+}
+
+func TestGetCustomKubeconfigLabels(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		expected map[string]string
+	}{
+		{
+			name:     "basic username",
+			username: "ci-user",
+			expected: map[string]string{
+				CustomKubeconfigLabel:         "true",
+				CustomKubeconfigUsernameLabel: "ci-user",
+			},
+		},
+		{
+			name:     "monitoring user",
+			username: "monitoring",
+			expected: map[string]string{
+				CustomKubeconfigLabel:         "true",
+				CustomKubeconfigUsernameLabel: "monitoring",
+			},
+		},
+		{
+			name:     "username with special characters",
+			username: "backup-agent-v2",
+			expected: map[string]string{
+				CustomKubeconfigLabel:         "true",
+				CustomKubeconfigUsernameLabel: "backup-agent-v2",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			result := GetCustomKubeconfigLabels(tt.username)
+			g.Expect(result).To(Equal(tt.expected))
+		})
+	}
+}

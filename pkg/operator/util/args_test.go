@@ -5,9 +5,6 @@ import (
 
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -262,15 +259,9 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 			ctx := log.IntoContext(t.Context(), log.Log.WithName("test"))
 			g := NewWithT(t)
 
-			eventRecorder := record.NewFakeRecorder(100)
-			obj := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-config",
-					Namespace: "default",
-				},
-			}
+			returningFakeRecorder, eventRecorder := recorder.NewInfiniteReturningFakeRecorder()
 
-			ctx = recorder.IntoContext(ctx, recorder.New(eventRecorder, obj))
+			ctx = recorder.IntoContext(ctx, eventRecorder)
 
 			result := ArgsToSlice(
 				ctx,
@@ -281,13 +272,11 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 			g.Expect(result).To(Equal(tt.expectedArgs))
 
 			if tt.expectEvent {
-				g.Expect(eventRecorder.Events).To(Receive(
+				g.Expect(returningFakeRecorder.Events).To(ContainElement(
 					ContainSubstring(argumentOverriddenEvent),
 				))
 			} else {
-				g.Expect(eventRecorder.Events).ToNot(Receive(
-					ContainSubstring(argumentOverriddenEvent),
-				))
+				g.Expect(returningFakeRecorder.Events).To(BeEmpty())
 			}
 		})
 	}
@@ -297,7 +286,7 @@ func TestArgsToSliceWithObservabilityNilInputs(t *testing.T) {
 	g := NewWithT(t)
 	ctx := log.IntoContext(t.Context(), log.Log.WithName("test"))
 
-	ctx = recorder.IntoContext(ctx, recorder.New(nil, nil))
+	ctx = recorder.IntoContext(ctx, &recorder.InfiniteDiscardingFakeRecorder{})
 
 	result := ArgsToSlice(
 		ctx,
@@ -327,7 +316,7 @@ func TestOverriddenArgStruct(t *testing.T) {
 func TestArgsToSliceWithObservabilityBackwardCompatibility(t *testing.T) {
 	g := NewWithT(t)
 	ctx := log.IntoContext(t.Context(), log.Log.WithName("test"))
-	ctx = recorder.IntoContext(ctx, recorder.New(nil, nil))
+	ctx = recorder.IntoContext(ctx, &recorder.InfiniteDiscardingFakeRecorder{})
 
 	userArgs := map[string]string{
 		"user-arg1": "value1",

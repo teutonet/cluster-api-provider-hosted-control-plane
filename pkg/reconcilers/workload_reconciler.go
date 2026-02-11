@@ -17,6 +17,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/kubernetes/pkg/controller/certificates/rootcacertpublisher"
@@ -177,6 +178,7 @@ func (wr *WorkloadResourceReconciler) ReconcileDaemonSet(
 				wr.WorkloadClusterClient,
 				wr.CiliumClient,
 				wr.WorkloadClusterClient.AppsV1().DaemonSets(namespace),
+				func(daemonSet *appsv1.DaemonSet) runtime.Object { return daemonSet },
 				appsv1.SchemeGroupVersion.String(),
 				"DaemonSet",
 				namespace,

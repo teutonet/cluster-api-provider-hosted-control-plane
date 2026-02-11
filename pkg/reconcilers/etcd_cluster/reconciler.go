@@ -16,6 +16,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
@@ -35,7 +36,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	"k8s.io/client-go/tools/record"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
@@ -56,12 +56,12 @@ type EtcdClusterReconciler interface {
 func NewEtcdClusterReconciler(
 	managementClusterClient *alias.ManagementClusterClient,
 	ciliumClient ciliumclient.Interface,
-	recorder record.EventRecorder,
 	etcdServerPort int32,
 	etcdServerStorageBuffer resource.Quantity,
 	etcdServerStorageIncrement resource.Quantity,
 	etcdClientFactory etcd_client.EtcdClientFactory,
 	s3ClientFactory s3_client.S3ClientFactory,
+	recorder recorder.Recorder,
 	componentLabel string,
 	apiServerComponentLabel string,
 	controllerNamespace string,
@@ -75,13 +75,13 @@ func NewEtcdClusterReconciler(
 			ControllerComponent:     systemControllerComponent,
 			Tracer:                  tracing.GetTracer("EtcdCluster"),
 		},
-		recorder:                   recorder,
 		etcdServerPort:             etcdServerPort,
 		etcdPeerPort:               2380,
 		etcdServerStorageBuffer:    etcdServerStorageBuffer,
 		etcdServerStorageIncrement: etcdServerStorageIncrement,
 		etcdClientFactory:          etcdClientFactory,
 		s3ClientFactory:            s3ClientFactory,
+		recorder:                   recorder,
 		componentLabel:             componentLabel,
 		apiServerComponentLabel:    apiServerComponentLabel,
 		controllerComponent:        systemControllerComponent,
@@ -90,13 +90,13 @@ func NewEtcdClusterReconciler(
 
 type etcdClusterReconciler struct {
 	reconcilers.ManagementResourceReconciler
-	recorder                   record.EventRecorder
 	etcdServerPort             int32
 	etcdPeerPort               int32
 	etcdServerStorageBuffer    resource.Quantity
 	etcdServerStorageIncrement resource.Quantity
 	etcdClientFactory          etcd_client.EtcdClientFactory
 	s3ClientFactory            s3_client.S3ClientFactory
+	recorder                   recorder.Recorder
 	componentLabel             string
 	apiServerComponentLabel    string
 	controllerComponent        string
@@ -237,9 +237,9 @@ func (er *etcdClusterReconciler) reconcilePVCSizes(
 							err,
 						)
 					}
-					er.recorder.Eventf(
-						hostedControlPlane,
-						corev1.EventTypeNormal,
+					er.recorder.Normalf(
+						&pvc,
+						"RequestedSizeChanged",
 						etcdVolumeResizeEvent,
 						"Resized etcd volume %s/%s from %s to %s",
 						pvc.Namespace, pvc.Name,
@@ -261,9 +261,9 @@ func (er *etcdClusterReconciler) getETCDVolumeSize(hostedControlPlane *v1alpha1.
 		if value.Cmp(er.etcdServerStorageBuffer) == -1 {
 			newValue := hostedControlPlane.Status.ETCDVolumeSize.DeepCopy()
 			newValue.Add(er.etcdServerStorageIncrement)
-			er.recorder.Eventf(
-				hostedControlPlane,
-				corev1.EventTypeNormal,
+			er.recorder.Normalf(
+				nil,
+				"EtcdSpaceUsageCrossedThreshold",
 				etcdVolumeSizeReCalculatedEvent,
 				"Calculated new etcd volume size: from %s to %s",
 				hostedControlPlane.Status.ETCDVolumeSize.String(),
@@ -314,11 +314,12 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 				hostedControlPlane.Status.ETCDNextBackupTime = metav1.NewTime(
 					schedule.Next(hostedControlPlane.Status.ETCDLastBackupTime.Time),
 				)
-				er.recorder.Eventf(
-					hostedControlPlane,
-					corev1.EventTypeNormal,
+				er.recorder.Normalf(
+					nil,
+					"CronScheduleTriggered",
 					"EtcdBackup",
-					"Created etcd backup",
+					"Created etcd backup. Next backup scheduled at %s",
+					hostedControlPlane.Status.ETCDNextBackupTime.String(),
 				)
 			}
 			return nil
@@ -517,9 +518,9 @@ func (er *etcdClusterReconciler) etcdIsHealthy(
 						outdatedAlarm.Alarm.String(), outdatedAlarm.MemberID, err,
 					)
 				}
-				er.recorder.Eventf(
-					hostedControlPlane,
-					corev1.EventTypeNormal,
+				er.recorder.Normalf(
+					nil,
+					"AutoGrowEnabled",
 					"EtcdAlarmDisarm",
 					"Disarmed etcd alarm %s for member %d",
 					outdatedAlarm.Alarm.String(),

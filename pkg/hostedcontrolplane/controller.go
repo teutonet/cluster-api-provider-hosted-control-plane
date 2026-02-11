@@ -18,6 +18,7 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/apiserverresources"
@@ -39,7 +40,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	utilNet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -75,43 +76,43 @@ func NewHostedControlPlaneReconciler(
 		ctx context.Context,
 		managementClusterClient *alias.ManagementClusterClient,
 		cluster *capiv2.Cluster,
-		controllerKubeconfigName string,
+		controllerUsername string,
 	) (*alias.WorkloadClusterClient, ciliumclient.Interface, error),
 	etcdClientFactory etcd_client.EtcdClientFactory,
 	s3ClientFactory s3_client.S3ClientFactory,
-	recorder record.EventRecorder,
+	recorder events.EventRecorder,
 	controllerNamespace string,
 ) HostedControlPlaneReconciler {
 	return &hostedControlPlaneReconciler{
-		client:                           client,
-		managementClusterClient:          managementClusterClient,
-		certManagerClient:                certManagerClient,
-		gatewayClient:                    gatewayClient,
-		etcdClientFactory:                etcdClientFactory,
-		s3ClientFactory:                  s3ClientFactory,
-		ciliumClientFactory:              ciliumClientFactory,
-		workloadClusterClientFactory:     workloadClusterClientFactory,
-		recorder:                         recorder,
-		worldComponent:                   "world",
-		controllerNamespace:              controllerNamespace,
-		controllerComponent:              "hosted-control-plane-controller",
-		caCertificatesDuration:           2 * 24 * time.Hour,
-		certificatesDuration:             24 * time.Hour,
-		apiServerComponentLabel:          "api-server",
-		apiServerServicePort:             int32(443),
-		etcdComponentLabel:               "etcd",
-		etcdServerPort:                   int32(2379),
-		etcdServerStorageBuffer:          resource.MustParse("500Mi"),
-		etcdServerStorageIncrement:       resource.MustParse("1Gi"),
-		konnectivityNamespace:            metav1.NamespaceSystem,
-		konnectivityServiceAccount:       "konnectivity-agent",
-		konnectivityClientKubeconfigName: "konnectivity-client",
-		controllerKubeconfigName:         "control-plane-controller",
-		konnectivityServerAudience:       "system:konnectivity-server",
-		apiServerServiceLegacyPortName:   "legacy-api",
-		konnectivityServicePort:          int32(8132),
-		finalizer:                        fmt.Sprintf("hcp.%s", api.GroupName),
-		tracer:                           tracing.GetTracer(""),
+		client:                         client,
+		managementClusterClient:        managementClusterClient,
+		certManagerClient:              certManagerClient,
+		gatewayClient:                  gatewayClient,
+		etcdClientFactory:              etcdClientFactory,
+		s3ClientFactory:                s3ClientFactory,
+		ciliumClientFactory:            ciliumClientFactory,
+		workloadClusterClientFactory:   workloadClusterClientFactory,
+		recorder:                       recorder,
+		worldComponent:                 "world",
+		controllerNamespace:            controllerNamespace,
+		controllerComponent:            "hosted-control-plane-controller",
+		caCertificatesDuration:         2 * 24 * time.Hour,
+		certificatesDuration:           24 * time.Hour,
+		apiServerComponentLabel:        "api-server",
+		apiServerServicePort:           int32(443),
+		etcdComponentLabel:             "etcd",
+		etcdServerPort:                 int32(2379),
+		etcdServerStorageBuffer:        resource.MustParse("500Mi"),
+		etcdServerStorageIncrement:     resource.MustParse("1Gi"),
+		konnectivityNamespace:          metav1.NamespaceSystem,
+		konnectivityServiceAccount:     "konnectivity-agent",
+		konnectivityClientUsername:     importcycle.KonnectivityClientUsername,
+		controllerUsername:             importcycle.ControllerUsername,
+		konnectivityServerAudience:     "system:konnectivity-server",
+		apiServerServiceLegacyPortName: "legacy-api",
+		konnectivityServicePort:        int32(8132),
+		finalizer:                      fmt.Sprintf("hcp.%s", api.GroupName),
+		tracer:                         tracing.GetTracer(""),
 	}
 }
 
@@ -127,29 +128,29 @@ type hostedControlPlaneReconciler struct {
 		ctx context.Context,
 		managementClusterClient *alias.ManagementClusterClient,
 		cluster *capiv2.Cluster,
-		controllerKubeconfigName string,
+		controllerUsername string,
 	) (*alias.WorkloadClusterClient, ciliumclient.Interface, error)
-	recorder                         record.EventRecorder
-	worldComponent                   string
-	controllerNamespace              string
-	controllerComponent              string
-	caCertificatesDuration           time.Duration
-	certificatesDuration             time.Duration
-	apiServerComponentLabel          string
-	apiServerServicePort             int32
-	etcdComponentLabel               string
-	etcdServerPort                   int32
-	etcdServerStorageBuffer          resource.Quantity
-	etcdServerStorageIncrement       resource.Quantity
-	konnectivityNamespace            string
-	konnectivityServiceAccount       string
-	konnectivityClientKubeconfigName string
-	controllerKubeconfigName         string
-	konnectivityServerAudience       string
-	apiServerServiceLegacyPortName   string
-	konnectivityServicePort          int32
-	finalizer                        string
-	tracer                           string
+	recorder                       events.EventRecorder
+	worldComponent                 string
+	controllerNamespace            string
+	controllerComponent            string
+	caCertificatesDuration         time.Duration
+	certificatesDuration           time.Duration
+	apiServerComponentLabel        string
+	apiServerServicePort           int32
+	etcdComponentLabel             string
+	etcdServerPort                 int32
+	etcdServerStorageBuffer        resource.Quantity
+	etcdServerStorageIncrement     resource.Quantity
+	konnectivityNamespace          string
+	konnectivityServiceAccount     string
+	konnectivityClientUsername     string
+	controllerUsername             string
+	konnectivityServerAudience     string
+	apiServerServiceLegacyPortName string
+	konnectivityServicePort        int32
+	finalizer                      string
+	tracer                         string
 }
 
 var _ HostedControlPlaneReconciler = &hostedControlPlaneReconciler{}
@@ -560,22 +561,23 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.caCertificatesDuration,
 				r.certificatesDuration,
 				r.konnectivityServerAudience,
+				recorder.FromContext(ctx),
 			)
 			kubeconfigReconciler := kubeconfig.NewKubeconfigReconciler(
 				r.managementClusterClient,
 				r.apiServerServicePort,
-				r.konnectivityClientKubeconfigName,
-				r.controllerKubeconfigName,
+				r.konnectivityClientUsername,
+				r.controllerUsername,
 			)
 			etcdClusterReconciler := etcd_cluster.NewEtcdClusterReconciler(
 				r.managementClusterClient,
 				ciliumClient,
-				r.recorder,
 				r.etcdServerPort,
 				r.etcdServerStorageBuffer,
 				r.etcdServerStorageIncrement,
 				r.etcdClientFactory,
 				r.s3ClientFactory,
+				recorder.FromContext(ctx),
 				r.etcdComponentLabel,
 				r.apiServerComponentLabel,
 				r.controllerNamespace,
@@ -595,7 +597,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.konnectivityNamespace,
 				r.konnectivityServiceAccount,
 				r.konnectivityServicePort,
-				r.konnectivityClientKubeconfigName,
+				r.konnectivityClientUsername,
 				r.konnectivityServerAudience,
 			)
 			tlsRoutesReconciler := tlsroutes.NewTLSRoutesReconciler(
@@ -613,7 +615,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					ctx context.Context, managementClusterClient *alias.ManagementClusterClient, cluster *capiv2.Cluster,
 				) (*alias.WorkloadClusterClient, ciliumclient.Interface, error) {
 					return r.workloadClusterClientFactory(
-						ctx, managementClusterClient, cluster, r.controllerKubeconfigName,
+						ctx, managementClusterClient, cluster, r.controllerUsername,
 					)
 				},
 				r.caCertificatesDuration,

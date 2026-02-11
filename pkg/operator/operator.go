@@ -14,7 +14,7 @@ import (
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/go-logr/logr"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	webhookv1alpha1 "github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1/webhook"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/hostedcontrolplane"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/etc"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
@@ -43,7 +43,9 @@ import (
 	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
 
-var hostedControlPlaneControllerName = "hcp-controller"
+const (
+	hostedControlPlaneControllerName = "hcp-controller"
+)
 
 func Start(ctx context.Context, version string, operatorConfig etc.Config) (retErr error) {
 	ctx = configureLogging(ctx, operatorConfig.LogFormat, operatorConfig.LogLevel)
@@ -182,8 +184,6 @@ func setupControllers(
 		return fmt.Errorf("failed to create gateway client: %w", err)
 	}
 
-	//nolint:nolintlint // linter is stupid I guess
-	//nolint:staticcheck // this will be migrated later, we first need to get over the PR deadlock.
 	if err := hostedcontrolplane.NewHostedControlPlaneReconciler(
 		client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
 		&managementClusterClient,
@@ -196,24 +196,24 @@ func setupControllers(
 			ctx context.Context,
 			managementClusterClient *alias.ManagementClusterClient,
 			cluster *capiv2.Cluster,
-			controllerKubeconfigName string,
+			controllerUsername string,
 		) (*alias.WorkloadClusterClient, ciliumclient.Interface, error) {
 			return workload.GetWorkloadClusterClient(
 				ctx,
 				managementClusterClient,
 				cluster,
 				tracingWrapper,
-				controllerKubeconfigName,
+				controllerUsername,
 			)
 		},
 		etcd_client.NewEtcdClient,
 		s3_client.NewS3Client,
-		mgr.GetEventRecorderFor(hostedControlPlaneControllerName),
+		mgr.GetEventRecorder(hostedControlPlaneControllerName),
 		controllerNamespace,
 	).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}
-	if err := (&v1alpha1.HostedControlPlane{}).SetupWebhookWithManager(mgr); err != nil {
+	if err := webhookv1alpha1.SetupWebhookWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to setup webhook for HostedControlPlane: %w", err)
 	}
 	return nil

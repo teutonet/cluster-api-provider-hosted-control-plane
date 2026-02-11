@@ -17,6 +17,7 @@ import (
 	"github.com/cilium/cilium/pkg/policy/api"
 	slices "github.com/samber/lo"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
@@ -26,6 +27,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
@@ -45,8 +47,11 @@ var (
 	errStatefulSetLabelChange = errors.New(
 		"statefulset: cannot change pod template label values",
 	)
-	specUpdateForbiddenErrorMessageRegex = regexp.MustCompile(
+	workloadSpecUpdateForbiddenErrorMessageRegex = regexp.MustCompile(
 		`Forbidden: updates to \S+ spec for fields other than .* are forbidden`,
+	)
+	secretTypeImmutableErrorMessageRegex = regexp.MustCompile(
+		`Invalid value: "\S+": field is immutable`,
 	)
 )
 
@@ -88,6 +93,7 @@ func reconcileWorkload[RA any, RSA any, R any](
 	kubernetesClient kubernetes.Interface,
 	ciliumClient ciliumclient.Interface,
 	client reconcileClient[RA, R],
+	getObject func(*R) runtime.Object,
 	apiVersion string,
 	kind string,
 	namespace string,
@@ -157,28 +163,34 @@ func reconcileWorkload[RA any, RSA any, R any](
 	}
 
 	appliedResource, err := client.Apply(ctx, resourceApplyConfiguration, operatorutil.ApplyOptions)
-	//nolint:nestif // need to handle special case of statefulset update forbidden error
 	if err != nil {
-		if status, ok := err.(apierrors.APIStatus); apierrors.IsInvalid(err) && (ok || errors.As(err, &status)) {
-			if slices.EveryBy(status.Status().Details.Causes, func(cause metav1.StatusCause) bool {
+		if status, ok := err.(apierrors.APIStatus); apierrors.IsInvalid(err) && (ok || errors.As(err, &status)) &&
+			slices.EveryBy(status.Status().Details.Causes, func(cause metav1.StatusCause) bool {
 				return cause.Type == metav1.CauseTypeForbidden &&
 					cause.Field == "spec" &&
-					specUpdateForbiddenErrorMessageRegex.MatchString(cause.Message)
+					workloadSpecUpdateForbiddenErrorMessageRegex.MatchString(cause.Message)
 			}) {
-				if err := client.Delete(
-					ctx,
-					name,
-					metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
-				); err != nil {
-					return nil, false, fmt.Errorf(
-						"failed to delete existing %s %s: %w", kind, name, err,
-					)
-				}
-				return nil, false, nil
+			if err := client.Delete(
+				ctx,
+				name,
+				metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
+			); err != nil {
+				return nil, false, fmt.Errorf(
+					"failed to delete existing %s %s: %w", kind, name, err,
+				)
 			}
+			recorder.FromContext(ctx).Warnf(
+				getObject(appliedResource),
+				"ImmutableSpecField",
+				fmt.Sprintf("Deleted%s", kind),
+				"Deleted existing %s %s due to immutable spec fields", kind, name,
+			)
+			// don't retry immediately, the funcs might not be idempotent
+			// (and go can't figure out the generics anyways...)
+			return nil, false, nil
 		}
 
-		return nil, false, errorsUtil.IfErrErrorf(
+		return nil, false, fmt.Errorf(
 			"failed to apply %s %s: %w", kind, name, err,
 		)
 	}
@@ -234,6 +246,7 @@ func reconcileDeployment(
 		kubernetesClient,
 		ciliumClient,
 		kubernetesClient.AppsV1().Deployments(namespace),
+		func(deployment *appsv1.Deployment) runtime.Object { return deployment },
 		appsv1.SchemeGroupVersion.String(),
 		kind,
 		namespace,
@@ -840,11 +853,12 @@ func reconcileSecret(
 	ownerReference *metav1ac.OwnerReferenceApplyConfiguration,
 	labels map[string]string,
 	data map[string][]byte,
+	secretType corev1.SecretType,
 ) error {
 	secretApplyConfiguration := corev1ac.Secret(name, namespace).
 		WithLabels(labels).
-		WithType(corev1.SecretTypeOpaque).
-		WithData(data)
+		WithData(data).
+		WithType(secretType)
 
 	secretInterface := kubernetesClient.CoreV1().Secrets(namespace)
 	if deleteResource {
@@ -861,13 +875,49 @@ func reconcileSecret(
 			WithOwnerReferences(ownerReference)
 	}
 
-	_, err := secretInterface.
+	appliedSecret, err := secretInterface.
 		Apply(
 			ctx,
 			secretApplyConfiguration,
 			operatorutil.ApplyOptions,
 		)
-	return errorsUtil.IfErrErrorf("failed to apply secret %s/%s: %w", namespace, name, err)
+	if err != nil {
+		if status, ok := err.(apierrors.APIStatus); apierrors.IsInvalid(err) && (ok || errors.As(err, &status)) &&
+			slices.EveryBy(status.Status().Details.Causes, func(cause metav1.StatusCause) bool {
+				return cause.Type == metav1.CauseTypeFieldValueInvalid &&
+					cause.Field == "type" &&
+					secretTypeImmutableErrorMessageRegex.MatchString(cause.Message)
+			}) {
+			if err := secretInterface.Delete(
+				ctx,
+				name,
+				metav1.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationBackground)},
+			); err != nil {
+				return fmt.Errorf(
+					"failed to delete existing secret %s: %w", name, err,
+				)
+			}
+			recorder.FromContext(ctx).Normalf(
+				appliedSecret,
+				"ImmutableTypeField",
+				"DeletedSecret",
+				"Deleted existing secret %s/%s due to immutable type field", namespace, name,
+			)
+			return reconcileSecret(
+				ctx,
+				kubernetesClient,
+				namespace,
+				name,
+				deleteResource,
+				ownerReference,
+				labels,
+				data,
+				secretType,
+			)
+		}
+		return fmt.Errorf("failed to apply secret %s/%s: %w", namespace, name, err)
+	}
+	return nil
 }
 
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=create;patch;delete
@@ -1008,6 +1058,7 @@ func reconcileStatefulset(
 		kubernetesClient,
 		ciliumClient,
 		statefulSetInterface,
+		func(statefulSet *appsv1.StatefulSet) runtime.Object { return statefulSet },
 		appsv1.SchemeGroupVersion.String(),
 		kind,
 		namespace,
