@@ -346,7 +346,7 @@ func (r *hostedControlPlaneReconciler) resolveOwnerRefsToHostedControlPlanes(
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes/finalizers,verbs=update
 //+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=list;watch
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=get
-//+kubebuilder:rbac:groups="",resources=events,verbs=create
+//+kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create
 
 func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	return tracing.WithSpan(ctx, r.tracer, "Reconcile",
