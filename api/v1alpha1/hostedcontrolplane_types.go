@@ -270,8 +270,11 @@ type HostedControlPlaneStatus struct {
 	//+kubebuilder:validation:Optional
 	Ready bool `json:"ready"`
 	//+kubebuilder:validation:Optional
-	Version                     string `json:"version,omitempty"`
-	ExternalManagedControlPlane *bool  `json:"externalManagedControlPlane"`
+	Version string `json:"version,omitempty"`
+	//+kubebuilder:validation:Optional
+	ExternalManagedControlPlane *bool `json:"externalManagedControlPlane,omitempty"`
+	//+kubebuilder:validation:Optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
 type HostedControlPlaneInitializationStatus struct {
