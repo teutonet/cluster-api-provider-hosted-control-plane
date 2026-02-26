@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.6.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.5.0...v1.6.0) (2026-02-26)
+
+
+### Features
+
+* add `trimpath` while building ([#81](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/81)) ([a904142](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/a9041428f13e58560ab111103f4a99497999cd18))
+* add observedGeneration for better visibility ([#99](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/99)) ([91e4323](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/91e43235653156821c1685cc7f170b34d012c962))
+* add option to create custom kubeconfigs ([#89](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/89)) ([f372250](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/f372250255eb74fb51927ef4c9b77eec771403e3))
+* auto-merge Dependabot PRs ([#78](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/78)) ([20adf68](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/20adf68849954f8f8a3087776d57e8c3f91ff811))
+* check for CVEs during linting ([#66](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/66)) ([8163a19](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/8163a19d1acd5e2e7236ab1ab672ef85d99ca799))
+* enable workflows for merge queue ([#79](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/79)) ([5d1fac5](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/5d1fac52b7aaba27706ec13e2030df3b136036e6))
+* scale workload deployments to at least one ([#97](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/97)) ([acf1e70](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/acf1e700c5c6268cfbcf219bbb318ffe764ed08b))
+* update docs to keep in line with reality ([#74](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/74)) ([08fbb4a](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/08fbb4a5e7a09d82a70d6ea27b03b658a7b1995b))
+
+
+### Bug Fixes
+
+* **docs:** Fix links and namespace ([#67](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/67)) ([fe73b55](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/fe73b55e83917e7de2142150c00c2825c9662362))
+* pass correct port to konnectivity workload reconciler ([#73](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/73)) ([4e3664c](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/4e3664c0538690f02969211243857096a27bab93))
+* spec is a required field in the HostedControlPlaneTemplate ([#75](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/75)) ([442c974](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/442c9740f6f4f8db4759c527679163231af55d8d))
+* use more specific tolerations for coredns ([#88](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/88)) ([e8e152c](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/e8e152cef0cfd70fea0779b125117cf183d0c1e9))
+* use new events apiGroup ([#107](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/107)) ([2fd68c8](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/2fd68c875f08cecc4fb2e0edd7da3284c2ab9ec2))
+* use the SchemaURL of the defaultResource ([#90](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/90)) ([0caadb8](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/0caadb8708ef740e68c2994fea2535a90b30eb43))
+
 ## [1.5.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.4.0...v1.5.0) (2025-11-26)
 
 
