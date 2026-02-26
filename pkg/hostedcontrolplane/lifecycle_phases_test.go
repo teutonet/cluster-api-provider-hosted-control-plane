@@ -859,69 +859,6 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			},
 		},
 		{
-			name: "Verify CoreDNS and Konnectivity Deployments are scaled to 0",
-			verifyResources: func(ctx context.Context, g *WithT) {
-				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
-				corednsDeployment, err := deploymentInterface.Get(ctx, "coredns", metav1.GetOptions{})
-				g.Expect(err).To(Succeed())
-				g.Expect(corednsDeployment.Spec.Replicas).To(PointTo(Equal(int32(0))))
-				konnectivityDeployment, err := deploymentInterface.Get(ctx, "konnectivity-agent", metav1.GetOptions{})
-				g.Expect(err).To(Succeed())
-				g.Expect(konnectivityDeployment.Spec.Replicas).To(PointTo(Equal(int32(0))))
-			},
-		},
-		{
-			name: "Add Node to Cluster",
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
-				g.Expect(workloadClusterClient.CoreV1().Nodes().Create(ctx, &corev1.Node{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "node-1",
-					},
-				}, metav1.CreateOptions{FieldManager: k8sFieldManager})).Error().To(Succeed())
-			},
-			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
-				false: {
-					NewConditionVerification(
-						v1alpha1.WorkloadClusterResourcesReadyCondition,
-						Equal("KubeProxyDaemonsetNotReady"),
-					),
-					NewConditionVerification(
-						v1alpha1.WorkloadKubeProxyReadyCondition,
-						Equal("KubeProxyDaemonsetNotReady"),
-					),
-				},
-			},
-		},
-		{
-			name: "Make Kube Proxy Daemonset Ready",
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
-				daemonSetInterface := workloadClusterClient.AppsV1().DaemonSets(metav1.NamespaceSystem)
-				daemonSet, err := daemonSetInterface.Get(ctx, "kube-proxy", metav1.GetOptions{})
-				g.Expect(err).To(Succeed())
-				daemonSetApplyConfiguration, err := appsv1ac.ExtractDaemonSet(
-					daemonSet, k8sFieldManager,
-				)
-				g.Expect(err).To(Succeed())
-				g.Expect(daemonSetInterface.ApplyStatus(
-					ctx, daemonSetApplyConfiguration.
-						WithStatus(
-							appsv1ac.DaemonSetStatus().
-								WithNumberAvailable(1).
-								WithNumberReady(1).
-								WithUpdatedNumberScheduled(daemonSet.Status.UpdatedNumberScheduled).
-								WithDesiredNumberScheduled(daemonSet.Status.DesiredNumberScheduled),
-						), k8sOptions,
-				)).Error().To(Succeed())
-			},
-			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
-				true: {
-					NewConditionVerification(
-						v1alpha1.WorkloadKubeProxyReadyCondition,
-					),
-				},
-			},
-		},
-		{
 			name: "Verify CoreDNS Deployment is scaled to 1",
 			verifyResources: func(ctx context.Context, g *WithT) {
 				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
@@ -958,12 +895,12 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			},
 		},
 		{
-			name: "Verify Konnectivity Agent Deployment is scaled to 1",
+			name: "Verify Konnectivity Deployment is scaled to 1",
 			verifyResources: func(ctx context.Context, g *WithT) {
 				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
-				konnectivityDeployment, err := deploymentInterface.Get(ctx, "konnectivity-agent", metav1.GetOptions{})
+				corednsDeployment, err := deploymentInterface.Get(ctx, "konnectivity-agent", metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
-				g.Expect(konnectivityDeployment.Spec.Replicas).To(PointTo(Equal(int32(1))))
+				g.Expect(corednsDeployment.Spec.Replicas).To(PointTo(Equal(int32(1))))
 			},
 		},
 		{
@@ -992,6 +929,68 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 					NewConditionVerification(
 						v1alpha1.WorkloadClusterResourcesReadyCondition,
+					),
+				},
+			},
+		},
+		{
+			name: "Add Node to Cluster",
+			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+				g.Expect(workloadClusterClient.CoreV1().Nodes().Create(ctx, &corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "node-1",
+					},
+				}, metav1.CreateOptions{FieldManager: k8sFieldManager})).Error().To(Succeed())
+			},
+			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
+				false: {
+					NewConditionVerification(
+						v1alpha1.WorkloadClusterResourcesReadyCondition,
+						Equal("KubeProxyDaemonsetNotReady"),
+					),
+					NewConditionVerification(
+						v1alpha1.WorkloadKubeProxyReadyCondition,
+						Equal("KubeProxyDaemonsetNotReady"),
+					),
+				},
+			},
+		},
+		{
+			name: "Verify CoreDNS and Konnectivity Agent Deployments are still scaled to 1",
+			verifyResources: func(ctx context.Context, g *WithT) {
+				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
+				for _, name := range []string{"coredns", "konnectivity-agent"} {
+					deployment, err := deploymentInterface.Get(ctx, name, metav1.GetOptions{})
+					g.Expect(err).To(Succeed())
+					g.Expect(deployment.Spec.Replicas).To(PointTo(Equal(int32(1))))
+				}
+			},
+		},
+		{
+			name: "Make Kube Proxy Daemonset Ready",
+			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+				daemonSetInterface := workloadClusterClient.AppsV1().DaemonSets(metav1.NamespaceSystem)
+				daemonSet, err := daemonSetInterface.Get(ctx, "kube-proxy", metav1.GetOptions{})
+				g.Expect(err).To(Succeed())
+				daemonSetApplyConfiguration, err := appsv1ac.ExtractDaemonSet(
+					daemonSet, k8sFieldManager,
+				)
+				g.Expect(err).To(Succeed())
+				g.Expect(daemonSetInterface.ApplyStatus(
+					ctx, daemonSetApplyConfiguration.
+						WithStatus(
+							appsv1ac.DaemonSetStatus().
+								WithNumberAvailable(1).
+								WithNumberReady(1).
+								WithUpdatedNumberScheduled(daemonSet.Status.UpdatedNumberScheduled).
+								WithDesiredNumberScheduled(daemonSet.Status.DesiredNumberScheduled),
+						), k8sOptions,
+				)).Error().To(Succeed())
+			},
+			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
+				true: {
+					NewConditionVerification(
+						v1alpha1.WorkloadKubeProxyReadyCondition,
 					),
 				},
 			},

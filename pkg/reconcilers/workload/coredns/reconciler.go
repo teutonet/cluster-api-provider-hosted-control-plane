@@ -359,8 +359,10 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 				cr.coreDNSResourceName,
 				false,
 				int32(
-					math.Min(float64(len(nodes.Items)),
-						float64(hostedControlPlane.Spec.CoreDNS.ReplicaCount(2))),
+					math.Min(
+						math.Max(1, float64(len(nodes.Items))),
+						float64(hostedControlPlane.Spec.CoreDNS.ReplicaCount(2)),
+					),
 				),
 				reconcilers.PodOptions{
 					ServiceAccountName: cr.coreDNSServiceAccountName,

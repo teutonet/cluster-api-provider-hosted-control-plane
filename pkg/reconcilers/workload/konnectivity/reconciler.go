@@ -289,7 +289,7 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDeployment(
 				false,
 				int32(
 					math.Min(
-						float64(len(nodes.Items)),
+						math.Max(1, float64(len(nodes.Items))),
 						float64(hostedControlPlane.Spec.KonnectivityClient.ReplicaCount(2)),
 					),
 				),
