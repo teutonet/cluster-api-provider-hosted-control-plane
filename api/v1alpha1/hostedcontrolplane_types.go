@@ -21,8 +21,7 @@ import (
 //+kubebuilder:printcolumn:name="API Server Available",type=string,JSONPath=`.status.conditions[?(@.type == "Ready")].status`
 //+kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 //+kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
-//+kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.updatedReplicas`
-//+kubebuilder:printcolumn:name="Unavailable",type=integer,JSONPath=`.status.unavailableReplicas`
+//+kubebuilder:printcolumn:name="Updated",type=integer,JSONPath=`.status.upToDateReplicas`
 //+kubebuilder:printcolumn:name="ETCD Size",type=string,JSONPath=`.status.etcdVolumeSize`
 //+kubebuilder:printcolumn:name="Max ETCD Space Usage",type=string,JSONPath=`.status.etcdVolumeUsage`
 //+kubebuilder:printcolumn:name="Paused",type=string,JSONPath=`.metadata.annotations['cluster\.x-k8s\.io/paused']`
@@ -87,6 +86,11 @@ type HostedControlPlaneInlineSpec struct {
 	// The resulting kubeconfigs will be stored in a secret named <hosted-control-plane-name>-<username>-kubeconfig.
 	//+kubebuilder:validation:Optional
 	CustomKubeconfigs map[string]KubeconfigEndpointType `json:"customKubeconfigs,omitempty"`
+	// OIDCProviders configures structured JWT/OIDC authentication.
+	// The key is the issuer URL. If non-empty, an AuthenticationConfiguration
+	// is generated and passed to the API server via --authentication-config.
+	//+kubebuilder:validation:Optional
+	OIDCProviders map[string]OIDCProvider `json:"oidcProviders,omitempty"`
 }
 
 type GatewayReference struct {
@@ -232,6 +236,49 @@ type Mount struct {
 	ConfigMap *corev1.ConfigMapVolumeSource `json:"configMap,omitempty"`
 	//+kubebuilder:validation:Optional
 	Secret *corev1.SecretVolumeSource `json:"secret,omitempty"`
+}
+
+// OIDCProvider configures a single JWT/OIDC authenticator for structured authentication.
+type OIDCProvider struct {
+	// CertificateAuthority is a PEM-encoded CA bundle used to verify the OIDC
+	// provider's TLS connection. If empty, the system verifier is used.
+	//+kubebuilder:validation:Optional
+	CertificateAuthority string `json:"certificateAuthority,omitempty"`
+
+	// Audiences is the set of acceptable audiences the JWT must be issued to.
+	// At least one entry must match the "aud" claim.
+	//+kubebuilder:validation:Required
+	//+kubebuilder:validation:MinItems=1
+	Audiences []string `json:"audiences"`
+
+	// ClaimValidationRules are CEL expressions evaluated against token claims.
+	// All rules must return true for the token to be accepted.
+	//+kubebuilder:validation:Optional
+	ClaimValidationRules []OIDCClaimValidationRule `json:"claimValidationRules,omitempty"`
+
+	// ClaimMappings maps token claims to Kubernetes user attributes.
+	//+kubebuilder:validation:Required
+	ClaimMappings OIDCClaimMappings `json:"claimMappings"`
+}
+
+// OIDCClaimValidationRule is a CEL expression that must evaluate to true for a token to be accepted.
+type OIDCClaimValidationRule struct {
+	// Expression is a CEL expression that must evaluate to true.
+	//+kubebuilder:validation:Required
+	Expression string `json:"expression"`
+	// Message is the error message returned when Expression evaluates to false.
+	//+kubebuilder:validation:Optional
+	Message string `json:"message,omitempty"`
+}
+
+// OIDCClaimMappings maps token claims to Kubernetes user attributes.
+type OIDCClaimMappings struct {
+	// Username is a CEL expression producing the Kubernetes username.
+	//+kubebuilder:validation:Required
+	Username string `json:"username"`
+	// Groups is a CEL expression producing the Kubernetes groups (string or []string).
+	//+kubebuilder:validation:Optional
+	Groups string `json:"groups,omitempty"`
 }
 
 type HostedControlPlaneStatus struct {

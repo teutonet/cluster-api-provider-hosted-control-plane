@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"maps"
 	"net"
 	"net/url"
 	"path"
@@ -17,6 +18,7 @@ import (
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
@@ -27,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	apiserverv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
 	"k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
@@ -34,13 +37,18 @@ import (
 	kubenames "k8s.io/kubernetes/cmd/kube-controller-manager/names"
 	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	"k8s.io/kubernetes/pkg/controller/certificates/rootcacertpublisher"
 	"k8s.io/utils/ptr"
+
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 )
 
 var (
-	errWebhookSecretIsMissingKey = errors.New("webhook authentication secret is missing key")
+	errWebhookSecretIsMissingKey     = errors.New("webhook authentication secret is missing key")
+	errRootCAConfigMapMissingCertKey = errors.New(
+		"management cluster root CA ConfigMap is missing " + konstants.CACertName + " key",
+	)
 	//go:embed nginx.conf.tpl
 	nginxConfigTpl      string
 	nginxConfigTemplate = template.Must(template.New("nginxConfigTemplate").Parse(nginxConfigTpl))
@@ -103,6 +111,8 @@ func NewApiServerResourcesReconciler(
 		nginxPort:                           8090,
 		auditPolicyFileName:                 "audit-policy.yaml",
 		auditWebhookConfigFileName:          "webhook-target.conf",
+		authenticationConfigMountPath:       "/etc/kubernetes/authentication",
+		authenticationConfigFileName:        "config.yaml",
 		componentAPIServer:                  apiServerComponentLabel,
 		componentControllerManager:          "controller-manager",
 		componentScheduler:                  "scheduler",
@@ -142,6 +152,8 @@ type apiServerResourcesReconciler struct {
 	apiContainerPort                    int32
 	konnectivityContainerPortName       intstr.IntOrString
 	konnectivityKubeconfigFileName      string
+	authenticationConfigMountPath       string
+	authenticationConfigFileName        string
 }
 
 var _ ApiServerResourcesReconciler = &apiServerResourcesReconciler{}
@@ -158,6 +170,9 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerDeployments(
 			}
 			if err := arr.reconcileAuditConfig(ctx, hostedControlPlane, cluster); err != nil {
 				return "", fmt.Errorf("failed to reconcile audit config: %w", err)
+			}
+			if err := arr.reconcileAuthenticationConfig(ctx, hostedControlPlane, cluster); err != nil {
+				return "", fmt.Errorf("failed to reconcile authentication config: %w", err)
 			}
 			if ready, err := arr.reconcileAPIServerDeployment(ctx, hostedControlPlane, cluster); err != nil {
 				return "", fmt.Errorf("failed to reconcile API server deployment: %w", err)
@@ -289,6 +304,115 @@ func (arr *apiServerResourcesReconciler) reconcileAuditConfig(
 		})
 }
 
+func (arr *apiServerResourcesReconciler) reconcileAuthenticationConfig(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv2.Cluster,
+) error {
+	return tracing.WithSpan1(ctx, arr.Tracer, "ReconcileAuthenticationConfig",
+		func(ctx context.Context, _ trace.Span) error {
+			providers := make(map[string]v1alpha1.OIDCProvider)
+			maps.Copy(providers, hostedControlPlane.Spec.OIDCProviders)
+
+			managementKubeRootCAConfigMap, err := arr.ManagementClusterClient.CoreV1().
+				ConfigMaps(hostedControlPlane.Namespace).
+				Get(ctx, rootcacertpublisher.RootCACertConfigMapName, metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to get management cluster root CA configMap: %w", err)
+			}
+			managementKubeRootCA, ok := managementKubeRootCAConfigMap.Data[konstants.CACertName]
+			if !ok {
+				return errRootCAConfigMapMissingCertKey
+			}
+
+			providers[importcycle.LocalClusterOIDCEndpoint] = v1alpha1.OIDCProvider{
+				CertificateAuthority: managementKubeRootCA,
+				ClaimMappings: v1alpha1.OIDCClaimMappings{
+					Username: "\"management-cluster:\" + claims.sub",
+					Groups:   "",
+				},
+				Audiences: []string{
+					importcycle.LocalClusterOIDCEndpoint,
+					fmt.Sprintf("workload-cluster:%s/%s", cluster.Namespace, cluster.Name),
+				},
+			}
+
+			minorVersion, err := operatorutil.GetMinorVersion(hostedControlPlane)
+			if err != nil {
+				return fmt.Errorf("failed to get minor version: %w", err)
+			}
+
+			authConfig := &apiserverv1.AuthenticationConfiguration{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "apiserver.config.k8s.io/" + slices.Ternary(minorVersion < 35, "v1beta1", "v1"),
+					Kind:       "AuthenticationConfiguration",
+				},
+				JWT: slices.MapToSlice(
+					providers,
+					func(issuerURL string, provider v1alpha1.OIDCProvider) apiserverv1.JWTAuthenticator {
+						claimMappings := apiserverv1.ClaimMappings{
+							Username: apiserverv1.PrefixedClaimOrExpression{
+								Expression: provider.ClaimMappings.Username,
+							},
+						}
+						if provider.ClaimMappings.Groups != "" {
+							claimMappings.Groups = apiserverv1.PrefixedClaimOrExpression{
+								Expression: provider.ClaimMappings.Groups,
+							}
+						}
+						issuer := apiserverv1.Issuer{
+							URL:                  issuerURL,
+							CertificateAuthority: provider.CertificateAuthority,
+							Audiences:            provider.Audiences,
+						}
+						if len(issuer.Audiences) > 1 {
+							issuer.AudienceMatchPolicy = apiserverv1.AudienceMatchPolicyMatchAny
+						}
+						return apiserverv1.JWTAuthenticator{
+							Issuer: issuer,
+							ClaimValidationRules: slices.Map(provider.ClaimValidationRules,
+								func(r v1alpha1.OIDCClaimValidationRule, _ int) apiserverv1.ClaimValidationRule {
+									return apiserverv1.ClaimValidationRule{
+										Expression: r.Expression,
+										Message:    r.Message,
+									}
+								}),
+							ClaimMappings: claimMappings,
+						}
+					},
+				),
+			}
+
+			configYAML, err := operatorutil.ToYaml(authConfig)
+			if err != nil {
+				return fmt.Errorf("failed to marshal authentication configuration: %w", err)
+			}
+
+			return arr.ReconcileConfigmap(
+				ctx,
+				hostedControlPlane,
+				cluster,
+				"authentication",
+				hostedControlPlane.Namespace,
+				names.GetAuthenticationConfigMapName(cluster),
+				map[string]string{
+					arr.authenticationConfigFileName: configYAML,
+				},
+			)
+		},
+	)
+}
+
+func (arr *apiServerResourcesReconciler) createAuthenticationConfigVolume(
+	cluster *capiv2.Cluster,
+) *corev1ac.VolumeApplyConfiguration {
+	return corev1ac.Volume().
+		WithName("authentication-config").
+		WithConfigMap(corev1ac.ConfigMapVolumeSource().
+			WithName(names.GetAuthenticationConfigMapName(cluster)),
+		)
+}
+
 func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
@@ -301,6 +425,7 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 			konnectivityUDSVolume := arr.createKonnectivityUDSVolume()
 			konnectivityCertificatesVolume := arr.createKonnectivityCertificatesVolume(cluster)
 			konnectivityKubeconfigVolume := arr.createKonnectivityKubeconfigVolume(cluster)
+			authenticationConfigVolume := arr.createAuthenticationConfigVolume(cluster)
 			var auditWebhookConfigVolume *corev1ac.VolumeApplyConfiguration
 			var auditConfigVolume *corev1ac.VolumeApplyConfiguration
 			var tmpVolume *corev1ac.VolumeApplyConfiguration
@@ -315,6 +440,7 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				konnectivityUDSVolume,
 				konnectivityCertificatesVolume,
 				konnectivityKubeconfigVolume,
+				authenticationConfigVolume,
 			}
 
 			auditConfig := hostedControlPlane.Spec.Deployment.APIServer.Audit
@@ -340,6 +466,7 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				apiServerCertificatesVolume,
 				egressSelectorConfigVolume,
 				auditConfigVolume,
+				authenticationConfigVolume,
 				konnectivityUDSMount,
 				additionalApiServerVolumeMounts,
 			)
@@ -369,8 +496,13 @@ func (arr *apiServerResourcesReconciler) reconcileAPIServerDeployment(
 				arr.etcdServerPort: {
 					networkpolicy.NewComponentNetworkPolicyTarget(cluster, arr.etcdComponentLabel),
 				},
-				443: { // for stuff like OIDC
+				443: {
+					// for stuff like OIDC
 					networkpolicy.NewWorldNetworkPolicyTarget(),
+				},
+				6443: {
+					// for management OIDC
+					networkpolicy.NewInClusterAPIServerNetworkPolicyTarget(),
 				},
 			}
 
@@ -841,6 +973,7 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 	apiServerCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	egressSelectorConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	auditConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
+	authenticationConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	apiPort *corev1ac.ContainerPortApplyConfiguration,
 ) []string {
 	certificatesDir := *apiServerCertificatesVolumeMount.MountPath
@@ -856,6 +989,9 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 
 	jwksURI := fmt.Sprintf("https://%s/openid/v1/jwks", cluster.Spec.ControlPlaneEndpoint.String())
 	args := map[string]string{
+		"authentication-config": path.Join(
+			*authenticationConfigVolumeMount.MountPath, arr.authenticationConfigFileName,
+		),
 		"external-hostname":           cluster.Spec.ControlPlaneEndpoint.Host,
 		"advertise-address":           hostedControlPlane.Status.LegacyIP,
 		"allow-privileged":            "true",
@@ -1058,6 +1194,7 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 	apiServerCertificatesVolume *corev1ac.VolumeApplyConfiguration,
 	egressSelectorConfigVolume *corev1ac.VolumeApplyConfiguration,
 	auditConfigVolume *corev1ac.VolumeApplyConfiguration,
+	authenticationConfigVolume *corev1ac.VolumeApplyConfiguration,
 	konnectivityUDSVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	additionalVolumeMounts []*corev1ac.VolumeMountApplyConfiguration,
 ) *corev1ac.ContainerApplyConfiguration {
@@ -1074,11 +1211,16 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 		WithName(*egressSelectorConfigVolume.Name).
 		WithMountPath(arr.egressSelectorConfigMountPath).
 		WithReadOnly(true)
+	authenticationConfigVolumeMount := corev1ac.VolumeMount().
+		WithName(*authenticationConfigVolume.Name).
+		WithMountPath(arr.authenticationConfigMountPath).
+		WithReadOnly(true)
 
 	volumeMounts := []*corev1ac.VolumeMountApplyConfiguration{
 		apiServerCertificatesVolumeMount,
 		egressSelectorConfigVolumeMount,
 		konnectivityUDSVolumeMount,
+		authenticationConfigVolumeMount,
 	}
 
 	var auditConfigVolumeMount *corev1ac.VolumeMountApplyConfiguration
@@ -1104,6 +1246,7 @@ func (arr *apiServerResourcesReconciler) createAPIServerContainer(
 		WithArgs(arr.buildAPIServerArgs(
 			ctx, hostedControlPlane, cluster,
 			apiServerCertificatesVolumeMount, egressSelectorConfigVolumeMount, auditConfigVolumeMount,
+			authenticationConfigVolumeMount,
 			apiPort,
 		)...).
 		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
@@ -1411,11 +1554,11 @@ func (arr *apiServerResourcesReconciler) generateNginxConfig(
 	var nginxConfig bytes.Buffer
 	if err := nginxConfigTemplate.Execute(&nginxConfig, nginxConfigTemplateData); err != nil {
 		return "", "", fmt.Errorf("failed to template nginx config: %w", err)
-	} else {
-		return nginxConfig.String(),
-			fmt.Sprintf("http://%s", net.JoinHostPort("localhost", strconv.Itoa(int(arr.nginxPort)))),
-			nil
 	}
+
+	return nginxConfig.String(),
+		fmt.Sprintf("http://%s", net.JoinHostPort("localhost", strconv.Itoa(int(arr.nginxPort)))),
+		nil
 }
 
 func (arr *apiServerResourcesReconciler) getAuditWebhookAuthenticationToken(

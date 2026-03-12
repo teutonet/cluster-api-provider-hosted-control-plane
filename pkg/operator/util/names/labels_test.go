@@ -196,10 +196,10 @@ func TestGetControlPlaneLabelsSelectorConsistency(t *testing.T) {
 
 func TestGetCustomKubeconfigLabel(t *testing.T) {
 	g := NewWithT(t)
-	result := GetCustomKubeconfigLabel()
+	result := GetKubeconfigLabel()
 
 	g.Expect(result).To(HaveLen(1))
-	g.Expect(result).To(HaveKeyWithValue(CustomKubeconfigLabel, "true"))
+	g.Expect(result).To(HaveKeyWithValue(KubeconfigLabel, "true"))
 }
 
 func TestGetCustomKubeconfigUserLabel(t *testing.T) {
@@ -212,21 +212,21 @@ func TestGetCustomKubeconfigUserLabel(t *testing.T) {
 			name:     "basic username",
 			username: "ci-user",
 			expected: map[string]string{
-				CustomKubeconfigUsernameLabel: "ci-user",
+				KubeconfigUsernameLabel: "ci-user",
 			},
 		},
 		{
 			name:     "username with dashes",
 			username: "backup-agent-v2",
 			expected: map[string]string{
-				CustomKubeconfigUsernameLabel: "backup-agent-v2",
+				KubeconfigUsernameLabel: "backup-agent-v2",
 			},
 		},
 		{
 			name:     "empty username",
 			username: "",
 			expected: map[string]string{
-				CustomKubeconfigUsernameLabel: "",
+				KubeconfigUsernameLabel: "",
 			},
 		},
 	}
@@ -234,7 +234,7 @@ func TestGetCustomKubeconfigUserLabel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			result := GetCustomKubeconfigUserLabel(tt.username)
+			result := GetKubeconfigUserLabel(tt.username)
 			g.Expect(result).To(Equal(tt.expected))
 		})
 	}
@@ -250,24 +250,24 @@ func TestGetCustomKubeconfigLabels(t *testing.T) {
 			name:     "basic username",
 			username: "ci-user",
 			expected: map[string]string{
-				CustomKubeconfigLabel:         "true",
-				CustomKubeconfigUsernameLabel: "ci-user",
+				KubeconfigLabel:         "true",
+				KubeconfigUsernameLabel: "ci-user",
 			},
 		},
 		{
 			name:     "monitoring user",
 			username: "monitoring",
 			expected: map[string]string{
-				CustomKubeconfigLabel:         "true",
-				CustomKubeconfigUsernameLabel: "monitoring",
+				KubeconfigLabel:         "true",
+				KubeconfigUsernameLabel: "monitoring",
 			},
 		},
 		{
 			name:     "username with special characters",
 			username: "backup-agent-v2",
 			expected: map[string]string{
-				CustomKubeconfigLabel:         "true",
-				CustomKubeconfigUsernameLabel: "backup-agent-v2",
+				KubeconfigLabel:         "true",
+				KubeconfigUsernameLabel: "backup-agent-v2",
 			},
 		},
 	}
@@ -275,7 +275,7 @@ func TestGetCustomKubeconfigLabels(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			result := GetCustomKubeconfigLabels(tt.username)
+			result := GetKubeconfigLabels(tt.username)
 			g.Expect(result).To(Equal(tt.expected))
 		})
 	}

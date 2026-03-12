@@ -164,6 +164,10 @@ linters:
           alias: utilNet
         - pkg: k8s.io/apiserver/pkg/apis/audit/v1
           alias: auditv1
+        - pkg: k8s.io/apiserver/pkg/apis/apiserver/v1
+          alias: apiserverv1
+        - pkg: k8s.io/kubernetes/plugin/pkg/admission/serviceaccount
+          alias: serviceaccountAdmission
 
         # Gateway API
         - pkg: sigs.k8s.io/gateway-api/apis/v1

@@ -163,7 +163,7 @@ var _ HostedControlPlaneReconciler = &hostedControlPlaneReconciler{}
 //+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=watch;list
 //+kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=watch;list
 //+kubebuilder:rbac:groups=scheduling.k8s.io,resources=priorityclasses,verbs=watch;list
-//+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=watch;list
+//+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=watch;list;delete
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=tlsroutes,verbs=watch;list
 //+kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways,verbs=watch;list
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=watch;list

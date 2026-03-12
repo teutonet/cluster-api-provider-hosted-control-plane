@@ -642,8 +642,8 @@ func TestKubeconfigReconciler_CustomKubeconfigs_LabelsAndOwnerReference(t *testi
 
 	// Verify labels
 	g.Expect(secret.Labels).To(HaveKeyWithValue("cluster.x-k8s.io/cluster-name", "test-cluster"))
-	g.Expect(secret.Labels).To(HaveKeyWithValue(names.CustomKubeconfigLabel, "true"))
-	g.Expect(secret.Labels).To(HaveKeyWithValue(names.CustomKubeconfigUsernameLabel, username))
+	g.Expect(secret.Labels).To(HaveKeyWithValue(names.KubeconfigLabel, "true"))
+	g.Expect(secret.Labels).To(HaveKeyWithValue(names.KubeconfigUsernameLabel, username))
 	g.Expect(secret.Labels).To(HaveKeyWithValue("app.kubernetes.io/component", "kubeconfig"))
 
 	// Verify owner reference points to certificate secret

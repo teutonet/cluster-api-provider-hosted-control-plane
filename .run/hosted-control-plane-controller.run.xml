@@ -7,6 +7,7 @@
       <env name="MAX_CONCURRENT_RECONCILES" value="1" />
       <env name="OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" value="http://localhost:4317" />
       <env name="WEBHOOK_CERT_DIR" value="/tmp/operator/tmp/k8s-webhook-server/serving-certs" />
+      <env name="GODEBUG" value="netdns=go" />
       <env name="KUBECONFIG" value="" />
     </envs>
     <EXTENSION ID="net.ashald.envfile">

@@ -86,6 +86,16 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 		))
 	}
 
+	for issuerURL := range newHostedControlPlane.Spec.OIDCProviders {
+		if issuerURL == importcycle.LocalClusterOIDCEndpoint {
+			fieldErrs = append(fieldErrs, field.Invalid(
+				w.specPath.Child("oidcProviders").Key(issuerURL),
+				issuerURL,
+				"issuer URL cannot be the management Kubernetes service account issuer",
+			))
+		}
+	}
+
 	if len(newHostedControlPlane.Spec.CustomKubeconfigs) > 0 {
 		cluster, err := util.GetOwnerCluster(ctx, w.client, newHostedControlPlane.ObjectMeta)
 		switch {

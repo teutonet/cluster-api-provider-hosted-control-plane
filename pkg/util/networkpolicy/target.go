@@ -215,6 +215,44 @@ func (a APIServerNetworkPolicyTarget) ApplyToCiliumEgressNetworkPolicy(
 	return a.ApplyToCiliumIngressNetworkPolicy(ciliumPolicyPeer)
 }
 
+type InClusterAPISeverNetworkPolicyTarget struct{}
+
+func NewInClusterAPIServerNetworkPolicyTarget() InClusterAPISeverNetworkPolicyTarget {
+	return InClusterAPISeverNetworkPolicyTarget{}
+}
+
+var (
+	_ IngressNetworkPolicyTarget = InClusterAPISeverNetworkPolicyTarget{}
+	_ EgressNetworkPolicyTarget  = InClusterAPISeverNetworkPolicyTarget{}
+)
+
+func (i InClusterAPISeverNetworkPolicyTarget) ApplyToKubernetesIngressNetworkPolicy(
+	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	// In-cluster API server filtering is not supported in NetworkPolicy, so we allow traffic to anywhere.
+	return NewCIDRNetworkPolicyTarget("0.0.0.0/0").
+		ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (i InClusterAPISeverNetworkPolicyTarget) ApplyToKubernetesEgressNetworkPolicy(
+	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
+) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
+	return i.ApplyToKubernetesIngressNetworkPolicy(networkPolicyPeerApplyConfiguration)
+}
+
+func (i InClusterAPISeverNetworkPolicyTarget) ApplyToCiliumIngressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	ciliumPolicyPeer.Identities = append(ciliumPolicyPeer.Identities, api.EntityKubeAPIServer)
+	return ciliumPolicyPeer
+}
+
+func (i InClusterAPISeverNetworkPolicyTarget) ApplyToCiliumEgressNetworkPolicy(
+	ciliumPolicyPeer *CiliumPolicyPeer,
+) *CiliumPolicyPeer {
+	return i.ApplyToCiliumIngressNetworkPolicy(ciliumPolicyPeer)
+}
+
 type ComponentNetworkPolicyTarget struct {
 	Cluster   *capiv2.Cluster
 	Component string

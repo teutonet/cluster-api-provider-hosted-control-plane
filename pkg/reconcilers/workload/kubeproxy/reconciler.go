@@ -30,7 +30,7 @@ import (
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/phases/addons/proxy"
 	kubeadmutil "k8s.io/kubernetes/cmd/kubeadm/app/util"
-	"k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
+	serviceaccountAdmission "k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -253,7 +253,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(
 					"default": {
 						Server: fmt.Sprintf("https://%s", cluster.Spec.ControlPlaneEndpoint.String()),
 						CertificateAuthority: path.Join(
-							serviceaccount.DefaultAPITokenMountPath,
+							serviceaccountAdmission.DefaultAPITokenMountPath,
 							corev1.ServiceAccountRootCAKey,
 						),
 					},
@@ -267,7 +267,10 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(
 				CurrentContext: "default",
 				AuthInfos: map[string]*api.AuthInfo{
 					"default": {
-						TokenFile: path.Join(serviceaccount.DefaultAPITokenMountPath, corev1.ServiceAccountTokenKey),
+						TokenFile: path.Join(
+							serviceaccountAdmission.DefaultAPITokenMountPath,
+							corev1.ServiceAccountTokenKey,
+						),
 					},
 				},
 			}
@@ -397,6 +400,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyDaemonSet(
 					slices.T2(container, reconcilers.ContainerOptions{
 						Root:                    true,
 						ReadWriteRootFilesystem: true,
+						NeedsServiceAccount:     true,
 					}),
 				},
 				[]*corev1ac.VolumeApplyConfiguration{kubeProxyConfigVolume, xtablesLockVolume, modulesVolume},

@@ -289,7 +289,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			},
 			expectNoGenerationBump: true,
 			verifyResources: func(ctx context.Context, g *WithT) {
-				g.Expect(hcp.Status.ObservedGeneration).To(Equal(int64(0)))
+				g.Expect(hcp.Status.ObservedGeneration).To(BeNumerically("==", 0))
 			},
 		},
 		{
@@ -862,9 +862,9 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			name: "Verify CoreDNS Deployment is scaled to 1",
 			verifyResources: func(ctx context.Context, g *WithT) {
 				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
-				corednsDeployment, err := deploymentInterface.Get(ctx, "coredns", metav1.GetOptions{})
+				deployment, err := deploymentInterface.Get(ctx, "coredns", metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
-				g.Expect(corednsDeployment.Spec.Replicas).To(PointTo(Equal(int32(1))))
+				g.Expect(deployment.Spec.Replicas).To(PointTo(BeNumerically("==", 1)))
 			},
 		},
 		{
@@ -898,9 +898,9 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			name: "Verify Konnectivity Deployment is scaled to 1",
 			verifyResources: func(ctx context.Context, g *WithT) {
 				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
-				corednsDeployment, err := deploymentInterface.Get(ctx, "konnectivity-agent", metav1.GetOptions{})
+				deployment, err := deploymentInterface.Get(ctx, "konnectivity-agent", metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
-				g.Expect(corednsDeployment.Spec.Replicas).To(PointTo(Equal(int32(1))))
+				g.Expect(deployment.Spec.Replicas).To(PointTo(BeNumerically("==", 1)))
 			},
 		},
 		{
@@ -1055,20 +1055,18 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
 				corednsDeployment, err := deploymentInterface.Get(ctx, "coredns", metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
-				g.Expect(corednsDeployment.Spec.Replicas).To(PointTo(Equal(int32(2))))
+				g.Expect(corednsDeployment.Spec.Replicas).To(PointTo(BeNumerically("==", 2)))
 			},
 		},
 		{
-			name: "Make CoreDNS Deployment Ready After Scale Up",
+			name: "Verify CoreDNS Deployment is still ready",
 			verifyConditionsBefore: map[bool][]types2.GomegaMatcher{
-				false: {
-					NewConditionVerification(
-						v1alpha1.WorkloadClusterResourcesReadyCondition,
-						Equal("CoreDnsDeploymentNotReady"),
-					),
+				true: {
 					NewConditionVerification(
 						v1alpha1.WorkloadCoreDNSReadyCondition,
-						Equal("CoreDnsDeploymentNotReady"),
+					),
+					NewConditionVerification(
+						v1alpha1.WorkloadClusterResourcesReadyCondition,
 					),
 				},
 			},
@@ -1094,20 +1092,18 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
 				konnectivityDeployment, err := deploymentInterface.Get(ctx, "konnectivity-agent", metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
-				g.Expect(konnectivityDeployment.Spec.Replicas).To(PointTo(Equal(int32(2))))
+				g.Expect(konnectivityDeployment.Spec.Replicas).To(PointTo(BeNumerically("==", 2)))
 			},
 		},
 		{
-			name: "Make Konnectivity Agent Deployment Ready After Scale Up",
+			name: "Verify Konnectivity Agent Deployment is still ready",
 			verifyConditionsBefore: map[bool][]types2.GomegaMatcher{
-				false: {
-					NewConditionVerification(
-						v1alpha1.WorkloadClusterResourcesReadyCondition,
-						Equal("KonnectivityAgentDeploymentNotReady"),
-					),
+				true: {
 					NewConditionVerification(
 						v1alpha1.WorkloadKonnectivityReadyCondition,
-						Equal("KonnectivityAgentDeploymentNotReady"),
+					),
+					NewConditionVerification(
+						v1alpha1.WorkloadClusterResourcesReadyCondition,
 					),
 				},
 			},
@@ -1140,20 +1136,19 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					metav1.GetOptions{},
 				)
 				g.Expect(err).To(Succeed())
-				g.Expect(apiServerDeployment.Spec.Replicas).To(PointTo(Equal(int32(3))))
-				g.Expect(hcp.Status.ObservedGeneration).To(Equal(int64(2)))
-			},
-			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
-				false: {
-					NewConditionVerification(
-						v1alpha1.APIServerDeploymentsReadyCondition,
-						Equal("ApiServerDeploymentNotReady"),
-					),
-				},
+				g.Expect(apiServerDeployment.Spec.Replicas).To(PointTo(BeNumerically("==", 3)))
+				g.Expect(hcp.Status.ObservedGeneration).To(BeNumerically("==", 2))
 			},
 		},
 		{
-			name: "Make API Server Deployment Ready After Scale Up",
+			name: "Verify API Server Deployment is still ready",
+			verifyConditionsBefore: map[bool][]types2.GomegaMatcher{
+				true: {
+					NewConditionVerification(
+						v1alpha1.APIServerDeploymentsReadyCondition,
+					),
+				},
+			},
 			simulateExternalSystems: makeDeploymentReady(
 				managementClusterClient,
 				hcp.Namespace,

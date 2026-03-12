@@ -62,7 +62,6 @@ type KubeconfigConfig struct {
 	SecretName        string
 	CertificateName   string
 	ApiServerEndpoint capiv2.APIEndpoint
-	AdditionalLabels  map[string]string
 }
 
 func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
@@ -103,7 +102,6 @@ func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 					SecretName:        names.GetCustomKubeconfigSecretName(cluster, username),
 					CertificateName:   names.GetCustomKubeconfigCertificateName(cluster, username),
 					ApiServerEndpoint: endpointMap[endpointType],
-					AdditionalLabels:  names.GetCustomKubeconfigLabels(username),
 				}
 			}
 
@@ -195,7 +193,7 @@ func (kr *kubeconfigReconciler) reconcileKubeconfig(
 					WithName(certSecret.Name).
 					WithUID(certSecret.UID),
 				slices.Assign(
-					kubeconfigConfig.AdditionalLabels,
+					names.GetKubeconfigLabels(username),
 					names.GetControlPlaneLabels(cluster, "kubeconfig"),
 				),
 				cluster.Namespace,

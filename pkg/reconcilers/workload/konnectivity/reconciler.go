@@ -24,7 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
-	"k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
+	serviceaccountAdmission "k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -315,7 +315,9 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDeployment(
 					},
 				},
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
-					slices.T2(container, reconcilers.ContainerOptions{}),
+					slices.T2(container, reconcilers.ContainerOptions{
+						NeedsServiceAccount: true,
+					}),
 				},
 				[]*corev1ac.VolumeApplyConfiguration{serviceAccountTokenVolume},
 			)
@@ -339,8 +341,11 @@ func (kr *konnectivityReconciler) buildKonnectivityClientArgs(
 	healthPort *corev1ac.ContainerPortApplyConfiguration,
 ) []string {
 	args := map[string]string{
-		"admin-server-port":   "8133",
-		"ca-cert":             path.Join(serviceaccount.DefaultAPITokenMountPath, corev1.ServiceAccountRootCAKey),
+		"admin-server-port": "8133",
+		"ca-cert": path.Join(
+			serviceaccountAdmission.DefaultAPITokenMountPath,
+			corev1.ServiceAccountRootCAKey,
+		),
 		"health-server-port":  strconv.Itoa(int(*healthPort.ContainerPort)),
 		"logtostderr":         "true",
 		"proxy-server-host":   names.GetKonnectivityServerHost(cluster),
