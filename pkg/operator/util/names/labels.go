@@ -6,9 +6,18 @@ import (
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
+type CertificateKind string
+
 const (
-	CustomKubeconfigLabel         = "controlplane.cluster.x-k8s.io/custom-kubeconfig"
-	CustomKubeconfigUsernameLabel = "controlplane.cluster.x-k8s.io/custom-kubeconfig-username"
+	CACertificateKind     CertificateKind = "ca"
+	ClientCertificateKind CertificateKind = "client"
+)
+
+const (
+	KubeconfigLabel         = "controlplane.cluster.x-k8s.io/kubeconfig"
+	KubeconfigUsernameLabel = "controlplane.cluster.x-k8s.io/kubeconfig-username"
+
+	CertificateKindLabel = "controlplane.cluster.x-k8s.io/certificate-kind"
 )
 
 func GetControlPlaneLabels(cluster *capiv2.Cluster, component string) map[string]string {
@@ -27,21 +36,21 @@ func GetControlPlaneSelector(cluster *capiv2.Cluster, component string) *metav1a
 	return selector.WithMatchLabels(labels)
 }
 
-func GetCustomKubeconfigUserLabel(username string) map[string]string {
+func GetKubeconfigUserLabel(username string) map[string]string {
 	return map[string]string{
-		CustomKubeconfigUsernameLabel: username,
+		KubeconfigUsernameLabel: username,
 	}
 }
 
-func GetCustomKubeconfigLabel() map[string]string {
+func GetKubeconfigLabel() map[string]string {
 	return map[string]string{
-		CustomKubeconfigLabel: "true",
+		KubeconfigLabel: "true",
 	}
 }
 
-func GetCustomKubeconfigLabels(username string) map[string]string {
+func GetKubeconfigLabels(username string) map[string]string {
 	return slices.Assign(
-		GetCustomKubeconfigLabel(),
-		GetCustomKubeconfigUserLabel(username),
+		GetKubeconfigLabel(),
+		GetKubeconfigUserLabel(username),
 	)
 }

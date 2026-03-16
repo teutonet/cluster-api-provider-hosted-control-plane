@@ -14,6 +14,7 @@ import (
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/go-logr/logr"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	webhookv1alpha1 "github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1/webhook"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/hostedcontrolplane"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/etc"
@@ -92,23 +93,23 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (retE
 		return fmt.Errorf("failed to create health check: %w", err)
 	}
 
-	if err := setupControllers(ctx, mgr,
-		operatorConfig.MaxConcurrentReconciles,
-		operatorConfig.ControllerNamespace,
-		tracingWrapper,
-	); err != nil {
-		return err
-	}
-
-	tp, err := setupTracerProvider(ctx, hostedControlPlaneControllerName, version)
+	tracerProvider, err := setupTracerProvider(ctx, hostedControlPlaneControllerName, version)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if err := tp.Shutdown(ctx); err != nil {
+		if err := tracerProvider.Shutdown(ctx); err != nil {
 			retErr = errors.Join(retErr, fmt.Errorf("shutting down trace provider: %w", err))
 		}
 	}()
+
+	if err := setupControllers(ctx, mgr,
+		operatorConfig.MaxConcurrentReconciles,
+		operatorConfig.ControllerNamespace,
+		tracerProvider, tracingWrapper,
+	); err != nil {
+		return err
+	}
 
 	logr.FromContextAsSlogLogger(ctx).InfoContext(ctx, "Starting operator", "version", version)
 	if err := mgr.Start(ctx); err != nil {
@@ -157,6 +158,7 @@ func setupControllers(
 	mgr manager.Manager,
 	maxConcurrentReconciles int,
 	controllerNamespace string,
+	tracerProvider *trace.TracerProvider,
 	tracingWrapper func(rt http.RoundTripper) http.RoundTripper,
 ) error {
 	predicateLogger, err := logr.FromContext(ctx)
@@ -206,7 +208,21 @@ func setupControllers(
 				controllerUsername,
 			)
 		},
-		etcd_client.NewEtcdClient,
+		func(ctx context.Context,
+			managementClusterClient *alias.ManagementClusterClient,
+			hostedControlPlane *v1alpha1.HostedControlPlane,
+			cluster *capiv2.Cluster,
+			serverPort int32,
+		) (etcd_client.EtcdClient, error) {
+			return etcd_client.NewEtcdClient(
+				ctx,
+				tracerProvider,
+				managementClusterClient,
+				hostedControlPlane,
+				cluster,
+				serverPort,
+			)
+		},
 		s3_client.NewS3Client,
 		mgr.GetEventRecorder(hostedControlPlaneControllerName),
 		controllerNamespace,

@@ -75,7 +75,6 @@ type certificateReconciler struct {
 var _ CertificateReconciler = &certificateReconciler{}
 
 type certificateSpec struct {
-	name         string
 	kind         string
 	username     string // only set for additional kubeconfigs, used for labeling
 	spec         *certmanagerv1ac.CertificateSpecApplyConfiguration
@@ -94,17 +93,24 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 			issuerClient := cr.certManagerClient.CertmanagerV1().Issuers(hostedControlPlane.Namespace)
 			createCertificateSpec := func(
 				issuer *certmanagerv1.Issuer,
+				name string,
 				commonName string,
 				secretName string,
 				additionalUsages ...certmanagerv1.KeyUsage,
-			) *certmanagerv1ac.CertificateSpecApplyConfiguration {
-				return cr.createCertificateSpec(
-					issuer.Name,
-					commonName,
-					secretName,
-					true,
-					additionalUsages...,
-				)
+			) certificateSpec {
+				return certificateSpec{
+					kind: name,
+					spec: cr.createCertificateSpec(
+						issuer.Name,
+						commonName,
+						secretName,
+						true,
+						additionalUsages...,
+					),
+					customLabels: map[string]string{
+						names.CertificateKindLabel: string(names.CACertificateKind),
+					},
+				}
 			}
 
 			rootIssuerAC := cr.createIssuer(
@@ -126,10 +132,10 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 				names.GetCACertificateName(cluster),
 				createCertificateSpec(
 					rootIssuer,
+					names.GetCACertificateName(cluster),
 					"kubernetes",
 					names.GetCASecretName(cluster),
 				),
-				nil,
 			)
 			if err != nil {
 				return "", fmt.Errorf("failed to reconcile CA certificate: %w", err)
@@ -159,10 +165,10 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 				names.GetFrontProxyCAName(cluster),
 				createCertificateSpec(
 					kubernetesCAIssuer,
+					names.GetFrontProxyCAName(cluster),
 					"front-proxy-ca",
 					names.GetFrontProxyCASecretName(cluster),
 				),
-				nil,
 			)
 			if err != nil {
 				return "", fmt.Errorf("failed to reconcile front-proxy CA certificate: %w", err)
@@ -188,10 +194,10 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 				names.GetEtcdCAName(cluster),
 				createCertificateSpec(
 					kubernetesCAIssuer,
+					names.GetEtcdCAName(cluster),
 					"etcd-ca",
 					names.GetEtcdCASecretName(cluster),
 				),
-				nil,
 			)
 			if err != nil {
 				return "", fmt.Errorf("failed to reconcile etcd CA certificate: %w", err)
@@ -270,7 +276,7 @@ func (cr *certificateReconciler) createCertificateSpec(
 func (cr *certificateReconciler) createCertificateSpecs(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
-) []certificateSpec {
+) map[string]certificateSpec {
 	createCertificateSpec := func(
 		caIssuerName string,
 		commonName string,
@@ -298,9 +304,8 @@ func (cr *certificateReconciler) createCertificateSpecs(
 
 	sort.Strings(etcdDNSNames)
 
-	specs := []certificateSpec{
-		{
-			name: names.GetAPIServerCertificateName(cluster),
+	specs := map[string]certificateSpec{
+		names.GetAPIServerCertificateName(cluster): {
 			kind: "APIServer",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
@@ -318,8 +323,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				names.GetInternalServiceHost(cluster),
 			).WithIPAddresses(hostedControlPlane.Status.LegacyIP, cr.kubernetesServiceIP.String(), "127.0.0.1"),
 		},
-		{
-			name: names.GetAPIServerKubeletClientCertificateName(cluster),
+		names.GetAPIServerKubeletClientCertificateName(cluster): {
 			kind: "APIServerKubeletClient",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
@@ -330,8 +334,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				WithOrganizations(konstants.ClusterAdminsGroupAndClusterRoleBinding),
 			),
 		},
-		{
-			name: names.GetFrontProxyCertificateName(cluster),
+		names.GetFrontProxyCertificateName(cluster): {
 			kind: "FrontProxy",
 			spec: createCertificateSpec(
 				names.GetFrontProxyCAName(cluster),
@@ -340,8 +343,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				certmanagerv1.UsageClientAuth,
 			),
 		},
-		{
-			name: names.GetServiceAccountCertificateName(cluster),
+		names.GetServiceAccountCertificateName(cluster): {
 			kind: "ServiceAccount",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
@@ -349,8 +351,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				names.GetServiceAccountSecretName(cluster),
 			),
 		},
-		{
-			name: names.GetAdminCertificateName(cluster),
+		names.GetAdminCertificateName(cluster): {
 			kind: "Admin",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
@@ -360,9 +361,9 @@ func (cr *certificateReconciler) createCertificateSpecs(
 			).WithSubject(certmanagerv1ac.X509Subject().
 				WithOrganizations(konstants.SystemPrivilegedGroup),
 			),
+			customLabels: names.GetKubeconfigLabels("kubernetes-admin"),
 		},
-		{
-			name: names.GetControllerManagerKubeconfigCertificateName(cluster),
+		names.GetControllerManagerKubeconfigCertificateName(cluster): {
 			kind: "ControllerManager",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
@@ -371,8 +372,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				certmanagerv1.UsageClientAuth,
 			),
 		},
-		{
-			name: names.GetSchedulerKubeconfigCertificateName(cluster),
+		names.GetSchedulerKubeconfigCertificateName(cluster): {
 			kind: "Scheduler",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
@@ -381,8 +381,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				certmanagerv1.UsageClientAuth,
 			),
 		},
-		{
-			name: names.GetKonnectivityClientKubeconfigCertificateName(cluster),
+		names.GetKonnectivityClientKubeconfigCertificateName(cluster): {
 			kind: "KonnectivityClient",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
@@ -393,8 +392,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				WithOrganizations(konstants.SystemPrivilegedGroup),
 			),
 		},
-		{
-			name: names.GetControlPlaneControllerKubeconfigCertificateName(cluster),
+		names.GetControlPlaneControllerKubeconfigCertificateName(cluster): {
 			kind: "ControlPlaneController",
 			spec: createCertificateSpec(
 				names.GetCAIssuerName(cluster),
@@ -404,9 +402,9 @@ func (cr *certificateReconciler) createCertificateSpecs(
 			).WithSubject(certmanagerv1ac.X509Subject().
 				WithOrganizations(konstants.SystemPrivilegedGroup),
 			),
+			customLabels: names.GetKubeconfigLabel(),
 		},
-		{
-			name: names.GetEtcdServerCertificateName(cluster),
+		names.GetEtcdServerCertificateName(cluster): {
 			kind: "EtcdServer",
 			spec: createCertificateSpec(
 				names.GetEtcdCAName(cluster),
@@ -415,8 +413,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				certmanagerv1.UsageServerAuth, certmanagerv1.UsageClientAuth,
 			).WithDNSNames(etcdDNSNames...).WithIPAddresses("127.0.0.1"),
 		},
-		{
-			name: names.GetEtcdPeerCertificateName(cluster),
+		names.GetEtcdPeerCertificateName(cluster): {
 			kind: "EtcdPeer",
 			spec: createCertificateSpec(
 				names.GetEtcdCAName(cluster),
@@ -425,8 +422,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				certmanagerv1.UsageServerAuth, certmanagerv1.UsageClientAuth,
 			).WithDNSNames(etcdDNSNames...).WithIPAddresses("127.0.0.1"),
 		},
-		{
-			name: names.GetEtcdAPIServerClientCertificateName(cluster),
+		names.GetEtcdAPIServerClientCertificateName(cluster): {
 			kind: "EtcdAPIServerClient",
 			spec: createCertificateSpec(
 				names.GetEtcdCAName(cluster),
@@ -435,8 +431,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				certmanagerv1.UsageClientAuth,
 			),
 		},
-		{
-			name: names.GetEtcdControllerClientCertificateName(cluster),
+		names.GetEtcdControllerClientCertificateName(cluster): {
 			kind: "EtcdControllerClient",
 			spec: createCertificateSpec(
 				names.GetEtcdCAName(cluster),
@@ -448,8 +443,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 	}
 
 	for username := range hostedControlPlane.Spec.CustomKubeconfigs {
-		specs = append(specs, certificateSpec{
-			name:     names.GetCustomKubeconfigCertificateName(cluster, username),
+		specs[names.GetCustomKubeconfigCertificateName(cluster, username)] = certificateSpec{
 			kind:     fmt.Sprintf("CustomKubeconfig-%s", username),
 			username: username,
 			spec: createCertificateSpec(
@@ -458,9 +452,18 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				names.GetCustomKubeconfigCertificateName(cluster, username),
 				certmanagerv1.UsageClientAuth,
 			),
-			customLabels: names.GetCustomKubeconfigLabels(username),
-		})
+			customLabels: names.GetKubeconfigLabels(username),
+		}
 	}
+
+	specs = slices.MapValues(specs, func(spec certificateSpec, _ string) certificateSpec {
+		spec.customLabels = slices.Assign(spec.customLabels,
+			map[string]string{
+				names.CertificateKindLabel: string(names.ClientCertificateKind),
+			},
+		)
+		return spec
+	})
 
 	return specs
 }
@@ -478,21 +481,21 @@ func (cr *certificateReconciler) ReconcileCertificates(
 				attribute.String("konnectivity.serverAudience", cr.konnectivityServerAudience),
 			)
 			var notReadyReasons []string
-			for _, certificateAC := range cr.createCertificateSpecs(hostedControlPlane, cluster) {
+			for name, certificate := range cr.createCertificateSpecs(hostedControlPlane, cluster) {
 				if _, ready, err := cr.reconcileCertificate(ctx,
 					hostedControlPlane, cluster,
-					certificateAC.name, certificateAC.spec, certificateAC.customLabels,
+					name, certificate,
 				); err != nil {
-					return "", fmt.Errorf("failed to reconcile certificate %s: %w", certificateAC.kind, err)
+					return "", fmt.Errorf("failed to reconcile certificate %s: %w", certificate.kind, err)
 				} else if !ready {
 					notReadyReasons = append(notReadyReasons,
-						fmt.Sprintf("certificate %s not ready", certificateAC.kind),
+						fmt.Sprintf("certificate %s not ready", certificate.kind),
 					)
 				}
 			}
 
-			if err := cr.cleanupOrphanedCustomCertificates(ctx, hostedControlPlane, cluster); err != nil {
-				return "", fmt.Errorf("failed to cleanup orphaned custom kubeconfig certificates: %w", err)
+			if err := cr.cleanupOrphanedCertificates(ctx, hostedControlPlane, cluster); err != nil {
+				return "", fmt.Errorf("failed to cleanup orphaned certificates: %w", err)
 			}
 
 			if len(notReadyReasons) > 0 {
@@ -510,22 +513,21 @@ func (cr *certificateReconciler) reconcileCertificate(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 	name string,
-	spec *certmanagerv1ac.CertificateSpecApplyConfiguration,
-	additionalLabels map[string]string,
+	certificate certificateSpec,
 ) (*certmanagerv1.Certificate, bool, error) {
 	return tracing.WithSpan3(ctx, cr.tracer, "ReconcileCertificate",
 		func(ctx context.Context, span trace.Span) (*certmanagerv1.Certificate, bool, error) {
 			span.SetAttributes(
 				attribute.String("certificate.name", name),
-				attribute.String("certificate.commonName", *spec.CommonName),
-				attribute.String("certificate.secretName", *spec.SecretName),
+				attribute.String("certificate.commonName", *certificate.spec.CommonName),
+				attribute.String("certificate.secretName", *certificate.spec.SecretName),
 			)
 
-			certificateLabels := slices.Assign(additionalLabels, names.GetControlPlaneLabels(cluster, ""))
+			certificateLabels := slices.Assign(certificate.customLabels, names.GetControlPlaneLabels(cluster, ""))
 			certificateAC := certmanagerv1ac.Certificate(name, hostedControlPlane.Namespace).
 				WithLabels(certificateLabels).
 				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
-				WithSpec(spec.WithRevisionHistoryLimit(1).
+				WithSpec(certificate.spec.WithRevisionHistoryLimit(1).
 					WithSecretTemplate(certmanagerv1ac.CertificateSecretTemplate().
 						WithLabels(certificateLabels),
 					),
@@ -562,33 +564,35 @@ func (cr *certificateReconciler) isIssuerReady(
 
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=list;delete
 
-func (cr *certificateReconciler) cleanupOrphanedCustomCertificates(
+func (cr *certificateReconciler) cleanupOrphanedCertificates(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 ) error {
-	return tracing.WithSpan1(ctx, cr.tracer, "CleanupOrphanedCustomCertificates",
+	return tracing.WithSpan1(ctx, cr.tracer, "CleanupOrphanedCertificates",
 		func(ctx context.Context, span trace.Span) error {
 			certificateClient := cr.certManagerClient.CertmanagerV1().Certificates(hostedControlPlane.Namespace)
 
 			certificates, err := certificateClient.List(ctx, metav1.ListOptions{
 				LabelSelector: labels.SelectorFromSet(slices.Assign(
-					names.GetCustomKubeconfigLabel(),
+					map[string]string{
+						names.CertificateKindLabel: string(names.ClientCertificateKind),
+					},
 					names.GetControlPlaneLabels(cluster, ""),
 				)).String(),
 			})
 			if err != nil {
-				return fmt.Errorf("failed to list custom kubeconfig certificates: %w", err)
+				return fmt.Errorf("failed to list certificates: %w", err)
 			}
 
+			desiredCertificateNames := slices.Keys(cr.createCertificateSpecs(hostedControlPlane, cluster))
+
 			for _, cert := range certificates.Items {
-				username := cert.Labels[names.CustomKubeconfigUsernameLabel]
-				if !slices.HasKey(hostedControlPlane.Spec.CustomKubeconfigs, username) {
-					err := tracing.WithSpan1(ctx, cr.tracer, "DeleteOrphanedCustomCertificate",
+				if !slices.Contains(desiredCertificateNames, cert.Name) {
+					err := tracing.WithSpan1(ctx, cr.tracer, "DeleteOrphanedCertificate",
 						func(ctx context.Context, span trace.Span) error {
 							span.SetAttributes(
 								attribute.String("certificate.name", cert.Name),
-								attribute.String("certificate.username", username),
 							)
 							if err := certificateClient.Delete(
 								ctx, cert.Name, metav1.DeleteOptions{},
@@ -597,11 +601,10 @@ func (cr *certificateReconciler) cleanupOrphanedCustomCertificates(
 							}
 							cr.recorder.Normalf(
 								&cert,
-								"CustomKubeconfigDeleted",
 								"CertificateDeleted",
-								"Deleted orphaned custom kubeconfig certificate %s for user %s",
+								"CertificateDeleted",
+								"Deleted orphaned certificate %s",
 								cert.Name,
-								username,
 							)
 							return nil
 						},

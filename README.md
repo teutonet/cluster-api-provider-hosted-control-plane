@@ -144,7 +144,7 @@ Each cluster gets an endpoint derived from the wildcard:
 
 For example, with hostname `*.clusters.example.com`:
 
-- Cluster `prod` in namespace `default` → `prod.default.clusters.example.com`
+- Cluster `prod` in namespace `clusters` → `prod.clusters.clusters.example.com`
 - Cluster `staging` in namespace `team-a` → `staging.team-a.clusters.example.com`
 
 **Konnectivity subdomain**: The Konnectivity server (used for node-to-control-plane communication) requires an
@@ -154,7 +154,7 @@ additional `konnectivity.` prefix:
 konnectivity.<cluster-name>.<cluster-namespace>.<wildcard-domain>
 ```
 
-This means your DNS setup must handle requests like `konnectivity.prod.default.clusters.example.com`. Depending on your
+This means your DNS setup must handle requests like `konnectivity.prod.clusters.clusters.example.com`. Depending on your
 DNS provider, you may need:
 
 - A deeper wildcard record that matches the three-label prefix, for example: `*.*.*.clusters.example.com`
@@ -192,7 +192,7 @@ apiVersion: controlplane.cluster.x-k8s.io/v1alpha1
 kind: HostedControlPlane
 metadata:
   name: my-hosted-control-plane
-  namespace: default
+  namespace: clusters
 spec:
   version: v1.33.0
   replicas: 3
@@ -220,6 +220,91 @@ spec:
     kind: AWSCluster # Or your infrastructure provider
     name: my-aws-cluster
 ```
+
+## 🔐 Authentication
+
+### clusters OIDC Provider (Management Cluster Tokens)
+
+The provider automatically configures a built-in OIDC authenticator that trusts tokens issued by the **management
+cluster's Kubernetes service account issuer** (`https://kubernetes.default.svc.cluster.local`). This lets management
+cluster service accounts authenticate directly against workload cluster API servers without any manual OIDC setup.
+
+Tokens validated through this provider receive a username of the form:
+
+```
+management-cluster:<subject-claim>
+```
+
+For example, a service account token with `sub: system:serviceaccount:clusters:my-sa` would produce the Kubernetes
+username `management-cluster:system:serviceaccount:clusters:my-sa`.
+
+#### Using the Default OIDC Provider
+
+To authenticate against a workload cluster using a management cluster service account token, project the token with
+one of the accepted audiences:
+
+- `https://kubernetes.default.svc.cluster.local`
+- `workload-cluster:<cluster-namespace>/<cluster-name>`
+
+Example projected volume in a management cluster pod:
+
+```yaml
+volumes:
+  - name: workload-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            path: token
+            audience: workload-cluster:clusters/my-cluster
+            expirationSeconds: 3600
+```
+
+Then bind the desired RBAC role to the prefixed username in the workload cluster:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: my-sa-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: management-cluster:system:serviceaccount:clusters:my-sa
+```
+
+> **Note**: The issuer URL `https://kubernetes.default.svc.cluster.local` is reserved and cannot be used as a key in
+> `spec.oidcProviders`.
+
+### Custom OIDC Providers
+
+Additional JWT/OIDC authenticators can be configured via `spec.oidcProviders`. The map key is the issuer URL.
+
+```yaml
+spec:
+  oidcProviders:
+    https://sso.example.com:
+      audiences:
+        - my-workload-cluster
+      claimMappings:
+        username: claims.email
+        groups: claims.groups
+      claimValidationRules:
+        - expression: claims.email_verified == true
+          message: email must be verified
+```
+
+Each provider supports:
+
+| Field                 | Required | Description                                                           |
+| --------------------- | -------- | --------------------------------------------------------------------- |
+| `audiences`           | Yes      | Accepted `aud` claim values (at least one must match)                 |
+| `claimMappings`       | Yes      | CEL expressions mapping token claims to `username` and `groups`       |
+| `certificateAuthority`| No       | PEM-encoded CA bundle for verifying the provider's TLS certificate    |
+| `claimValidationRules`| No       | CEL expressions that must evaluate to `true` for the token to be valid|
 
 ## 🎛️ Configuration
 

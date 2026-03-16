@@ -188,6 +188,15 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 			}
 
 			name := fmt.Sprintf("%s-%s", cluster.Name, component)
+			podTemplateSpec, err := createPodTemplateSpec(podOptions, initContainers, containers, volumes)
+			if err != nil {
+				return nil, false, fmt.Errorf(
+					"failed to create pod template spec for deployment %s/%s: %w",
+					cluster.Namespace,
+					name,
+					err,
+				)
+			}
 			deployment, ready, err := reconcileDeployment(
 				ctx,
 				mr.ManagementClusterClient,
@@ -200,7 +209,7 @@ func (mr *ManagementResourceReconciler) ReconcileDeployment(
 				ingressPolicyTargets,
 				egressPolicyTargets,
 				replicas,
-				createPodTemplateSpec(podOptions, initContainers, containers, volumes),
+				podTemplateSpec,
 			)
 			if err != nil {
 				return nil, false, fmt.Errorf("failed to reconcile deployment %s/%s into management cluster: %w",
@@ -242,6 +251,20 @@ func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 				attribute.Int("statefulset.containers.count", len(containers)),
 				attribute.Int("statefulset.volumes.count", len(volumes)),
 			)
+			podTemplateSpec, err := createPodTemplateSpec(
+				podOptions,
+				nil,
+				containers,
+				volumes,
+			)
+			if err != nil {
+				return nil, false, fmt.Errorf(
+					"failed to create pod template spec for statefulset %s/%s: %w",
+					namespace,
+					name,
+					err,
+				)
+			}
 			statefulset, ready, err := reconcileStatefulset(
 				ctx,
 				mr.ManagementClusterClient,
@@ -257,12 +280,7 @@ func (mr *ManagementResourceReconciler) ReconcileStatefulset(
 				ingressPolicyTargets,
 				egressPolicyTargets,
 				replicas,
-				createPodTemplateSpec(
-					podOptions,
-					nil,
-					containers,
-					volumes,
-				),
+				podTemplateSpec,
 				volumeClaimTemplates,
 				volumeClaimRetentionPolicy,
 			)

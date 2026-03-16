@@ -6,6 +6,7 @@ import (
 
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -139,6 +140,51 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 			},
 			expectErr: true,
 			errMsg:    "autoGrow cannot be false when volumeSize is not set",
+		},
+		{
+			name: "internal service account issuer URL as OIDC provider is rejected",
+			hcp: &v1alpha1.HostedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-hcp", Namespace: "default"},
+				Spec: v1alpha1.HostedControlPlaneSpec{
+					Version: "v1.28.0",
+					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+						Gateway: v1alpha1.GatewayReference{Name: "test-gateway", Namespace: "default"},
+						ETCD:    v1alpha1.ETCDComponent{AutoGrow: ptr.To(true)},
+						OIDCProviders: map[string]v1alpha1.OIDCProvider{
+							importcycle.LocalClusterOIDCEndpoint: {
+								Audiences: []string{"my-app"},
+								ClaimMappings: v1alpha1.OIDCClaimMappings{
+									Username: "claims.sub",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectErr: true,
+			errMsg:    "issuer URL cannot be the management Kubernetes service account issuer",
+		},
+		{
+			name: "external OIDC provider URL is accepted",
+			hcp: &v1alpha1.HostedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-hcp", Namespace: "default"},
+				Spec: v1alpha1.HostedControlPlaneSpec{
+					Version: "v1.28.0",
+					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+						Gateway: v1alpha1.GatewayReference{Name: "test-gateway", Namespace: "default"},
+						ETCD:    v1alpha1.ETCDComponent{AutoGrow: ptr.To(true)},
+						OIDCProviders: map[string]v1alpha1.OIDCProvider{
+							"https://oidc.example.com": {
+								Audiences: []string{"my-app"},
+								ClaimMappings: v1alpha1.OIDCClaimMappings{
+									Username: "claims.sub",
+								},
+							},
+						},
+					},
+				},
+			},
+			expectErr: false,
 		},
 	}
 

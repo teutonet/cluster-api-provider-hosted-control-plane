@@ -37,6 +37,10 @@ import (
 	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
 	"k8s.io/client-go/kubernetes"
 	networkininterface "k8s.io/client-go/kubernetes/typed/networking/v1"
+	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	"k8s.io/kubernetes/pkg/controller/certificates/rootcacertpublisher"
+	"k8s.io/kubernetes/pkg/serviceaccount"
+	serviceaccountAdmission "k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
 	"k8s.io/utils/ptr"
 )
 
@@ -53,6 +57,11 @@ var (
 	secretTypeImmutableErrorMessageRegex = regexp.MustCompile(
 		`Invalid value: "\S+": field is immutable`,
 	)
+)
+
+var errInvalidServiceAccountConfiguration = errors.New(
+	"invalid service account configuration: if ServiceAccount is empty, then no container can use it " +
+		"and vice versa",
 )
 
 type PodDisruptionBudgetType = string
@@ -81,6 +90,7 @@ type ContainerOptions struct {
 	Root                    bool
 	ReadWriteRootFilesystem bool
 	Capabilities            []corev1.Capability
+	NeedsServiceAccount     bool
 }
 
 type reconcileClient[applyConfiguration any, result any] interface {
@@ -964,14 +974,7 @@ func isDeploymentReady(deployment *appsv1.Deployment) bool {
 		return false
 	}
 
-	return arePodsReady(
-		*deployment.Spec.Replicas,
-		deployment.Status.ReadyReplicas,
-		deployment.Status.AvailableReplicas,
-		deployment.Status.UpdatedReplicas,
-		deployment.Status.ObservedGeneration,
-		deployment.Generation,
-	)
+	return deployment.Status.AvailableReplicas >= 1
 }
 
 func createDeploymentMutator(
@@ -1139,31 +1142,7 @@ func isStatefulsetReady(statefulset *appsv1.StatefulSet) bool {
 	if statefulset == nil {
 		return false
 	}
-	return arePodsReady(
-		*statefulset.Spec.Replicas,
-		statefulset.Status.ReadyReplicas,
-		statefulset.Status.AvailableReplicas,
-		statefulset.Status.UpdatedReplicas,
-		statefulset.Status.ObservedGeneration,
-		statefulset.Generation,
-	) && statefulset.Status.CurrentRevision == statefulset.Status.UpdateRevision
-}
-
-func arePodsReady(
-	replicas int32,
-	readyReplicas int32,
-	availableReplicas int32,
-	updatedReplicas int32,
-	observedGeneration int64,
-	generation int64,
-) bool {
-	if readyReplicas < replicas ||
-		availableReplicas < replicas ||
-		updatedReplicas < replicas ||
-		observedGeneration < generation {
-		return false
-	}
-	return true
+	return statefulset.Status.AvailableReplicas >= 1
 }
 
 func createStatefulsetMutator(
@@ -1193,9 +1172,9 @@ func createPodTemplateSpec(
 	initContainers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	containers []slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions],
 	volumes []*corev1ac.VolumeApplyConfiguration,
-) *corev1ac.PodTemplateSpecApplyConfiguration {
+) (*corev1ac.PodTemplateSpecApplyConfiguration, error) {
 	spec := corev1ac.PodSpec().
-		WithAutomountServiceAccountToken(options.ServiceAccountName != "").
+		WithAutomountServiceAccountToken(false).
 		WithServiceAccountName(options.ServiceAccountName).
 		WithPriorityClassName(options.PriorityClassName).
 		WithEnableServiceLinks(false).
@@ -1213,9 +1192,53 @@ func createPodTemplateSpec(
 		).
 		WithVolumes(volumes...)
 
+	if (options.ServiceAccountName != "") != slices.ContainsBy(containers,
+		func(container slices.Tuple2[*corev1ac.ContainerApplyConfiguration, ContainerOptions]) bool {
+			return container.B.NeedsServiceAccount
+		},
+	) {
+		// The config is invalid if there are containers that need a service account but no service account name is
+		// provided, or if a service account name is provided but no containers need it.
+		return nil, fmt.Errorf("invalid pod configuration: %w", errInvalidServiceAccountConfiguration)
+	}
+
+	if options.ServiceAccountName != "" {
+		// I wish we could use serviceaccount.TokenVolumeSource(), but that's not an applyConfiguration and
+		// there is no converter...
+		spec = spec.WithVolumes(corev1ac.Volume().
+			WithName(serviceaccountAdmission.ServiceAccountVolumeName).
+			WithProjected(corev1ac.ProjectedVolumeSource().
+				WithSources(
+					corev1ac.VolumeProjection().
+						WithServiceAccountToken(corev1ac.ServiceAccountTokenProjection().
+							WithExpirationSeconds(serviceaccount.WarnOnlyBoundTokenExpirationSeconds).
+							WithPath(corev1.ServiceAccountTokenKey),
+						),
+					corev1ac.VolumeProjection().
+						WithDownwardAPI(corev1ac.DownwardAPIProjection().
+							WithItems(corev1ac.DownwardAPIVolumeFile().
+								WithPath(corev1.ServiceAccountNamespaceKey).
+								WithFieldRef(corev1ac.ObjectFieldSelector().
+									WithFieldPath("metadata.namespace"),
+								),
+							),
+						),
+					corev1ac.VolumeProjection().
+						WithConfigMap(corev1ac.ConfigMapProjection().
+							WithName(rootcacertpublisher.RootCACertConfigMapName).
+							WithItems(corev1ac.KeyToPath().
+								WithKey(konstants.CACertName).
+								WithPath(konstants.CACertName),
+							),
+						),
+				),
+			),
+		)
+	}
+
 	return corev1ac.PodTemplateSpec().
 		WithAnnotations(options.Annotations).
-		WithSpec(spec)
+		WithSpec(spec), nil
 }
 
 func convertToContainerApplyConfiguration(
@@ -1229,6 +1252,13 @@ func convertToContainerApplyConfiguration(
 		user := int64(1000)
 		if options.Root {
 			user = 0
+		}
+		if options.NeedsServiceAccount {
+			container = container.WithVolumeMounts(corev1ac.VolumeMount().
+				WithName(serviceaccountAdmission.ServiceAccountVolumeName).
+				WithMountPath(serviceaccountAdmission.DefaultAPITokenMountPath).
+				WithReadOnly(true),
+			)
 		}
 		return container.
 			WithSecurityContext(corev1ac.SecurityContext().

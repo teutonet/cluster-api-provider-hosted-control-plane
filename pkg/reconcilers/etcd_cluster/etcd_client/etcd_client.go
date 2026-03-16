@@ -17,9 +17,11 @@ import (
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -38,6 +40,7 @@ type EtcdClient interface {
 }
 
 type etcdClient struct {
+	tracerProvider          trace.TracerProvider
 	managementClusterClient *alias.ManagementClusterClient
 	caPool                  *x509.CertPool
 	clientCertificate       tls.Certificate
@@ -58,6 +61,7 @@ type EtcdClientFactory = func(
 
 func NewEtcdClient(
 	ctx context.Context,
+	tracerProvider trace.TracerProvider,
 	managementClusterClient *alias.ManagementClusterClient,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
@@ -75,6 +79,7 @@ func NewEtcdClient(
 				return nil, err
 			}
 			return &etcdClient{
+				tracerProvider:          tracerProvider,
 				managementClusterClient: managementClusterClient,
 				caPool:                  caPool,
 				clientCertificate:       clientCertificate,
@@ -94,6 +99,7 @@ func (e *etcdClient) GetStatuses(ctx context.Context) (map[string]*clientv3.Stat
 		func(ctx context.Context, span trace.Span) (map[string]*clientv3.StatusResponse, error) {
 			return callETCDFuncOnAllMembers(
 				ctx,
+				e.tracerProvider,
 				e.caPool,
 				e.clientCertificate,
 				e.endpoints,
@@ -109,6 +115,7 @@ func (e *etcdClient) CreateSnapshot(ctx context.Context) (*clientv3.SnapshotResp
 		func(ctx context.Context, span trace.Span) (*clientv3.SnapshotResponse, error) {
 			return callETCDFuncOnAnyMember(
 				ctx,
+				e.tracerProvider,
 				e.caPool,
 				e.clientCertificate,
 				e.anyEndpoint,
@@ -123,6 +130,7 @@ func (e *etcdClient) ListAlarms(ctx context.Context) (*clientv3.AlarmResponse, e
 		func(ctx context.Context, span trace.Span) (*clientv3.AlarmResponse, error) {
 			return callETCDFuncOnAnyMember(
 				ctx,
+				e.tracerProvider,
 				e.caPool,
 				e.clientCertificate,
 				e.anyEndpoint,
@@ -137,6 +145,7 @@ func (e *etcdClient) DisarmAlarm(ctx context.Context, alarm *clientv3.AlarmMembe
 		func(ctx context.Context, span trace.Span) error {
 			_, err := callETCDFuncOnAnyMember(
 				ctx,
+				e.tracerProvider,
 				e.caPool,
 				e.clientCertificate,
 				e.anyEndpoint,
@@ -158,6 +167,7 @@ func (e *etcdClient) DisarmAlarm(ctx context.Context, alarm *clientv3.AlarmMembe
 
 func callETCDFuncOnAllMembers[R any](
 	ctx context.Context,
+	tracerProvider trace.TracerProvider,
 	caPool *x509.CertPool,
 	clientCertificate tls.Certificate,
 	endpoints map[string]string,
@@ -172,7 +182,7 @@ func callETCDFuncOnAllMembers[R any](
 			results := make(map[string]*R, len(endpointMap))
 			var errs error
 			for _, endpoint := range endpointMap {
-				result, err := callETCDFuncOnMember(ctx, endpoint, caPool, clientCertificate, etcdFunc)
+				result, err := callETCDFuncOnMember(ctx, tracerProvider, endpoint, caPool, clientCertificate, etcdFunc)
 				errs = errors.Join(errs, err)
 				results[endpoint] = result
 			}
@@ -224,6 +234,7 @@ func getETCDConnectionTLS(
 
 func callETCDFuncOnMember[R any](
 	ctx context.Context,
+	tracerProvider trace.TracerProvider,
 	endpoint string,
 	caPool *x509.CertPool,
 	clientCertificate tls.Certificate,
@@ -242,6 +253,14 @@ func callETCDFuncOnMember[R any](
 					RootCAs:            caPool,
 					Certificates:       []tls.Certificate{clientCertificate},
 					MinVersion:         tls.VersionTLS12,
+				},
+				DialOptions: []grpc.DialOption{
+					grpc.WithStatsHandler(
+						otelgrpc.NewClientHandler(
+							otelgrpc.WithTracerProvider(tracerProvider),
+							otelgrpc.WithMessageEvents(otelgrpc.ReceivedEvents, otelgrpc.SentEvents),
+						),
+					),
 				},
 				DialTimeout: 10 * time.Second,
 			}
@@ -273,6 +292,7 @@ func callETCDFuncOnMember[R any](
 
 func callETCDFuncOnAnyMember[R any](
 	ctx context.Context,
+	tracerProvider trace.TracerProvider,
 	caPool *x509.CertPool,
 	clientCertificate tls.Certificate,
 	endpoint string,
@@ -280,7 +300,7 @@ func callETCDFuncOnAnyMember[R any](
 ) (R, error) {
 	return tracing.WithSpan(ctx, tracer, "CallETCDFuncOnAnyMember",
 		func(ctx context.Context, span trace.Span) (R, error) {
-			return callETCDFuncOnMember(ctx, endpoint, caPool, clientCertificate,
+			return callETCDFuncOnMember(ctx, tracerProvider, endpoint, caPool, clientCertificate,
 				func(client clientv3.Client, ctx context.Context, _ string) (R, error) {
 					return etcdFunc(client, ctx)
 				},
