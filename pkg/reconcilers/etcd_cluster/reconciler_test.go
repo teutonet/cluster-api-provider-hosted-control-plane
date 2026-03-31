@@ -12,12 +12,14 @@ import (
 	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
+	semver "github.com/blang/semver/v4"
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 )
 
 func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
@@ -778,4 +780,61 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
 		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
 	})
+}
+
+func TestBuildEtcdArgs_SnapshotCount(t *testing.T) {
+	tests := []struct {
+		name                string
+		etcdVersion         semver.Version
+		expectSnapshotCount bool
+	}{
+		{
+			name:                "version < 3.7 sets snapshot-count",
+			etcdVersion:         semver.MustParse("3.6.0"),
+			expectSnapshotCount: true,
+		},
+		{
+			name:                "version >= 3.7 omits snapshot-count",
+			etcdVersion:         semver.MustParse("3.7.0"),
+			expectSnapshotCount: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			reconciler := &etcdClusterReconciler{}
+			hcp := &v1alpha1.HostedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns"},
+				Status:     v1alpha1.HostedControlPlaneStatus{ETCDVolumeSize: resource.MustParse("10Gi")},
+			}
+			cluster := &capiv2.Cluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "test-ns"},
+			}
+			serverPort := corev1ac.ContainerPort().WithContainerPort(2379)
+			peerPort := corev1ac.ContainerPort().WithContainerPort(2380)
+			metricsPort := corev1ac.ContainerPort().WithContainerPort(2381)
+			dataMount := corev1ac.VolumeMount().WithMountPath("/var/lib/etcd")
+			certMount := corev1ac.VolumeMount().WithMountPath("/etc/etcd")
+
+			args := reconciler.buildEtcdArgs(
+				context.Background(),
+				hcp,
+				cluster,
+				tt.etcdVersion,
+				dataMount,
+				certMount,
+				serverPort,
+				peerPort,
+				metricsPort,
+			)
+
+			if tt.expectSnapshotCount {
+				g.Expect(args).To(ContainElement("--snapshot-count=10000"))
+			} else {
+				g.Expect(args).NotTo(ContainElement(ContainSubstring("snapshot-count")))
+			}
+		})
+	}
 }

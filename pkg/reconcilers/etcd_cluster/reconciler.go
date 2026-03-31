@@ -45,6 +45,8 @@ import (
 var (
 	etcdVolumeResizeEvent           = "EtcdVolumeAutoResize"
 	etcdVolumeSizeReCalculatedEvent = "EtcdVolumeSizeRecalculated"
+
+	etcdClientVersion3_7 = semver.MustParse(version.V3_7.String())
 )
 
 type EtcdClusterReconciler interface {
@@ -753,7 +755,7 @@ func (er *etcdClusterReconciler) buildEtcdArgs(
 		"quota-backend-bytes":         strconv.FormatInt(storageQuota, 10),
 	}
 
-	if int64(etcdVersion.Minor) >= version.V3_7.Minor { //nolint:gosec // semver minor will never overflow int64
+	if etcdVersion.LT(etcdClientVersion3_7) {
 		// this is deprecated and will be removed in 3.7
 		// TODO: remove this when we roll 3.7
 		args["snapshot-count"] = "10000"
