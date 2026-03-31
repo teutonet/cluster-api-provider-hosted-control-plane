@@ -814,7 +814,7 @@ func (er *etcdClusterReconciler) buildEtcdArgs(
 		"quota-backend-bytes":         strconv.Itoa(int(storageQuota)),
 	}
 
-	if int64(etcdVersion.Minor) >= version.V3_7.Minor { //nolint:gosec // semver minor will never overflow int64
+	if int64(etcdVersion.Minor) < version.V3_7.Minor { //nolint:gosec // semver minor will never overflow int64
 		// this is deprecated and will be removed in 3.7
 		// TODO: remove this when we roll 3.7
 		args["snapshot-count"] = "10000"
