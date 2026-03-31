@@ -16,7 +16,6 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -269,10 +268,113 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("should handle etcd status error gracefully", func(t *testing.T) {
+	t.Run("should update volume usage from filesystem stats", func(t *testing.T) {
 		g := NewWithT(t)
-		stub := NewEtcdClientStub()
-		stub.StatusError = errors.New("connection refused")
+		fsUsage := int64(5368709120) // 5 GiB
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("0"),
+			},
+		}
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = fsUsage
+
+		reconciler := &etcdClusterReconciler{
+			recorder:            &recorder.InfiniteDiscardingFakeRecorder{},
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*resource.NewQuantity(fsUsage, resource.BinarySI)))
+	})
+
+	t.Run("should use filesystem usage when it exceeds previous", func(t *testing.T) {
+		g := NewWithT(t)
+		fsUsage := int64(5 * 1024 * 1024 * 1024)
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = fsUsage
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("2Gi"),
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			recorder:            &recorder.InfiniteDiscardingFakeRecorder{},
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*resource.NewQuantity(fsUsage, resource.BinarySI)))
+	})
+
+	t.Run("should not shrink volume usage", func(t *testing.T) {
+		g := NewWithT(t)
+		fsUsage := int64(1 * 1024 * 1024 * 1024)  // 1 GiB
+		previous := int64(5 * 1024 * 1024 * 1024) // 5 GiB
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = fsUsage
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("5Gi"),
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			recorder:            &recorder.InfiniteDiscardingFakeRecorder{},
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*resource.NewQuantity(previous, resource.BinarySI)))
+	})
+
+	t.Run("should log warning and continue when volume stats fails", func(t *testing.T) {
+		g := NewWithT(t)
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.Error = errors.New("connection refused")
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("15Gi"),
+			},
+		}
+
+		returningFakeRecorder, rec := recorder.NewInfiniteReturningFakeRecorder()
+
+		reconciler := &etcdClusterReconciler{
+			recorder:            rec,
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(returningFakeRecorder.Events).To(ContainElement(ContainSubstring("connection refused")))
+	})
+
+	t.Run("should not shrink when stats fail", func(t *testing.T) {
+		g := NewWithT(t)
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.Error = errors.New("connection refused")
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Status: v1alpha1.HostedControlPlaneStatus{
@@ -282,53 +384,16 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:                   &recorder.InfiniteDiscardingFakeRecorder{},
-			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
-			etcdServerStorageIncrement: resource.MustParse("10Gi"),
-			etcdClientFactory:          nil,
+			recorder:            &recorder.InfiniteDiscardingFakeRecorder{},
+			volumeStatsProvider: volumeStub,
 		}
 
-		err := reconciler.reconcileETCDSpaceUsage(ctx, stub, hcp)
-
-		g.Expect(err).To(MatchError(ContainSubstring("connection refused")))
-	})
-
-	t.Run("should update volume usage from etcd status", func(t *testing.T) {
-		g := NewWithT(t)
-		stub := NewEtcdClientStub()
-		highestMemberDBSize := int64(5368709120)
-		stub.StatusResponses = map[string]*clientv3.StatusResponse{
-			"etcd-0": {
-				Header:  &etcdserverpb.ResponseHeader{ClusterId: 1},
-				Version: "3.5.0",
-				DbSize:  highestMemberDBSize,
-			},
-			"etcd-1": {
-				Header:  &etcdserverpb.ResponseHeader{ClusterId: 1},
-				Version: "3.5.0",
-				DbSize:  highestMemberDBSize / 2,
-			},
-		}
-
-		hcp := &v1alpha1.HostedControlPlane{
-			Status: v1alpha1.HostedControlPlaneStatus{
-				ETCDVolumeSize:  resource.MustParse("20Gi"),
-				ETCDVolumeUsage: resource.MustParse("0"),
-			},
-		}
-
-		reconciler := &etcdClusterReconciler{
-			recorder:                   &recorder.InfiniteDiscardingFakeRecorder{},
-			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
-			etcdServerStorageIncrement: resource.MustParse("10Gi"),
-			etcdClientFactory:          nil,
-		}
-
-		err := reconciler.reconcileETCDSpaceUsage(ctx, stub, hcp)
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
 
 		g.Expect(err).NotTo(HaveOccurred())
-		expectedQuantity := resource.NewQuantity(highestMemberDBSize, resource.BinarySI)
-		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*expectedQuantity))
+		// Should retain previous value since new measurement failed (returns 0)
+		g.Expect(hcp.Status.ETCDVolumeUsage).
+			To(EqualResource(*resource.NewQuantity(int64(15*1024*1024*1024), resource.BinarySI)))
 	})
 }
 

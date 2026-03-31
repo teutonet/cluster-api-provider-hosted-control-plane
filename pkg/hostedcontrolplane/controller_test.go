@@ -66,6 +66,7 @@ func createTestReconciler(client client.Client) HostedControlPlaneReconciler {
 		workloadClusterClientStubFactory,
 		etcdClientStubFactory,
 		s3ClientStubFactory,
+		test.NewEtcdVolumeStatsProviderStub(),
 		&recorder.InfiniteDiscardingFakeRecorder{},
 		"test-namespace",
 	)
