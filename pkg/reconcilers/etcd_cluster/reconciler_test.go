@@ -271,21 +271,9 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("should update volume usage from etcd status", func(t *testing.T) {
+	t.Run("should update volume usage from filesystem stats", func(t *testing.T) {
 		g := NewWithT(t)
-		highestMemberDBSize := int64(5368709120)
-		statuses := map[string]*clientv3.StatusResponse{
-			"etcd-0": {
-				Header:  &etcdserverpb.ResponseHeader{ClusterId: 1},
-				Version: "3.5.0",
-				DbSize:  highestMemberDBSize,
-			},
-			"etcd-1": {
-				Header:  &etcdserverpb.ResponseHeader{ClusterId: 1},
-				Version: "3.5.0",
-				DbSize:  highestMemberDBSize / 2,
-			},
-		}
+		fsUsage := int64(5368709120) // 5 GiB
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Status: v1alpha1.HostedControlPlaneStatus{
@@ -294,18 +282,121 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 			},
 		}
 
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = fsUsage
+
 		reconciler := &etcdClusterReconciler{
-			recorder:                   &recorder.InfiniteDiscardingFakeRecorder{},
-			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
-			etcdServerStorageIncrement: resource.MustParse("10Gi"),
-			etcdClientFactory:          nil,
+			recorder:            &recorder.InfiniteDiscardingFakeRecorder{},
+			volumeStatsProvider: volumeStub,
 		}
 
-		err := reconciler.reconcileETCDSpaceUsage(ctx, statuses, hcp)
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
 
 		g.Expect(err).NotTo(HaveOccurred())
-		expectedQuantity := resource.NewQuantity(highestMemberDBSize, resource.BinarySI)
-		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*expectedQuantity))
+		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*resource.NewQuantity(fsUsage, resource.BinarySI)))
+	})
+
+	t.Run("should use filesystem usage when it exceeds previous", func(t *testing.T) {
+		g := NewWithT(t)
+		fsUsage := int64(5 * 1024 * 1024 * 1024)
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = fsUsage
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("2Gi"),
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			recorder:            &recorder.InfiniteDiscardingFakeRecorder{},
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*resource.NewQuantity(fsUsage, resource.BinarySI)))
+	})
+
+	t.Run("should not shrink volume usage", func(t *testing.T) {
+		g := NewWithT(t)
+		fsUsage := int64(1 * 1024 * 1024 * 1024)  // 1 GiB
+		previous := int64(5 * 1024 * 1024 * 1024) // 5 GiB
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = fsUsage
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("5Gi"),
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			recorder:            &recorder.InfiniteDiscardingFakeRecorder{},
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*resource.NewQuantity(previous, resource.BinarySI)))
+	})
+
+	t.Run("should log warning and continue when volume stats fails", func(t *testing.T) {
+		g := NewWithT(t)
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.Error = errors.New("connection refused")
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("15Gi"),
+			},
+		}
+
+		returningFakeRecorder, rec := recorder.NewInfiniteReturningFakeRecorder()
+
+		reconciler := &etcdClusterReconciler{
+			recorder:            rec,
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(returningFakeRecorder.Events).To(ContainElement(ContainSubstring("connection refused")))
+	})
+
+	t.Run("should not shrink when stats fail", func(t *testing.T) {
+		g := NewWithT(t)
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.Error = errors.New("connection refused")
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("15Gi"),
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			recorder:            &recorder.InfiniteDiscardingFakeRecorder{},
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		// Should retain previous value since new measurement failed (returns 0)
+		g.Expect(hcp.Status.ETCDVolumeUsage).
+			To(EqualResource(*resource.NewQuantity(int64(15*1024*1024*1024), resource.BinarySI)))
 	})
 }
 
@@ -820,7 +911,7 @@ type stallingEtcdClient struct{}
 
 var _ etcd_client.EtcdClient = new(stallingEtcdClient)
 
-func (s *stallingEtcdClient) GetStatuses(_ context.Context) (map[string]*clientv3.StatusResponse, error) {
+func (s *stallingEtcdClient) GetStatuses(_ context.Context, _ []string) (map[string]*clientv3.StatusResponse, error) {
 	return make(map[string]*clientv3.StatusResponse), nil
 }
 
@@ -852,7 +943,7 @@ func TestEtcdClusterReconciler_reconcileETCDMaintenance_GetStatusesError(t *test
 
 		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
 
-		err := reconciler.reconcileETCDMaintenance(ctx, stub, hcp)
+		err := reconciler.reconcileETCDMaintenance(ctx, stub, hcp, nil)
 
 		g.Expect(err).To(MatchError(ContainSubstring("failed to get etcd statuses")))
 		g.Expect(err).To(MatchError(ContainSubstring("connection refused")))

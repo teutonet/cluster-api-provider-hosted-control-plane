@@ -11,6 +11,7 @@ import (
 	"time"
 
 	slices "github.com/samber/lo"
+	"github.com/samber/lo/parallel"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
@@ -38,7 +39,7 @@ const (
 )
 
 type EtcdClient interface {
-	GetStatuses(ctx context.Context) (map[string]*clientv3.StatusResponse, error)
+	GetStatuses(ctx context.Context, readyPodNames []string) (map[string]*clientv3.StatusResponse, error)
 	OpenSnapshotStream(ctx context.Context) (*clientv3.SnapshotResponse, func() error, error)
 	ListAlarms(ctx context.Context) (*clientv3.AlarmResponse, error)
 	DisarmAlarm(ctx context.Context, alarm *clientv3.AlarmMember) error
@@ -100,7 +101,10 @@ func NewEtcdClient(
 	)
 }
 
-func (e *etcdClient) GetStatuses(ctx context.Context) (map[string]*clientv3.StatusResponse, error) {
+func (e *etcdClient) GetStatuses(
+	ctx context.Context,
+	readyPodNames []string,
+) (map[string]*clientv3.StatusResponse, error) {
 	return tracing.WithSpan(ctx, tracer, "EtcdClient.GetStatuses",
 		func(ctx context.Context, span trace.Span) (map[string]*clientv3.StatusResponse, error) {
 			ctx, cancel := context.WithTimeout(ctx, etcdDefaultCallTimeout)
@@ -108,6 +112,7 @@ func (e *etcdClient) GetStatuses(ctx context.Context) (map[string]*clientv3.Stat
 			return callETCDFuncOnAllMembers(
 				ctx,
 				e,
+				slices.PickByKeys(e.endpoints, readyPodNames),
 				clientv3.Client.Status,
 			)
 		},
@@ -209,6 +214,7 @@ func (e *etcdClient) Defragment(ctx context.Context) error {
 			_, err := callETCDFuncOnAllMembers(
 				ctx,
 				e,
+				e.endpoints,
 				clientv3.Client.Defragment,
 			)
 			return err
@@ -250,31 +256,37 @@ func (e *etcdClient) DisarmAlarm(ctx context.Context, alarm *clientv3.AlarmMembe
 func callETCDFuncOnAllMembers[R any](
 	ctx context.Context,
 	etcd *etcdClient,
+	endpoints map[string]string,
 	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (*R, error),
 ) (map[string]*R, error) {
 	return tracing.WithSpan(ctx, tracer, "CallETCDFuncOnAllMembers",
 		func(ctx context.Context, span trace.Span) (map[string]*R, error) {
-			endpointMap := slices.MapValues(etcd.endpoints, func(endpoint string, _ string) string {
-				return fmt.Sprintf("https://%s", net.JoinHostPort(endpoint, strconv.Itoa(int(etcd.serverPort))))
-			})
-			results := make(map[string]*R, len(endpointMap))
-			var errs error
-			for _, endpoint := range endpointMap {
-				etcdClient, err := createEtcdClient(etcd, endpoint)
-				if err != nil {
-					errs = errors.Join(errs, err)
-					continue
-				}
-				result, err := callETCDFuncOnMember(ctx, etcdClient, endpoint, etcdFunc)
-				closeEtcdClient(etcdClient, &err, endpoint)
-				if err != nil {
-					errs = errors.Join(errs, err)
-					continue
-				}
-				results[endpoint] = result
-			}
+			results := parallel.Map(slices.Values(endpoints),
+				func(endpoint string, _ int) slices.Tuple3[string, *R, error] {
+					endpointKey := fmt.Sprintf(
+						"https://%s",
+						net.JoinHostPort(endpoint, strconv.Itoa(int(etcd.serverPort))),
+					)
+					etcdClient, err := createEtcdClient(etcd, endpoint)
+					if err != nil {
+						return slices.T3[string, *R, error](endpointKey, nil, err)
+					}
+					result, err := callETCDFuncOnMember(
+						ctx, etcdClient, endpointKey, etcdFunc,
+					)
+					closeEtcdClient(etcdClient, &err, endpointKey)
+					if err != nil {
+						return slices.T3[string, *R, error](endpointKey, nil, err)
+					}
+					return slices.T3(endpointKey, result, err)
+				},
+			)
 
-			return results, errs
+			return slices.SliceToMap(results, func(result slices.Tuple3[string, *R, error]) (string, *R) {
+					return result.A, result.B
+				}), errors.Join(slices.Map(results, func(result slices.Tuple3[string, *R, error], _ int) error {
+					return result.C
+				})...)
 		},
 	)
 }
