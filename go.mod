@@ -11,7 +11,7 @@ require (
 	github.com/blang/semver/v4 v4.0.0
 	github.com/caarlos0/env/v6 v6.10.1
 	github.com/cert-manager/cert-manager v1.19.3
-	github.com/cilium/cilium v1.19.0
+	github.com/cilium/cilium v1.19.2
 	github.com/coredns/corefile-migration v1.0.30
 	github.com/go-logr/logr v1.4.3
 	github.com/onsi/gomega v1.39.1
@@ -29,20 +29,20 @@ require (
 	go.uber.org/zap v1.27.1
 	go4.org v0.0.0-20260112195520-a5071408f32f
 	golang.org/x/text v0.33.0
-	google.golang.org/grpc v1.79.2
-	k8s.io/api v0.35.0
-	k8s.io/apiextensions-apiserver v0.35.0
-	k8s.io/apimachinery v0.35.0
-	k8s.io/apiserver v0.35.0
-	k8s.io/client-go v0.35.0
+	google.golang.org/grpc v1.79.3
+	k8s.io/api v0.35.2
+	k8s.io/apiextensions-apiserver v0.35.2
+	k8s.io/apimachinery v0.35.2
+	k8s.io/apiserver v0.35.2
+	k8s.io/client-go v0.35.2
 	k8s.io/cluster-bootstrap v0.35.0
-	k8s.io/component-base v0.35.0
+	k8s.io/component-base v0.35.2
 	k8s.io/kube-proxy v0.35.0
 	k8s.io/kubelet v0.35.0
 	k8s.io/kubernetes v1.35.1
-	k8s.io/utils v0.0.0-20260108192941-914a6e750570
+	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2
 	sigs.k8s.io/cluster-api v1.12.2
-	sigs.k8s.io/controller-runtime v0.23.1
+	sigs.k8s.io/controller-runtime v0.23.3
 	sigs.k8s.io/gateway-api v1.4.1
 )
 
@@ -72,7 +72,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/cilium/ebpf v0.20.1-0.20260108141042-f7e80f49188b // indirect
+	github.com/cilium/ebpf v0.20.1-0.20260218191617-ee67e7f43dd9 // indirect
 	github.com/cilium/hive v0.0.1 // indirect
 	github.com/cilium/proxy v0.0.0-20260208111006-51fafd67e151 // indirect
 	github.com/cilium/statedb v0.6.2 // indirect
@@ -186,7 +186,7 @@ require (
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
-	k8s.io/cli-runtime v0.35.0 // indirect
+	k8s.io/cli-runtime v0.35.2 // indirect
 	k8s.io/cloud-provider v0.35.0 // indirect
 	k8s.io/component-helpers v0.35.0 // indirect
 	k8s.io/controller-manager v0.35.0 // indirect
