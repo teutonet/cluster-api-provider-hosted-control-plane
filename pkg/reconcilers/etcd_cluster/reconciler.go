@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/blang/semver/v4"
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/robfig/cron/v3"
 	slices "github.com/samber/lo"
@@ -21,6 +23,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/volume_stats"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
@@ -31,6 +34,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -61,6 +65,7 @@ func NewEtcdClusterReconciler(
 	etcdServerStorageIncrement resource.Quantity,
 	etcdClientFactory etcd_client.EtcdClientFactory,
 	s3ClientFactory s3_client.S3ClientFactory,
+	volumeStatsProvider volume_stats.EtcdVolumeStatsProvider,
 	recorder recorder.Recorder,
 	componentLabel string,
 	apiServerComponentLabel string,
@@ -81,6 +86,7 @@ func NewEtcdClusterReconciler(
 		etcdServerStorageIncrement: etcdServerStorageIncrement,
 		etcdClientFactory:          etcdClientFactory,
 		s3ClientFactory:            s3ClientFactory,
+		volumeStatsProvider:        volumeStatsProvider,
 		recorder:                   recorder,
 		componentLabel:             componentLabel,
 		apiServerComponentLabel:    apiServerComponentLabel,
@@ -96,6 +102,7 @@ type etcdClusterReconciler struct {
 	etcdServerStorageIncrement resource.Quantity
 	etcdClientFactory          etcd_client.EtcdClientFactory
 	s3ClientFactory            s3_client.S3ClientFactory
+	volumeStatsProvider        volume_stats.EtcdVolumeStatsProvider
 	recorder                   recorder.Recorder
 	componentLabel             string
 	apiServerComponentLabel    string
@@ -171,7 +178,7 @@ func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 			}
 
 			if ready, err := er.reconcileStatefulSet(
-				ctx, etcdClient,
+				ctx,
 				hostedControlPlane, cluster, serverPort, peerPort, metricsPort,
 			); err != nil {
 				return "", fmt.Errorf("failed to reconcile etcd StatefulSet: %w", err)
@@ -179,8 +186,17 @@ func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 				return "etcd StatefulSet is not ready", nil
 			}
 
-			if err := er.reconcileETCDSpaceUsage(ctx, etcdClient, hostedControlPlane); err != nil {
+			etcdPods, err := er.listEtcdPods(ctx, hostedControlPlane, cluster)
+			if err != nil {
+				return "", err
+			}
+
+			if err := er.reconcileETCDSpaceUsage(ctx, etcdClient, hostedControlPlane, etcdPods); err != nil {
 				return "", fmt.Errorf("failed to reconcile etcd space usage: %w", err)
+			}
+
+			if err := er.etcdIsHealthy(ctx, etcdClient, hostedControlPlane); err != nil {
+				return "", err
 			}
 
 			if hostedControlPlane.Spec.ETCD.Backup != nil {
@@ -192,6 +208,27 @@ func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 			return "", nil
 		},
 	)
+}
+
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=list
+
+func (er *etcdClusterReconciler) listEtcdPods(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv2.Cluster,
+) ([]corev1.Pod, error) {
+	podList, err := er.ManagementClusterClient.CoreV1().Pods(hostedControlPlane.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: strings.Join(slices.MapToSlice(
+			names.GetControlPlaneSelector(cluster, er.componentLabel).MatchLabels,
+			func(key, value string) string {
+				return fmt.Sprintf("%s=%s", key, value)
+			},
+		), ","),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list etcd pods: %w", err)
+	}
+	return podList.Items, nil
 }
 
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=patch;list
@@ -331,29 +368,103 @@ func (er *etcdClusterReconciler) reconcileETCDSpaceUsage(
 	ctx context.Context,
 	etcdClient etcd_client.EtcdClient,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
+	pods []corev1.Pod,
 ) error {
 	return tracing.WithSpan1(ctx, er.Tracer, "ReconcileETCDSpaceUsage",
 		func(ctx context.Context, span trace.Span) (err error) {
-			statuses, err := etcdClient.GetStatuses(ctx)
+			readyPodNames := slices.FilterMap(pods, func(pod corev1.Pod, _ int) (string, bool) {
+				return pod.Name, slices.ContainsBy(pod.Status.Conditions, func(cond corev1.PodCondition) bool {
+					return cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue
+				})
+			})
+
+			statuses, err := etcdClient.GetStatuses(ctx, readyPodNames)
 			if err != nil {
-				return fmt.Errorf("failed to get etcd member statuses: %w", err)
+				span.RecordError(err)
+				er.recorder.Warnf(nil, "EtcdStatusUnavailable", "EtcdSpaceUsageCheck",
+					"Failed to get etcd member statuses: %s", err)
 			}
 
-			dbSize := slices.Max(slices.Map(slices.Values(statuses),
-				func(status *clientv3.StatusResponse, _ int) int64 {
-					return status.DbSize
+			dbSize := slices.Max(slices.FilterMap(slices.Values(statuses),
+				func(status *clientv3.StatusResponse, _ int) (int64, bool) {
+					if status == nil {
+						return 0, false
+					}
+					return status.DbSize, true
 				},
 			))
 
-			dbSizeQuantity := resource.NewQuantity(dbSize, resource.BinarySI)
-			hostedControlPlane.Status.ETCDVolumeUsage = *dbSizeQuantity
+			effectiveUsage := dbSize
+
+			scheduledPods := slices.Filter(pods, func(pod corev1.Pod, _ int) bool {
+				return pod.Spec.NodeName != ""
+			})
+
+			fsUsage, fsErr := er.getFilesystemUsage(ctx, span, scheduledPods)
+			if fsErr != nil {
+				if !isTransientError(fsErr) {
+					return fsErr
+				}
+				er.recorder.Warnf(nil, "EtcdFilesystemUsageUnavailable", "EtcdSpaceUsageCheck",
+					"Failed to get etcd filesystem usage: %s", fsErr)
+			} else if fsUsage > effectiveUsage {
+				effectiveUsage = fsUsage
+			}
+
+			if fsErr == nil && math.Abs(float64(fsUsage-dbSize)) > er.etcdServerStorageBuffer.AsApproximateFloat64() {
+				er.recorder.Warnf(
+					nil,
+					"EtcdFilesystemUsageDivergence",
+					"EtcdSpaceUsageCheck",
+					"Filesystem usage (%s) diverges from etcd DB size (%s) by more than %s, WAL/snapshot files may be accumulating",
+					resource.NewQuantity(fsUsage, resource.BinarySI).String(),
+					resource.NewQuantity(dbSize, resource.BinarySI).String(),
+					er.etcdServerStorageBuffer.String(),
+				)
+			}
+
+			hostedControlPlane.Status.ETCDVolumeUsage = *resource.NewQuantity(
+				slices.Max([]int64{ // only grow, never shrink
+					effectiveUsage,
+					hostedControlPlane.Status.ETCDVolumeUsage.Value(),
+				}),
+				resource.BinarySI,
+			)
 			span.SetAttributes(
-				attribute.String("etcd.volume.usage", hostedControlPlane.Status.ETCDVolumeUsage.String()),
+				attribute.String(
+					"etcd.volume.db_size",
+					resource.NewQuantity(dbSize, resource.BinarySI).String(),
+				),
+				attribute.String(
+					"etcd.volume.effective_usage",
+					hostedControlPlane.Status.ETCDVolumeUsage.String(),
+				),
 			)
 
 			return nil
 		},
 	)
+}
+
+func (er *etcdClusterReconciler) getFilesystemUsage(
+	ctx context.Context,
+	span trace.Span,
+	scheduledPods []corev1.Pod,
+) (int64, error) {
+	maxFsUsage, err := er.volumeStatsProvider.GetMaxEtcdVolumeUsage(ctx, scheduledPods)
+	if err != nil {
+		span.SetAttributes(attribute.String("etcd.volume.filesystem_usage.error", err.Error()))
+		return 0, fmt.Errorf("failed to get etcd volume stats: %w", err)
+	}
+
+	span.SetAttributes(
+		attribute.String(
+			"etcd.volume.filesystem_usage",
+			resource.NewQuantity(maxFsUsage, resource.BinarySI).String(),
+		),
+	)
+
+	return maxFsUsage, nil
 }
 
 //+kubebuilder:rbac:groups="",resources=services,verbs=create;patch
@@ -409,7 +520,6 @@ func (er *etcdClusterReconciler) reconcileService(
 
 func (er *etcdClusterReconciler) reconcileStatefulSet(
 	ctx context.Context,
-	etcdClient etcd_client.EtcdClient,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 	serverPort *corev1ac.ContainerPortApplyConfiguration,
@@ -490,7 +600,7 @@ func (er *etcdClusterReconciler) reconcileStatefulSet(
 				return false, nil
 			}
 
-			return true, er.etcdIsHealthy(ctx, etcdClient, hostedControlPlane)
+			return true, nil
 		},
 	)
 }
@@ -539,6 +649,11 @@ func (er *etcdClusterReconciler) etcdIsHealthy(
 		}
 	}
 	return nil
+}
+
+func isTransientError(err error) bool {
+	var statusErr *apierrors.StatusError
+	return !errors.As(err, &statusErr)
 }
 
 func (er *etcdClusterReconciler) createVolumeFromTemplate(
@@ -623,6 +738,7 @@ func (er *etcdClusterReconciler) createEtcdContainer(
 		WithArgs(er.buildEtcdArgs(
 			ctx,
 			hostedControlPlane, cluster,
+			semver.MustParse(version.Version),
 			etcdDataVolumeMount, etcdCertificatesVolumeMount,
 			serverPort, peerPort, metricsPort,
 		)...).
@@ -658,6 +774,7 @@ func (er *etcdClusterReconciler) buildEtcdArgs(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
+	etcdVersion semver.Version,
 	etcdDataVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	etcdCertificatesVolumeMount *corev1ac.VolumeMountApplyConfiguration,
 	serverPort *corev1ac.ContainerPortApplyConfiguration,
@@ -686,7 +803,6 @@ func (er *etcdClusterReconciler) buildEtcdArgs(
 		"listen-metrics-urls":         fmt.Sprintf("http://0.0.0.0:%d", *metricsPort.ContainerPort),
 		"auto-compaction-mode":        "periodic",
 		"auto-compaction-retention":   "72h",
-		"snapshot-count":              "10000",
 		"client-cert-auth":            "true",
 		"trusted-ca-file":             path.Join(certificatesDir, konstants.CACertName),
 		"cert-file":                   path.Join(certificatesDir, "server.crt"),
@@ -696,6 +812,12 @@ func (er *etcdClusterReconciler) buildEtcdArgs(
 		"peer-cert-file":              path.Join(certificatesDir, "peer.crt"),
 		"peer-key-file":               path.Join(certificatesDir, "peer.key"),
 		"quota-backend-bytes":         strconv.Itoa(int(storageQuota)),
+	}
+
+	if int64(etcdVersion.Minor) >= version.V3_7.Minor { //nolint:gosec // semver minor will never overflow int64
+		// this is deprecated and will be removed in 3.7
+		// TODO: remove this when we roll 3.7
+		args["snapshot-count"] = "10000"
 	}
 
 	return operatorutil.ArgsToSlice(ctx, hostedControlPlane.Spec.ETCD.Args, args)

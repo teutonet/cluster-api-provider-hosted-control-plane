@@ -9,8 +9,10 @@ import (
 
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/volume_stats"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	corev1 "k8s.io/api/core/v1"
 )
 
 var EtcdSnapshotData = []byte("etcd snapshot data")
@@ -31,7 +33,7 @@ func NewEtcdClientStub() *EtcdClientStub {
 	}
 }
 
-func (s *EtcdClientStub) GetStatuses(_ context.Context) (map[string]*clientv3.StatusResponse, error) {
+func (s *EtcdClientStub) GetStatuses(_ context.Context, _ []string) (map[string]*clientv3.StatusResponse, error) {
 	if s.StatusError != nil {
 		return nil, s.StatusError
 	}
@@ -68,6 +70,26 @@ func (s *EtcdClientStub) DisarmAlarm(_ context.Context, alarm *clientv3.AlarmMem
 	})
 
 	return nil
+}
+
+type EtcdVolumeStatsProviderStub struct {
+	MaxUsage int64
+	Error    error
+}
+
+var _ volume_stats.EtcdVolumeStatsProvider = &EtcdVolumeStatsProviderStub{}
+
+func NewEtcdVolumeStatsProviderStub() *EtcdVolumeStatsProviderStub {
+	return &EtcdVolumeStatsProviderStub{}
+}
+
+func (s *EtcdVolumeStatsProviderStub) GetMaxEtcdVolumeUsage(
+	_ context.Context, _ []corev1.Pod,
+) (int64, error) {
+	if s.Error != nil {
+		return 0, s.Error
+	}
+	return s.MaxUsage, nil
 }
 
 type S3ClientStub struct {
