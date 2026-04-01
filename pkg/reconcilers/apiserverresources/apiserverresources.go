@@ -1144,7 +1144,7 @@ func (arr *apiServerResourcesReconciler) createAuditWebhookSidecarContainer(
 				"g": "daemon off;",
 				"c": *webhookConfigVolumeMount.MountPath,
 			},
-			operatorutil.ArgOption{Prefix: ptr.To("-"), Delimiter: ptr.To(" ")},
+			operatorutil.ArgOption{Prefix: new("-"), Delimiter: new(" ")},
 		)...).
 		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(auditConfig.Webhook.Resources)).
 		WithRestartPolicy(corev1.ContainerRestartPolicyAlways).
@@ -1409,7 +1409,7 @@ func (arr *apiServerResourcesReconciler) setAuditWebhookPorts(
 			if err != nil {
 				return nil, err
 			}
-			return ptr.To(slices.T2(targetUrl.Hostname(), port)), nil
+			return new(slices.T2((*targetUrl).Hostname(), port)), nil
 		})
 	if errs := slices.OmitByValues(hostPorts, []error{nil}); len(errs) > 0 {
 		return fmt.Errorf("failed to parse audit webhook target servers: %w", errors.Join(slices.Values(errs)...))

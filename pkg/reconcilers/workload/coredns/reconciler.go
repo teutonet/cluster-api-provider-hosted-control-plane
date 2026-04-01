@@ -24,7 +24,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
-	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -322,7 +321,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 					map[string]string{
 						"conf": path.Join(*corednsConfigVolumeMount.MountPath, cr.coreDNSCorefileFileName),
 					},
-					operatorutil.ArgOption{Prefix: ptr.To("-")},
+					operatorutil.ArgOption{Prefix: new("-")},
 				)...).
 				WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
 					hostedControlPlane.Spec.CoreDNS.Resources,
