@@ -26,7 +26,7 @@ vars:
         version: 0.33.2
       golangci-lint:
         url: github.com/golangci/golangci-lint/v2/cmd/golangci-lint
-        version: 2.2.1
+        version: 2.11.4
       gofumpt:
         url: mvdan.cc/gofumpt
         version: 0.9.1

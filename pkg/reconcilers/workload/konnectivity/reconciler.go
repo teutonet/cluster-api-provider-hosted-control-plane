@@ -41,6 +41,7 @@ func NewKonnectivityReconciler(
 	ciliumClient ciliumclient.Interface,
 	konnectivityNamespace string,
 	konnectivityServiceAccount string,
+	konnectivityServiceAccountTokenName string,
 	konnectivityServerAudience string,
 	konnectivityServicePort int32,
 ) KonnectivityReconciler {
@@ -54,7 +55,7 @@ func NewKonnectivityReconciler(
 		konnectivityServicePort:             konnectivityServicePort,
 		konnectivityNamespace:               konnectivityNamespace,
 		konnectivityServiceAccountName:      konnectivityServiceAccount,
-		konnectivityServiceAccountTokenName: "konnectivity-agent-token",
+		konnectivityServiceAccountTokenName: konnectivityServiceAccountTokenName,
 	}
 }
 
