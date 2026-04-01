@@ -5,7 +5,6 @@ import (
 
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
-	"k8s.io/utils/ptr"
 )
 
 func TestBuildImageString(t *testing.T) {
@@ -82,7 +81,7 @@ func TestResolveImageFromSpec(t *testing.T) {
 		{
 			name: "override registry only",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry: ptr.To("my-registry.com"),
+				Registry: new("my-registry.com"),
 			},
 			defaultRegistry:   "registry.k8s.io",
 			defaultRepository: "kube-apiserver",
@@ -92,7 +91,7 @@ func TestResolveImageFromSpec(t *testing.T) {
 		{
 			name: "override repository only",
 			imageSpec: &v1alpha1.ImageSpec{
-				Repository: ptr.To("custom-apiserver"),
+				Repository: new("custom-apiserver"),
 			},
 			defaultRegistry:   "registry.k8s.io",
 			defaultRepository: "kube-apiserver",
@@ -102,7 +101,7 @@ func TestResolveImageFromSpec(t *testing.T) {
 		{
 			name: "override tag only",
 			imageSpec: &v1alpha1.ImageSpec{
-				Tag: ptr.To("v1.29.0"),
+				Tag: new("v1.29.0"),
 			},
 			defaultRegistry:   "registry.k8s.io",
 			defaultRepository: "kube-apiserver",
@@ -112,8 +111,8 @@ func TestResolveImageFromSpec(t *testing.T) {
 		{
 			name: "override registry and tag",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry: ptr.To("my-registry.com"),
-				Tag:      ptr.To("v1.29.0"),
+				Registry: new("my-registry.com"),
+				Tag:      new("v1.29.0"),
 			},
 			defaultRegistry:   "registry.k8s.io",
 			defaultRepository: "kube-apiserver",
@@ -123,9 +122,9 @@ func TestResolveImageFromSpec(t *testing.T) {
 		{
 			name: "override all fields",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry:   ptr.To("private-registry.com"),
-				Repository: ptr.To("custom/kube-apiserver"),
-				Tag:        ptr.To("custom-v1.28.0"),
+				Registry:   new("private-registry.com"),
+				Repository: new("custom/kube-apiserver"),
+				Tag:        new("custom-v1.28.0"),
 			},
 			defaultRegistry:   "registry.k8s.io",
 			defaultRepository: "kube-apiserver",
@@ -135,8 +134,8 @@ func TestResolveImageFromSpec(t *testing.T) {
 		{
 			name: "empty registry in spec and default",
 			imageSpec: &v1alpha1.ImageSpec{
-				Repository: ptr.To("my-app"),
-				Tag:        ptr.To("v1.0.0"),
+				Repository: new("my-app"),
+				Tag:        new("v1.0.0"),
 			},
 			defaultRegistry:   "",
 			defaultRepository: "default-app",
@@ -172,7 +171,7 @@ func TestResolveKubernetesComponentImage(t *testing.T) {
 		{
 			name: "custom registry for API server",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry: ptr.To("my-registry.com"),
+				Registry: new("my-registry.com"),
 			},
 			component: "kube-apiserver",
 			version:   "v1.28.0",
@@ -181,7 +180,7 @@ func TestResolveKubernetesComponentImage(t *testing.T) {
 		{
 			name: "custom tag for scheduler",
 			imageSpec: &v1alpha1.ImageSpec{
-				Tag: ptr.To("v1.29.0"),
+				Tag: new("v1.29.0"),
 			},
 			component: "kube-scheduler",
 			version:   "v1.28.0",
@@ -190,9 +189,9 @@ func TestResolveKubernetesComponentImage(t *testing.T) {
 		{
 			name: "fully custom image",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry:   ptr.To("private.registry.io"),
-				Repository: ptr.To("custom-kube-controller-manager"),
-				Tag:        ptr.To("custom-v1.28.0"),
+				Registry:   new("private.registry.io"),
+				Repository: new("custom-kube-controller-manager"),
+				Tag:        new("custom-v1.28.0"),
 			},
 			component: "kube-controller-manager",
 			version:   "v1.28.0",
@@ -224,7 +223,7 @@ func TestResolveETCDImage(t *testing.T) {
 		{
 			name: "custom registry for ETCD",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry: ptr.To("my-registry.com"),
+				Registry: new("my-registry.com"),
 			},
 			version:  "3.5.9",
 			expected: "my-registry.com/etcd:3.5.9-0",
@@ -232,8 +231,8 @@ func TestResolveETCDImage(t *testing.T) {
 		{
 			name: "custom repository and tag",
 			imageSpec: &v1alpha1.ImageSpec{
-				Repository: ptr.To("custom-etcd"),
-				Tag:        ptr.To("3.5.10-custom"),
+				Repository: new("custom-etcd"),
+				Tag:        new("3.5.10-custom"),
 			},
 			version:  "3.5.9",
 			expected: "registry.k8s.io/custom-etcd:3.5.10-custom",
@@ -273,7 +272,7 @@ func TestResolveKonnectivityImage(t *testing.T) {
 		{
 			name: "custom registry for konnectivity",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry: ptr.To("my-registry.com"),
+				Registry: new("my-registry.com"),
 			},
 			component:    "proxy-server",
 			minorVersion: 28,
@@ -282,7 +281,7 @@ func TestResolveKonnectivityImage(t *testing.T) {
 		{
 			name: "custom tag for konnectivity",
 			imageSpec: &v1alpha1.ImageSpec{
-				Tag: ptr.To("v0.29.0-custom"),
+				Tag: new("v0.29.0-custom"),
 			},
 			component:    "proxy-agent",
 			minorVersion: 28,
@@ -314,7 +313,7 @@ func TestResolveKubeProxyImage(t *testing.T) {
 		{
 			name: "custom registry for kube-proxy",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry: ptr.To("registry.k8s.io"),
+				Registry: new("registry.k8s.io"),
 			},
 			version:  "v1.28.0",
 			expected: "registry.k8s.io/kube-proxy:v1.28.0",
@@ -322,7 +321,7 @@ func TestResolveKubeProxyImage(t *testing.T) {
 		{
 			name: "custom repository",
 			imageSpec: &v1alpha1.ImageSpec{
-				Repository: ptr.To("custom-kube-proxy"),
+				Repository: new("custom-kube-proxy"),
 			},
 			version:  "v1.28.0",
 			expected: "k8s.gcr.io/custom-kube-proxy:v1.28.0",
@@ -352,23 +351,23 @@ func TestResolveCoreDNSImage(t *testing.T) {
 		{
 			name: "custom registry for CoreDNS",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry: ptr.To("my-registry.com"),
+				Registry: new("my-registry.com"),
 			},
 			expected: "my-registry.com/coredns/coredns:v1.12.0",
 		},
 		{
 			name: "custom tag for CoreDNS",
 			imageSpec: &v1alpha1.ImageSpec{
-				Tag: ptr.To("v1.13.0"),
+				Tag: new("v1.13.0"),
 			},
 			expected: "registry.k8s.io/coredns/coredns:v1.13.0",
 		},
 		{
 			name: "fully custom CoreDNS",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry:   ptr.To("private.registry.io"),
-				Repository: ptr.To("custom/coredns"),
-				Tag:        ptr.To("v1.14.0-custom"),
+				Registry:   new("private.registry.io"),
+				Repository: new("custom/coredns"),
+				Tag:        new("v1.14.0-custom"),
 			},
 			expected: "private.registry.io/custom/coredns:v1.14.0-custom",
 		},
@@ -397,23 +396,23 @@ func TestResolveAuditWebhookImage(t *testing.T) {
 		{
 			name: "custom registry for audit webhook",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry: ptr.To("my-registry.com"),
+				Registry: new("my-registry.com"),
 			},
 			expected: "my-registry.com/nginx:1.29.1",
 		},
 		{
 			name: "custom tag for audit webhook",
 			imageSpec: &v1alpha1.ImageSpec{
-				Tag: ptr.To("v1.34.0"),
+				Tag: new("v1.34.0"),
 			},
 			expected: "docker.io/nginx:v1.34.0",
 		},
 		{
 			name: "fully custom audit webhook",
 			imageSpec: &v1alpha1.ImageSpec{
-				Registry:   ptr.To("private.registry.io"),
-				Repository: ptr.To("custom/proxy"),
-				Tag:        ptr.To("v2.0.0-custom"),
+				Registry:   new("private.registry.io"),
+				Repository: new("custom/proxy"),
+				Tag:        new("v2.0.0-custom"),
 			},
 			expected: "private.registry.io/custom/proxy:v2.0.0-custom",
 		},

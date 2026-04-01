@@ -42,7 +42,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/events"
 	utilNet "k8s.io/utils/net"
-	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -370,7 +369,7 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				return ctrl.Result{}, fmt.Errorf("failed to create patch helper for HostedControlPlane: %w", err)
 			}
 
-			hostedControlPlane.Status.ExternalManagedControlPlane = ptr.To(true)
+			hostedControlPlane.Status.ExternalManagedControlPlane = new(true)
 
 			ctx = recorder.IntoContext(ctx, recorder.New(r.recorder, hostedControlPlane))
 
