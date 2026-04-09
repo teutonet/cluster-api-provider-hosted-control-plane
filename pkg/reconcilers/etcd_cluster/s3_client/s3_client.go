@@ -60,6 +60,10 @@ func NewS3Client(
 		secretName := etcdBackupSecretConfig.Name
 		accessKeyIDKey := etcdBackupSecretConfig.AccessKeyIDKeyOrDefault()
 		secretAccessKeyKey := etcdBackupSecretConfig.SecretAccessKeyKeyOrDefault()
+		endpoint := ""
+		if hostedControlPlane.Spec.ETCD.Backup.Endpoint != nil {
+			endpoint = *hostedControlPlane.Spec.ETCD.Backup.Endpoint
+		}
 		spanAttributes := []attribute.KeyValue{
 			attribute.String("etcd.backup.s3.secret.namespace", secretNamespace),
 			attribute.String("etcd.backup.s3.secret.name", secretName),
@@ -67,7 +71,11 @@ func NewS3Client(
 			attribute.String("etcd.backup.s3.secret.secretAccessKey", secretAccessKeyKey),
 			attribute.String("etcd.backup.s3.bucket", hostedControlPlane.Spec.ETCD.Backup.Bucket),
 			attribute.String("etcd.backup.s3.region", hostedControlPlane.Spec.ETCD.Backup.Region),
-			attribute.String("etcd.backup.s3.key", fmt.Sprintf("%s/<timestamp>.etcd", cluster.Name)),
+			attribute.String("etcd.backup.s3.endpoint", endpoint),
+			attribute.String(
+				"etcd.backup.s3.key",
+				fmt.Sprintf("%s/%s/<timestamp>.etcd", cluster.Namespace, cluster.Name),
+			),
 			attribute.String("etcd.backup.schedule", hostedControlPlane.Spec.ETCD.Backup.Schedule),
 		}
 		span.SetAttributes(spanAttributes...)
@@ -85,22 +93,33 @@ func NewS3Client(
 			return nil, fmt.Errorf("missing %s: %w", secretAccessKeyKey, errCredentialIsMissingKey)
 		}
 
-		defaultConfig, err := config.LoadDefaultConfig(ctx,
+		s3ConfigOptions := []func(options *config.LoadOptions) error{
 			config.WithRegion(hostedControlPlane.Spec.ETCD.Backup.Region),
 			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 				string(accessKeyID),
 				string(secretAccessKey),
 				"",
 			)),
-		)
+		}
+		var s3Options []func(options *s3.Options)
+		if hostedControlPlane.Spec.ETCD.Backup.Endpoint != nil {
+			s3ConfigOptions = append(s3ConfigOptions,
+				config.WithBaseEndpoint(endpoint),
+			)
+			s3Options = append(s3Options, func(options *s3.Options) {
+				options.UsePathStyle = true
+			})
+		}
+
+		s3Config, err := config.LoadDefaultConfig(ctx, s3ConfigOptions...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load AWS config: %w", err)
 		}
 		return &s3Client{
 			spanAttributes: spanAttributes,
-			uploader:       transfermanager.New(s3.NewFromConfig(defaultConfig)),
+			uploader:       transfermanager.New(s3.NewFromConfig(s3Config, s3Options...)),
 			bucket:         hostedControlPlane.Spec.ETCD.Backup.Bucket,
-			keyTemplate:    fmt.Sprintf("%s/%%s.etcd", cluster.Name),
+			keyTemplate:    fmt.Sprintf("%s/%s/%%s.etcd", cluster.Namespace, cluster.Name),
 		}, nil
 	})
 }

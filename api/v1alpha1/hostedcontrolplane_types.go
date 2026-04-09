@@ -154,6 +154,9 @@ type ETCDBackup struct {
 	Secret ETCDBackupSecret `json:"secret"`
 	//+kubebuilder:validation:Optional
 	Region string `json:"region,omitempty"`
+	// Endpoint allows overriding the S3 endpoint URL, enabling use of S3-compatible storage providers.
+	//+kubebuilder:validation:Optional
+	Endpoint *string `json:"endpoint,omitempty"`
 }
 
 type ETCDBackupSecret struct {
