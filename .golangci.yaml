@@ -292,7 +292,7 @@ linters:
     rules:
       - linters:
           - lll
-        source: "^//\\+kubebuilder.*"
+        source: "^\\s*//\\+kubebuilder.*"
       - linters:
           - lll
         source: ".*https.*" # URLs are long 🤷

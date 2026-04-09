@@ -60,10 +60,7 @@ func NewS3Client(
 		secretName := etcdBackupSecretConfig.Name
 		accessKeyIDKey := etcdBackupSecretConfig.AccessKeyIDKeyOrDefault()
 		secretAccessKeyKey := etcdBackupSecretConfig.SecretAccessKeyKeyOrDefault()
-		endpoint := ""
-		if hostedControlPlane.Spec.ETCD.Backup.Endpoint != nil {
-			endpoint = *hostedControlPlane.Spec.ETCD.Backup.Endpoint
-		}
+		endpoint := ptr.Deref(hostedControlPlane.Spec.ETCD.Backup.Endpoint, "")
 		spanAttributes := []attribute.KeyValue{
 			attribute.String("etcd.backup.s3.secret.namespace", secretNamespace),
 			attribute.String("etcd.backup.s3.secret.name", secretName),
@@ -102,7 +99,7 @@ func NewS3Client(
 			)),
 		}
 		var s3Options []func(options *s3.Options)
-		if hostedControlPlane.Spec.ETCD.Backup.Endpoint != nil {
+		if endpoint != "" {
 			s3ConfigOptions = append(s3ConfigOptions,
 				config.WithBaseEndpoint(endpoint),
 			)

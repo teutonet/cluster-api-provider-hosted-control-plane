@@ -146,7 +146,13 @@ type ETCDComponent struct {
 }
 
 type ETCDBackup struct {
+	// Schedule is a standard 5-field cron expression (minute hour day-of-month month day-of-week).
+	// See https://en.wikipedia.org/wiki/Cron#Overview, no `*/5` syntax, no lists and no ranges,
+	// only single values
+	// Additionally, @daily is supported; it is spread across clusters around midnight
+	// to avoid simultaneous backups.
 	//+kubebuilder:validation:Required
+	//+kubebuilder:validation:Pattern=`^(@daily|(\*|[0-9]|[1-5][0-9]) (\*|[0-9]|1[0-9]|2[0-3]) (\*|[0-9]|[1-2][0-9]|3[0-1]) (\*|[0-9]|1[0-2]) (\*|[0-6]))$`
 	Schedule string `json:"schedule"`
 	//+kubebuilder:validation:Required
 	Bucket string `json:"bucket"`
