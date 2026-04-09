@@ -663,7 +663,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 		err := reconciler.reconcileETCDBackup(ctx, etcdClientStub, hcp, nil)
 
-		g.Expect(err).To(MatchError(ContainSubstring("failed to parse etcd backup schedule")))
+		g.Expect(err).To(MatchError(ContainSubstring("failed to parse schedule")))
 		g.Expect(s3ClientStub.LastUploadedBody).To(BeEmpty())
 	})
 
@@ -692,6 +692,49 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 			},
 			Status: v1alpha1.HostedControlPlaneStatus{
 				ETCDLastBackupTime: metav1.Time{}, // Zero time - first backup
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
+			etcdClientFactory: nil,
+			s3ClientFactory: func(
+				context.Context, *alias.ManagementClusterClient,
+				*v1alpha1.HostedControlPlane, *capiv2.Cluster,
+			) (s3_client.S3Client, error) {
+				return s3ClientStub, nil
+			},
+		}
+
+		err := reconciler.reconcileETCDBackup(ctx, etcdClientStub, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(s3ClientStub.LastUploadedBody).To(Equal(EtcdSnapshotData))
+		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
+		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
+	})
+
+	t.Run("should create backup with @daily schedule spread by cluster identity", func(t *testing.T) {
+		g := NewWithT(t)
+		etcdClientStub := NewEtcdClientStub()
+		s3ClientStub := NewS3ClientStub()
+
+		hcp := &v1alpha1.HostedControlPlane{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-cluster",
+				Namespace: "default",
+			},
+			Spec: v1alpha1.HostedControlPlaneSpec{
+				HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+					ETCD: v1alpha1.ETCDComponent{
+						Backup: &v1alpha1.ETCDBackup{
+							Schedule: "@daily",
+						},
+					},
+				},
+			},
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDLastBackupTime: yesterday,
 			},
 		}
 

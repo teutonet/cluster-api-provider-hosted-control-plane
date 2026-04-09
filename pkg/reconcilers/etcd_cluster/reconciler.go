@@ -11,7 +11,6 @@ import (
 	"time"
 
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
-	"github.com/robfig/cron/v3"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
@@ -294,13 +293,17 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 			if err != nil {
 				return fmt.Errorf("failed to create S3 client: %w", err)
 			}
-			schedule, err := cron.ParseStandard(hostedControlPlane.Spec.ETCD.Backup.Schedule)
+			resolvedSchedule, err := resolveBackupSchedule(
+				hostedControlPlane.Spec.ETCD.Backup.Schedule,
+				hostedControlPlane.Namespace,
+				hostedControlPlane.Name,
+			)
 			if err != nil {
-				return fmt.Errorf("failed to parse etcd backup schedule: %w", err)
+				return err
 			}
 
 			lastBackupTime := hostedControlPlane.Status.ETCDLastBackupTime
-			if lastBackupTime.IsZero() || schedule.Next(lastBackupTime.Time).Before(time.Now()) {
+			if lastBackupTime.IsZero() || resolvedSchedule.Next(lastBackupTime.Time).Before(time.Now()) {
 				snapshotResponse, err := etcdClient.CreateSnapshot(ctx)
 				if err != nil {
 					return fmt.Errorf("failed to create etcd snapshot: %w", err)
@@ -312,7 +315,7 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 
 				hostedControlPlane.Status.ETCDLastBackupTime = metav1.NewTime(time.Now())
 				hostedControlPlane.Status.ETCDNextBackupTime = metav1.NewTime(
-					schedule.Next(hostedControlPlane.Status.ETCDLastBackupTime.Time),
+					resolvedSchedule.Next(hostedControlPlane.Status.ETCDLastBackupTime.Time),
 				)
 				er.recorder.Normalf(
 					nil,
