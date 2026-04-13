@@ -336,13 +336,6 @@ func (in *HostedControlPlaneInlineSpec) DeepCopyInto(out *HostedControlPlaneInli
 	in.KubeProxy.DeepCopyInto(&out.KubeProxy)
 	in.CoreDNS.DeepCopyInto(&out.CoreDNS)
 	in.ETCD.DeepCopyInto(&out.ETCD)
-	if in.CustomKubeconfigs != nil {
-		in, out := &in.CustomKubeconfigs, &out.CustomKubeconfigs
-		*out = make(map[string]KubeconfigEndpointType, len(*in))
-		for key, val := range *in {
-			(*out)[key] = val
-		}
-	}
 	if in.OIDCProviders != nil {
 		in, out := &in.OIDCProviders, &out.OIDCProviders
 		*out = make(map[string]OIDCProvider, len(*in))

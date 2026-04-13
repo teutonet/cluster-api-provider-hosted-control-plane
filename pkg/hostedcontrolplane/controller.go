@@ -659,10 +659,10 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					Name: "kubeconfig",
 					Reconcile: func(
 						ctx context.Context,
-						hostedControlPlane *v1alpha1.HostedControlPlane,
+						_ *v1alpha1.HostedControlPlane,
 						cluster *capiv2.Cluster,
 					) (string, error) {
-						return "", kubeconfigReconciler.ReconcileKubeconfigs(ctx, hostedControlPlane, cluster)
+						return "", kubeconfigReconciler.ReconcileKubeconfigs(ctx, cluster)
 					},
 					Condition:    v1alpha1.KubeconfigReadyCondition,
 					FailedReason: v1alpha1.KubeconfigFailedReason,

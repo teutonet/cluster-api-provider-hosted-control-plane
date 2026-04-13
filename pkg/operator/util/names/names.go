@@ -128,14 +128,6 @@ func GetKubeconfigSecretName(cluster *capiv2.Cluster, username string) string {
 	return cluster.Name + "-" + username + "-kubeconfig"
 }
 
-func GetCustomKubeconfigCertificateName(cluster *capiv2.Cluster, username string) string {
-	return cluster.Name + "-custom-" + username
-}
-
-func GetCustomKubeconfigSecretName(cluster *capiv2.Cluster, username string) string {
-	return cluster.Name + "-" + username + "-kubeconfig"
-}
-
 func GetEtcdCAName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-etcd-ca"
 }

@@ -9,18 +9,12 @@ import (
 	"fmt"
 
 	semver "github.com/blang/semver/v4"
-	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/kubeconfig"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/version"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -93,58 +87,6 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 				issuerURL,
 				"issuer URL cannot be the management Kubernetes service account issuer",
 			))
-		}
-	}
-
-	if len(newHostedControlPlane.Spec.CustomKubeconfigs) > 0 {
-		cluster, err := util.GetOwnerCluster(ctx, w.client, newHostedControlPlane.ObjectMeta)
-		switch {
-		case err != nil:
-			return nil, apierrors.NewInternalError(fmt.Errorf("failed to get owner cluster: %w", err))
-		case cluster == nil:
-			warnings = append(
-				warnings,
-				"unable to validate custom kubeconfig names because owner cluster could not be determined",
-			)
-		default:
-			apiEndpoint := capiv2.APIEndpoint{}
-			kubeconfigUsernames := slices.Keys(kubeconfig.CreateBuiltinKubeconfigConfigs(
-				cluster,
-				apiEndpoint, apiEndpoint, apiEndpoint,
-				importcycle.KonnectivityClientUsername, importcycle.ControllerUsername,
-			))
-			fieldErrs = append(fieldErrs, slices.Flatten(slices.FilterMapToSlice(
-				newHostedControlPlane.Spec.CustomKubeconfigs,
-				func(name string, kubeconfig v1alpha1.KubeconfigEndpointType) ([]*field.Error, bool) {
-					nameFieldPath := w.specPath.Child("customKubeconfigs").Key(name)
-					if slices.Contains(kubeconfigUsernames, name) {
-						return []*field.Error{field.Invalid(
-							nameFieldPath, name,
-							"custom kubeconfig username cannot be the same as a default kubeconfig username",
-						)}, true
-					}
-					if errs := validation.NameIsDNSSubdomain(name, false); len(errs) > 0 {
-						return slices.Map(errs, func(err string, _ int) *field.Error {
-							return field.Invalid(
-								nameFieldPath, name,
-								fmt.Sprintf("custom kubeconfig name must be a valid DNS subdomain: %s", err),
-							)
-						}), true
-					}
-					// in combination with cluster info the resulting secret might be too long.
-					if errs := validation.NameIsDNSSubdomain(
-						names.GetCustomKubeconfigSecretName(cluster, name), false,
-					); len(errs) > 0 {
-						return slices.Map(errs, func(err string, _ int) *field.Error {
-							return field.Invalid(
-								nameFieldPath, name,
-								fmt.Sprintf("custom kubeconfig name would result in an invalid secret name: %s", err),
-							)
-						}), true
-					}
-					return nil, false
-				},
-			))...)
 		}
 	}
 

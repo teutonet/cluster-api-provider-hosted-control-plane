@@ -18,7 +18,6 @@ import (
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
@@ -27,7 +26,6 @@ import (
 type KubeconfigReconciler interface {
 	ReconcileKubeconfigs(
 		ctx context.Context,
-		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv2.Cluster,
 	) error
 }
@@ -66,7 +64,6 @@ type KubeconfigConfig struct {
 
 func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 	ctx context.Context,
-	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 ) error {
 	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeconfigs",
@@ -87,23 +84,11 @@ func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 				Host: names.GetServiceName(cluster),
 				Port: kr.apiServerServicePort,
 			}
-			endpointMap := map[v1alpha1.KubeconfigEndpointType]capiv2.APIEndpoint{
-				v1alpha1.KubeconfigEndpointTypeExternal: cluster.Spec.ControlPlaneEndpoint,
-				v1alpha1.KubeconfigEndpointTypeInternal: internalServiceEndpoint,
-			}
-			kubeconfigs := CreateBuiltinKubeconfigConfigs(
+			kubeconfigs := CreateKubeconfigConfigs(
 				cluster,
 				internalServiceEndpoint, localEndpoint, clusterInternalServiceEndpoint,
 				kr.konnectivityClientUsername, kr.controllerUsername,
 			)
-
-			for username, endpointType := range hostedControlPlane.Spec.CustomKubeconfigs {
-				kubeconfigs[username] = KubeconfigConfig{
-					SecretName:        names.GetCustomKubeconfigSecretName(cluster, username),
-					CertificateName:   names.GetCustomKubeconfigCertificateName(cluster, username),
-					ApiServerEndpoint: endpointMap[endpointType],
-				}
-			}
 
 			for username, kubeconfig := range kubeconfigs {
 				if kubeconfig.SecretName == "" {
@@ -119,7 +104,7 @@ func (kr *kubeconfigReconciler) ReconcileKubeconfigs(
 	)
 }
 
-func CreateBuiltinKubeconfigConfigs(
+func CreateKubeconfigConfigs(
 	cluster *capiv2.Cluster,
 	internalServiceEndpoint capiv2.APIEndpoint,
 	localEndpoint capiv2.APIEndpoint,

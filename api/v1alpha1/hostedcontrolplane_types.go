@@ -57,15 +57,6 @@ type HostedControlPlaneSpec struct {
 	HostedControlPlaneInlineSpec `json:",inline"`
 }
 
-// KubeconfigEndpointType specifies which API server endpoint to use.
-// +kubebuilder:validation:Enum=internal;external
-type KubeconfigEndpointType string
-
-const (
-	KubeconfigEndpointTypeInternal KubeconfigEndpointType = "internal"
-	KubeconfigEndpointTypeExternal KubeconfigEndpointType = "external"
-)
-
 type HostedControlPlaneInlineSpec struct {
 	//+kubebuilder:validation:Optional
 	Deployment HostedControlPlaneDeployment `json:"deployment,omitempty"`
@@ -80,12 +71,6 @@ type HostedControlPlaneInlineSpec struct {
 	CoreDNS ScalablePod `json:"coredns,omitempty"`
 	//+kubebuilder:validation:Optional
 	ETCD ETCDComponent `json:"etcd,omitempty"`
-	// CustomKubeconfigs specifies additional kubeconfigs to generate.
-	// The key is the username, the value specifies the endpoint: "internal" or "external".
-	// Users are responsible for creating the appropriate RBAC for these users.
-	// The resulting kubeconfigs will be stored in a secret named <hosted-control-plane-name>-<username>-kubeconfig.
-	//+kubebuilder:validation:Optional
-	CustomKubeconfigs map[string]KubeconfigEndpointType `json:"customKubeconfigs,omitempty"`
 	// OIDCProviders configures structured JWT/OIDC authentication.
 	// The key is the issuer URL. If non-empty, an AuthenticationConfiguration
 	// is generated and passed to the API server via --authentication-config.
