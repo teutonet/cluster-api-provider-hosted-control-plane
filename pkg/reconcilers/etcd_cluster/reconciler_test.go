@@ -511,8 +511,8 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 		g.Expect(returningFakeRecorder.Events).To(ContainElement(
 			And(
-				ContainSubstring("EtcdBackup"),
-				ContainSubstring("Created etcd backup"),
+				ContainSubstring("EtcdBackupFinished"),
+				ContainSubstring("Finished etcd backup"),
 			),
 		))
 	})
@@ -678,8 +678,6 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 					ETCD: v1alpha1.ETCDComponent{
 						Backup: &v1alpha1.ETCDBackup{
 							Schedule: cronAt2AM,
-							Bucket:   "test-backup-bucket",
-							Region:   "us-east-1",
 							Secret: v1alpha1.ETCDBackupSecret{
 								Name:               "etcd-backup-secret",
 								Namespace:          ptr.To("default"),

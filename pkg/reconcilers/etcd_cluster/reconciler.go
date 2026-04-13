@@ -42,6 +42,7 @@ import (
 var (
 	etcdVolumeResizeEvent           = "EtcdVolumeAutoResize"
 	etcdVolumeSizeReCalculatedEvent = "EtcdVolumeSizeRecalculated"
+	errETCDBackupStalled            = errors.New("etcd backup timed out: no progress in time window")
 )
 
 type EtcdClusterReconciler interface {
@@ -304,12 +305,27 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 
 			lastBackupTime := hostedControlPlane.Status.ETCDLastBackupTime
 			if lastBackupTime.IsZero() || resolvedSchedule.Next(lastBackupTime.Time).Before(time.Now()) {
-				snapshotResponse, err := etcdClient.CreateSnapshot(ctx)
+				ctx, cancel := context.WithCancelCause(ctx)
+				defer cancel(nil)
+				watchdogInterval := 1 * time.Minute
+				watchdog := time.AfterFunc(watchdogInterval, func() {
+					cancel(errETCDBackupStalled)
+				})
+				defer watchdog.Stop()
+				er.recorder.Normalf(
+					nil,
+					"CronScheduleTriggered",
+					"EtcdBackup",
+					"Starting etcd backup",
+				)
+				snapshotResponse, closeClientFunc, err := etcdClient.CreateSnapshot(ctx)
+				defer closeClientFunc()
 				if err != nil {
 					return fmt.Errorf("failed to create etcd snapshot: %w", err)
 				}
+				watchdog.Reset(watchdogInterval)
 
-				if err := s3Client.Upload(ctx, snapshotResponse.Snapshot); err != nil {
+				if err := s3Client.Upload(ctx, snapshotResponse.Snapshot, func() { watchdog.Reset(watchdogInterval) }); err != nil {
 					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", err)
 				}
 
@@ -319,9 +335,9 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 				)
 				er.recorder.Normalf(
 					nil,
-					"CronScheduleTriggered",
-					"EtcdBackup",
-					"Created etcd backup. Next backup scheduled at %s",
+					"EtcdBackupFinished",
+					"EtcdBackupFinished",
+					"Finished etcd backup. Next backup scheduled at %s",
 					hostedControlPlane.Status.ETCDNextBackupTime.String(),
 				)
 			}
