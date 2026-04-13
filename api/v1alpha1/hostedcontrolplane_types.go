@@ -145,6 +145,9 @@ type ETCDComponent struct {
 	Backup *ETCDBackup `json:"backup,omitempty"`
 }
 
+// ETCDBackup configures periodic etcd snapshots uploaded to S3-compatible storage.
+// Backup retention is not managed by the operator; configure lifecycle rules on the
+// bucket itself (e.g. S3 Lifecycle Rules) to expire old snapshots automatically.
 type ETCDBackup struct {
 	// Schedule is a standard 5-field cron expression (minute hour day-of-month month day-of-week).
 	// See https://en.wikipedia.org/wiki/Cron#Overview, no `*/5` syntax, no lists and no ranges,
@@ -155,14 +158,7 @@ type ETCDBackup struct {
 	//+kubebuilder:validation:Pattern=`^(@daily|(\*|[0-9]|[1-5][0-9]) (\*|[0-9]|1[0-9]|2[0-3]) (\*|[0-9]|[1-2][0-9]|3[0-1]) (\*|[0-9]|1[0-2]) (\*|[0-6]))$`
 	Schedule string `json:"schedule"`
 	//+kubebuilder:validation:Required
-	Bucket string `json:"bucket"`
-	//+kubebuilder:validation:Required
 	Secret ETCDBackupSecret `json:"secret"`
-	//+kubebuilder:validation:Optional
-	Region string `json:"region,omitempty"`
-	// Endpoint allows overriding the S3 endpoint URL, enabling use of S3-compatible storage providers.
-	//+kubebuilder:validation:Optional
-	Endpoint *string `json:"endpoint,omitempty"`
 }
 
 type ETCDBackupSecret struct {
@@ -174,6 +170,14 @@ type ETCDBackupSecret struct {
 	AccessKeyIDKey *string `json:"accessKeyIDKey,omitempty"`
 	//+kubebuilder:validation:Optional
 	SecretAccessKeyKey *string `json:"secretAccessKeyKey,omitempty"`
+	//+kubebuilder:validation:Optional
+	EndpointKey *string `json:"endpointKey,omitempty"`
+	//+kubebuilder:validation:Optional
+	RegionKey *string `json:"regionKey,omitempty"`
+	// The bucket will be split by `/` and only the first part is the bucket,
+	// the rest is a prefix for the file
+	//+kubebuilder:validation:Optional
+	BucketKey *string `json:"bucketKey,omitempty"`
 }
 
 type APIServerPod struct {
