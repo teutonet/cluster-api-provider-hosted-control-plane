@@ -3,6 +3,7 @@ package etcd_cluster
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
@@ -754,4 +755,49 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
 		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
 	})
+
+	t.Run("should fail when upload stalls", func(t *testing.T) {
+		g := NewWithT(t)
+		etcdClientStub := NewEtcdClientStub()
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Spec: v1alpha1.HostedControlPlaneSpec{
+				HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+					ETCD: v1alpha1.ETCDComponent{
+						Backup: &v1alpha1.ETCDBackup{
+							Schedule: cronAt2AM,
+						},
+					},
+				},
+			},
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDLastBackupTime: yesterday,
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			recorder:         &recorder.InfiniteDiscardingFakeRecorder{},
+			watchdogInterval: 10 * time.Millisecond,
+			s3ClientFactory: func(
+				context.Context, *alias.ManagementClusterClient,
+				*v1alpha1.HostedControlPlane, *capiv2.Cluster,
+			) (s3_client.S3Client, error) {
+				return &stallingS3Client{}, nil
+			},
+		}
+
+		err := reconciler.reconcileETCDBackup(ctx, etcdClientStub, hcp, nil)
+
+		g.Expect(err).To(MatchError(errETCDBackupStalled))
+		g.Expect(err).To(MatchError(ContainSubstring("failed to upload etcd snapshot to S3")))
+		g.Expect(hcp.Status.ETCDLastBackupTime).To(Equal(yesterday))
+	})
+}
+
+type stallingS3Client struct{}
+
+func (s *stallingS3Client) Upload(ctx context.Context, body io.ReadCloser, _ func()) error {
+	defer func() { _ = body.Close() }()
+	<-ctx.Done()
+	return ctx.Err()
 }

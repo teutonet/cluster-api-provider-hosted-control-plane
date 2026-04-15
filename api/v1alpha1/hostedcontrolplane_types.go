@@ -170,8 +170,12 @@ type ETCDBackupSecret struct {
 	AccessKeyIDKey *string `json:"accessKeyIDKey,omitempty"`
 	//+kubebuilder:validation:Optional
 	SecretAccessKeyKey *string `json:"secretAccessKeyKey,omitempty"`
+	// HostKey is the key in the referenced Secret whose value contains the S3 endpoint host.
+	// The Secret value must be a bare host name or host:port, for example
+	// `s3.example.com` or `s3.example.com:9000`. Do not include a URL scheme
+	// such as `http://` or `https://`, and do not include any path component.
 	//+kubebuilder:validation:Optional
-	EndpointKey *string `json:"endpointKey,omitempty"`
+	HostKey *string `json:"hostKey,omitempty"`
 	//+kubebuilder:validation:Optional
 	RegionKey *string `json:"regionKey,omitempty"`
 	// The bucket will be split by `/` and only the first part is the bucket,

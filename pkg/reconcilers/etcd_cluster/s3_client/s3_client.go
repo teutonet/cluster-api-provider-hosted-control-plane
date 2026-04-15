@@ -28,6 +28,7 @@ import (
 var (
 	tracer                    = tracing.GetTracer("S3Client")
 	errCredentialIsMissingKey = errors.New("s3 credential is missing key")
+	errBucketNameEmpty        = errors.New("s3 bucket name is empty")
 )
 
 type ProgressWatcher struct {
@@ -47,7 +48,6 @@ type S3Client interface {
 }
 
 type s3Client struct {
-	spanAttributes  []attribute.KeyValue
 	uploader        *transfermanager.Client
 	progressWatcher *ProgressWatcher
 	bucket          string
@@ -76,10 +76,10 @@ func NewS3Client(
 		secretName := etcdBackupSecretConfig.Name
 		accessKeyIDKey := etcdBackupSecretConfig.AccessKeyIDKeyOrDefault()
 		secretAccessKeyKey := etcdBackupSecretConfig.SecretAccessKeyKeyOrDefault()
-		endpointKey := etcdBackupSecretConfig.EndpointKeyOrDefault()
+		endpointKey := etcdBackupSecretConfig.HostKeyOrDefault()
 		regionKey := etcdBackupSecretConfig.RegionKeyOrDefault()
 		bucketKey := etcdBackupSecretConfig.BucketKeyOrDefault()
-		spanAttributes := []attribute.KeyValue{
+		span.SetAttributes(
 			attribute.String("etcd.backup.s3.secret.namespace", secretNamespace),
 			attribute.String("etcd.backup.s3.secret.name", secretName),
 			attribute.String(
@@ -87,7 +87,7 @@ func NewS3Client(
 				fmt.Sprintf("%s/%s/<timestamp>.etcd", cluster.Namespace, cluster.Name),
 			),
 			attribute.String("etcd.backup.schedule", hostedControlPlane.Spec.ETCD.Backup.Schedule),
-		}
+		)
 		s3Secret, err := managementClusterClient.CoreV1().Secrets(secretNamespace).
 			Get(ctx, secretName, metav1.GetOptions{})
 		if err != nil {
@@ -105,12 +105,14 @@ func NewS3Client(
 		endpointBytes, found := s3Secret.Data[endpointKey]
 		if found {
 			endpoint = string(endpointBytes)
+			span.SetAttributes(attribute.String("etcd.backup.s3.endpoint", endpoint))
 		}
 		regionBytes, found := s3Secret.Data[regionKey]
 		if !found {
 			return nil, fmt.Errorf("missing %s: %w", regionKey, errCredentialIsMissingKey)
 		}
 		region := string(regionBytes)
+		span.SetAttributes(attribute.String("etcd.backup.s3.region", region))
 		bucketBytes, found := s3Secret.Data[bucketKey]
 		if !found {
 			return nil, fmt.Errorf("missing %s: %w", bucketKey, errCredentialIsMissingKey)
@@ -119,20 +121,22 @@ func NewS3Client(
 
 		parts := strings.SplitN(bucketString, "/", 2)
 		bucket := parts[0]
+		if bucket == "" {
+			return nil, fmt.Errorf(
+				"bucket secret key %q resolved to an empty bucket name: %w",
+				bucketKey,
+				errBucketNameEmpty,
+			)
+		}
+		span.SetAttributes(attribute.String("etcd.backup.s3.bucket", bucket))
 		prefix := ""
 		if len(parts) == 2 {
 			prefix = parts[1]
 			if prefix != "" {
 				prefix += "/"
+				span.SetAttributes(attribute.String("etcd.backup.s3.prefix", prefix))
 			}
 		}
-
-		spanAttributes = append(spanAttributes,
-			attribute.String("etcd.backup.s3.endpoint", endpoint),
-			attribute.String("etcd.backup.s3.region", region),
-			attribute.String("etcd.backup.s3.bucket", bucket),
-		)
-		span.SetAttributes(spanAttributes...)
 
 		s3ConfigOptions := []func(options *config.LoadOptions) error{
 			config.WithRegion(region),
@@ -181,7 +185,6 @@ func NewS3Client(
 		}
 
 		return &s3Client{
-			spanAttributes:  spanAttributes,
 			uploader:        transfermanager.New(s3APIClient, transfermanagerOptions...),
 			progressWatcher: progressWatcher,
 			bucket:          bucket,
@@ -192,7 +195,6 @@ func NewS3Client(
 
 func (s *s3Client) Upload(ctx context.Context, body io.ReadCloser, progressWatcher func()) error {
 	return tracing.WithSpan1(ctx, tracer, "Upload", func(ctx context.Context, span trace.Span) (retErr error) {
-		span.SetAttributes(s.spanAttributes...)
 		defer func() {
 			if closeErr := body.Close(); closeErr != nil {
 				retErr = errors.Join(retErr, fmt.Errorf("failed to close body reader: %w", closeErr))

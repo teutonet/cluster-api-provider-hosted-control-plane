@@ -34,7 +34,7 @@ var (
 
 type EtcdClient interface {
 	GetStatuses(ctx context.Context) (map[string]*clientv3.StatusResponse, error)
-	CreateSnapshot(ctx context.Context) (*clientv3.SnapshotResponse, func(), error)
+	OpenSnapshotStream(ctx context.Context) (*clientv3.SnapshotResponse, func() error, error)
 	ListAlarms(ctx context.Context) (*clientv3.AlarmResponse, error)
 	DisarmAlarm(ctx context.Context, alarm *clientv3.AlarmMember) error
 }
@@ -108,12 +108,16 @@ func (e *etcdClient) GetStatuses(ctx context.Context) (map[string]*clientv3.Stat
 	)
 }
 
-func (e *etcdClient) CreateSnapshot(ctx context.Context) (*clientv3.SnapshotResponse, func(), error) {
+func (e *etcdClient) OpenSnapshotStream(ctx context.Context) (*clientv3.SnapshotResponse, func() error, error) {
 	return tracing.WithSpan3(ctx, tracer, "EtcdClient.CreateSnapshot",
-		func(ctx context.Context, span trace.Span) (_ *clientv3.SnapshotResponse, _ func(), retErr error) {
+		func(ctx context.Context, span trace.Span) (_ *clientv3.SnapshotResponse, _ func() error, retErr error) {
 			endpoint := e.anyEndpoint
 			etcdClient, err := createEtcdClient(e, endpoint)
-			closeFunc := func() { closeEtcdClient(etcdClient, &retErr, endpoint) }
+			closeFunc := func() error {
+				var closeErr error
+				closeEtcdClient(etcdClient, &closeErr, endpoint)
+				return closeErr
+			}
 			if err != nil {
 				return nil, closeFunc, err
 			}
@@ -121,6 +125,7 @@ func (e *etcdClient) CreateSnapshot(ctx context.Context) (*clientv3.SnapshotResp
 			snapshotResponse, err := callETCDFuncOnAnyMember(
 				ctx,
 				etcdClient,
+				endpoint,
 				clientv3.Client.SnapshotWithVersion,
 			)
 			return snapshotResponse, closeFunc, err
@@ -183,6 +188,7 @@ func (e *etcdClient) ListAlarms(ctx context.Context) (*clientv3.AlarmResponse, e
 			return callETCDFuncOnAnyMember(
 				ctx,
 				etcdClient,
+				endpoint,
 				clientv3.Client.AlarmList,
 			)
 		},
@@ -203,6 +209,7 @@ func (e *etcdClient) DisarmAlarm(ctx context.Context, alarm *clientv3.AlarmMembe
 			_, err = callETCDFuncOnAnyMember(
 				ctx,
 				etcdClient,
+				endpoint,
 				func(client clientv3.Client, ctx context.Context) (*clientv3.AlarmResponse, error) {
 					response, err := client.AlarmDisarm(ctx, alarm)
 					if err != nil {
@@ -234,7 +241,8 @@ func callETCDFuncOnAllMembers[R any](
 			for _, endpoint := range endpointMap {
 				etcdClient, err := createEtcdClient(etcd, endpoint)
 				if err != nil {
-					return nil, err
+					errs = errors.Join(errs, err)
+					continue
 				}
 				result, err := callETCDFuncOnMember(ctx, etcdClient, endpoint, etcdFunc)
 				closeEtcdClient(etcdClient, &err, endpoint)
@@ -313,11 +321,12 @@ func callETCDFuncOnMember[R any](
 func callETCDFuncOnAnyMember[R any](
 	ctx context.Context,
 	etcdClient *clientv3.Client,
+	endpoint string,
 	etcdFunc func(client clientv3.Client, ctx context.Context) (R, error),
 ) (R, error) {
 	return tracing.WithSpan(ctx, tracer, "CallETCDFuncOnAnyMember",
 		func(ctx context.Context, span trace.Span) (R, error) {
-			return callETCDFuncOnMember(ctx, etcdClient, "",
+			return callETCDFuncOnMember(ctx, etcdClient, endpoint,
 				func(client clientv3.Client, ctx context.Context, _ string) (R, error) {
 					return etcdFunc(client, ctx)
 				})

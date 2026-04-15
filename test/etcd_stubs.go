@@ -38,14 +38,14 @@ func (s *EtcdClientStub) GetStatuses(_ context.Context) (map[string]*clientv3.St
 	return s.StatusResponses, nil
 }
 
-func (s *EtcdClientStub) CreateSnapshot(_ context.Context) (*clientv3.SnapshotResponse, func(), error) {
+func (s *EtcdClientStub) OpenSnapshotStream(_ context.Context) (*clientv3.SnapshotResponse, func() error, error) {
 	if s.SnapshotError != nil {
-		return nil, func() {}, s.SnapshotError
+		return nil, func() error { return nil }, s.SnapshotError
 	}
 	return &clientv3.SnapshotResponse{
 		Header:   &etcdserverpb.ResponseHeader{ClusterId: 1},
 		Snapshot: io.NopCloser(bytes.NewReader(EtcdSnapshotData)),
-	}, func() {}, nil
+	}, func() error { return nil }, nil
 }
 
 func (s *EtcdClientStub) ListAlarms(_ context.Context) (*clientv3.AlarmResponse, error) {
