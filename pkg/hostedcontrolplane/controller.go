@@ -391,9 +391,24 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				attribute.String("cluster.name", cluster.Name),
 			)
 
-			if r.reconcileFilter != "" &&
-				hostedControlPlane.Name != r.reconcileFilter && cluster.Name != r.reconcileFilter {
-				return reconcile.Result{}, nil
+			if r.reconcileFilter != "" {
+				var hcpMatch, clusterMatch bool
+				if strings.Contains(r.reconcileFilter, "/") {
+					hcpMatch = hostedControlPlane.Namespace+"/"+hostedControlPlane.Name == r.reconcileFilter
+					clusterMatch = cluster.Namespace+"/"+cluster.Name == r.reconcileFilter
+				} else {
+					hcpMatch = hostedControlPlane.Name == r.reconcileFilter
+					clusterMatch = cluster.Name == r.reconcileFilter
+				}
+				if !hcpMatch && !clusterMatch {
+					logr.FromContextAsSlogLogger(ctx).
+						InfoContext(ctx, "skipping reconciliation due to reconcile filter",
+							"filter", r.reconcileFilter,
+							"hcp", hostedControlPlane.Namespace+"/"+hostedControlPlane.Name,
+							"cluster", cluster.Namespace+"/"+cluster.Name,
+						)
+					return reconcile.Result{}, nil
+				}
 			}
 
 			isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.client, cluster, hostedControlPlane)

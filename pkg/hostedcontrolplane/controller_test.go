@@ -23,6 +23,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeClient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -217,7 +218,7 @@ func TestHostedControlPlaneReconciler_ReconcileWorkflow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := t.Context()
+			ctx := log.IntoContext(t.Context(), log.Log)
 			g := NewWithT(t)
 			scheme := runtime.NewScheme()
 			g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
@@ -273,7 +274,7 @@ func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
 	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 
 	t.Run("finalizer behavior during reconcile lifecycle", func(t *testing.T) {
-		ctx := t.Context()
+		ctx := log.IntoContext(t.Context(), log.Log)
 		g := NewWithT(t)
 		cluster := createTestCluster("test-cluster", "default")
 		hostedControlPlane := withReplicas(
@@ -316,7 +317,7 @@ func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
 	})
 
 	t.Run("finalizer should be removed during deletion", func(t *testing.T) {
-		ctx := t.Context()
+		ctx := log.IntoContext(t.Context(), log.Log)
 		g := NewWithT(t)
 		cluster := createTestClusterWithPausedCondition("test-cluster", "default", false)
 		hostedControlPlane := withDeletion(
@@ -369,7 +370,7 @@ func TestHostedControlPlaneReconciler_OwnerReferenceValidation(t *testing.T) {
 	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 
 	t.Run("should requeue when owner cluster is not found", func(t *testing.T) {
-		ctx := t.Context()
+		ctx := log.IntoContext(t.Context(), log.Log)
 		g := NewWithT(t)
 		hostedControlPlane := createTestHostedControlPlane("test-hcp", "default")
 
@@ -396,7 +397,7 @@ func TestHostedControlPlaneReconciler_OwnerReferenceValidation(t *testing.T) {
 	})
 
 	t.Run("should proceed when valid owner cluster is found", func(t *testing.T) {
-		ctx := t.Context()
+		ctx := log.IntoContext(t.Context(), log.Log)
 		g := NewWithT(t)
 		cluster := createTestCluster("test-cluster", "default")
 		hostedControlPlane := withReplicas(
@@ -439,7 +440,7 @@ func TestHostedControlPlaneReconciler_StatusConditions(t *testing.T) {
 	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 
 	t.Run("should set paused condition when cluster is paused", func(t *testing.T) {
-		ctx := t.Context()
+		ctx := log.IntoContext(t.Context(), log.Log)
 		g := NewWithT(t)
 		cluster := withPaused(createTestCluster("test-cluster", "default"), true)
 		hostedControlPlane := withOwnerReference(createTestHostedControlPlane("test-hcp", "default"), cluster)
@@ -537,7 +538,7 @@ func TestHostedControlPlaneReconciler_ObservedGeneration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := t.Context()
+			ctx := log.IntoContext(t.Context(), log.Log)
 			g := NewWithT(t)
 
 			objs := []client.Object{tt.hostedControlPlane}
@@ -603,7 +604,7 @@ func TestHostedControlPlaneReconciler_NonExistentResource(t *testing.T) {
 			Namespace: "default",
 		},
 	}
-	result, err := reconciler.Reconcile(t.Context(), req)
+	result, err := reconciler.Reconcile(log.IntoContext(t.Context(), log.Log), req)
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(result).To(Equal(ctrl.Result{}))
@@ -672,6 +673,21 @@ func TestHostedControlPlaneReconciler_ReconcileFilter(t *testing.T) {
 			filter:          "other-hcp",
 			expectFinalizer: false,
 		},
+		{
+			name:            "namespace/name filter matches HCP",
+			filter:          "default/test-hcp",
+			expectFinalizer: true,
+		},
+		{
+			name:            "namespace/name filter matches cluster",
+			filter:          "default/test-cluster",
+			expectFinalizer: true,
+		},
+		{
+			name:            "namespace/name filter with wrong namespace does not match",
+			filter:          "other-namespace/test-hcp",
+			expectFinalizer: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -680,7 +696,7 @@ func TestHostedControlPlaneReconciler_ReconcileFilter(t *testing.T) {
 			fc := buildClient()
 			reconciler := createTestReconcilerWithFilter(fc, tt.filter)
 
-			result, err := reconciler.Reconcile(t.Context(), req)
+			result, err := reconciler.Reconcile(log.IntoContext(t.Context(), log.Log), req)
 
 			g.Expect(err).NotTo(HaveOccurred())
 			if !tt.expectFinalizer {
