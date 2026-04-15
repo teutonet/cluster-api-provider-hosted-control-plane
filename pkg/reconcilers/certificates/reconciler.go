@@ -76,7 +76,6 @@ var _ CertificateReconciler = &certificateReconciler{}
 
 type certificateSpec struct {
 	kind         string
-	username     string // only set for additional kubeconfigs, used for labeling
 	spec         *certmanagerv1ac.CertificateSpecApplyConfiguration
 	customLabels map[string]string
 }
@@ -440,20 +439,6 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				certmanagerv1.UsageClientAuth,
 			),
 		},
-	}
-
-	for username := range hostedControlPlane.Spec.CustomKubeconfigs {
-		specs[names.GetCustomKubeconfigCertificateName(cluster, username)] = certificateSpec{
-			kind:     fmt.Sprintf("CustomKubeconfig-%s", username),
-			username: username,
-			spec: createCertificateSpec(
-				names.GetCAIssuerName(cluster),
-				username,
-				names.GetCustomKubeconfigCertificateName(cluster, username),
-				certmanagerv1.UsageClientAuth,
-			),
-			customLabels: names.GetKubeconfigLabels(username),
-		}
 	}
 
 	specs = slices.MapValues(specs, func(spec certificateSpec, _ string) certificateSpec {

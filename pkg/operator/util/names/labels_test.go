@@ -161,40 +161,7 @@ func TestGetControlPlaneSelector(t *testing.T) {
 	}
 }
 
-func TestGetControlPlaneLabelsSelectorConsistency(t *testing.T) {
-	// Test that GetControlPlaneLabels and GetControlPlaneSelector produce consistent results
-	testCases := []struct {
-		clusterName string
-		component   string
-	}{
-		{"test-cluster", "api-server"},
-		{"my-cluster", ""},
-		{"prod", "etcd"},
-		{"", "scheduler"},
-	}
-
-	for _, tc := range testCases {
-		t.Run("consistency_"+tc.clusterName+"_"+tc.component, func(t *testing.T) {
-			g := NewWithT(t)
-			cluster := &capiv2.Cluster{}
-			cluster.Name = tc.clusterName
-
-			labels := GetControlPlaneLabels(cluster, tc.component)
-			selector := GetControlPlaneSelector(cluster, tc.component)
-
-			g.Expect(selector).NotTo(BeNil())
-			g.Expect(selector.MatchLabels).NotTo(BeNil())
-
-			g.Expect(labels).To(
-				Equal(selector.MatchLabels),
-				"GetControlPlaneLabels() and GetControlPlaneSelector() are inconsistent. Labels: %v, Selector MatchLabels: %v",
-				labels, selector.MatchLabels,
-			)
-		})
-	}
-}
-
-func TestGetCustomKubeconfigLabel(t *testing.T) {
+func TestGetKubeconfigLabel(t *testing.T) {
 	g := NewWithT(t)
 	result := GetKubeconfigLabel()
 
@@ -202,7 +169,7 @@ func TestGetCustomKubeconfigLabel(t *testing.T) {
 	g.Expect(result).To(HaveKeyWithValue(KubeconfigLabel, "true"))
 }
 
-func TestGetCustomKubeconfigUserLabel(t *testing.T) {
+func TestGetKubeconfigUserLabel(t *testing.T) {
 	tests := []struct {
 		name     string
 		username string
@@ -240,7 +207,7 @@ func TestGetCustomKubeconfigUserLabel(t *testing.T) {
 	}
 }
 
-func TestGetCustomKubeconfigLabels(t *testing.T) {
+func TestGetKubeconfigLabels(t *testing.T) {
 	tests := []struct {
 		name     string
 		username string
@@ -277,6 +244,39 @@ func TestGetCustomKubeconfigLabels(t *testing.T) {
 			g := NewWithT(t)
 			result := GetKubeconfigLabels(tt.username)
 			g.Expect(result).To(Equal(tt.expected))
+		})
+	}
+}
+
+func TestGetControlPlaneLabelsSelectorConsistency(t *testing.T) {
+	// Test that GetControlPlaneLabels and GetControlPlaneSelector produce consistent results
+	testCases := []struct {
+		clusterName string
+		component   string
+	}{
+		{"test-cluster", "api-server"},
+		{"my-cluster", ""},
+		{"prod", "etcd"},
+		{"", "scheduler"},
+	}
+
+	for _, tc := range testCases {
+		t.Run("consistency_"+tc.clusterName+"_"+tc.component, func(t *testing.T) {
+			g := NewWithT(t)
+			cluster := &capiv2.Cluster{}
+			cluster.Name = tc.clusterName
+
+			labels := GetControlPlaneLabels(cluster, tc.component)
+			selector := GetControlPlaneSelector(cluster, tc.component)
+
+			g.Expect(selector).NotTo(BeNil())
+			g.Expect(selector.MatchLabels).NotTo(BeNil())
+
+			g.Expect(labels).To(
+				Equal(selector.MatchLabels),
+				"GetControlPlaneLabels() and GetControlPlaneSelector() are inconsistent. Labels: %v, Selector MatchLabels: %v",
+				labels, selector.MatchLabels,
+			)
 		})
 	}
 }

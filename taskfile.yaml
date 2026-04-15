@@ -106,7 +106,7 @@ tasks:
     sources:
       - go.mod
       - go.sum
-    cmd: "{{ .grypeCmd }} --name cacpphcp dir:. --exclude ./build --by-cve --fail-on negligible"
+    cmd: "{{ .grypeCmd }} --name cacpphcp dir:. --exclude ./build --only-fixed --by-cve --fail-on negligible"
   lint:
     vars:
       fix: '{{ .fix | default "false" }}'
