@@ -82,6 +82,7 @@ func NewHostedControlPlaneReconciler(
 	s3ClientFactory s3_client.S3ClientFactory,
 	recorder events.EventRecorder,
 	controllerNamespace string,
+	reconcileFilter string,
 ) HostedControlPlaneReconciler {
 	return &hostedControlPlaneReconciler{
 		client:                         client,
@@ -96,6 +97,7 @@ func NewHostedControlPlaneReconciler(
 		worldComponent:                 "world",
 		controllerNamespace:            controllerNamespace,
 		controllerComponent:            "hosted-control-plane-controller",
+		reconcileFilter:                reconcileFilter,
 		caCertificatesDuration:         2 * 24 * time.Hour,
 		certificatesDuration:           24 * time.Hour,
 		apiServerComponentLabel:        "api-server",
@@ -134,6 +136,7 @@ type hostedControlPlaneReconciler struct {
 	worldComponent                 string
 	controllerNamespace            string
 	controllerComponent            string
+	reconcileFilter                string
 	caCertificatesDuration         time.Duration
 	certificatesDuration           time.Duration
 	apiServerComponentLabel        string
@@ -387,6 +390,11 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				attribute.String("cluster.namespace", cluster.Namespace),
 				attribute.String("cluster.name", cluster.Name),
 			)
+
+			if r.reconcileFilter != "" &&
+				hostedControlPlane.Name != r.reconcileFilter && cluster.Name != r.reconcileFilter {
+				return reconcile.Result{}, nil
+			}
 
 			isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.client, cluster, hostedControlPlane)
 			if err != nil || isPaused || requeue {

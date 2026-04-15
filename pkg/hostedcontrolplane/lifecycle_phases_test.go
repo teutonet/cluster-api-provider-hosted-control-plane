@@ -267,6 +267,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		s3ClientFactory,
 		&recorder.InfiniteDiscardingFakeRecorder{},
 		"default",
+		"",
 	)
 
 	req := reconcile.Request{

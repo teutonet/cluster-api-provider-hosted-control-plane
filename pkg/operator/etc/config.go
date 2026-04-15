@@ -25,6 +25,7 @@ type Config struct {
 	ControllerNamespace     string     `env:"CONTROLLER_NAMESPACE,required"`
 	LogFormat               LogFormat  `env:"LOG_FORMAT"                    envDefault:"json"`
 	LogLevel                slog.Level `env:"LOG_LEVEL"                     envDefault:"INFO"`
+	ReconcileFilter         string     `env:"HCP_RECONCILE_FILTER"`
 }
 
 func GetOperatorConfig() (Config, error) {

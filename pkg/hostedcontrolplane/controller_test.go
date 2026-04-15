@@ -55,6 +55,10 @@ var (
 )
 
 func createTestReconciler(client client.Client) HostedControlPlaneReconciler {
+	return createTestReconcilerWithFilter(client, "")
+}
+
+func createTestReconcilerWithFilter(client client.Client, reconcileFilter string) HostedControlPlaneReconciler {
 	return NewHostedControlPlaneReconciler(
 		client,
 		&alias.ManagementClusterClient{Interface: fake.NewClientset()},
@@ -68,6 +72,7 @@ func createTestReconciler(client client.Client) HostedControlPlaneReconciler {
 		s3ClientStubFactory,
 		&recorder.InfiniteDiscardingFakeRecorder{},
 		"test-namespace",
+		reconcileFilter,
 	)
 }
 
@@ -602,4 +607,86 @@ func TestHostedControlPlaneReconciler_NonExistentResource(t *testing.T) {
 
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(result).To(Equal(ctrl.Result{}))
+}
+
+func TestHostedControlPlaneReconciler_ReconcileFilter(t *testing.T) {
+	scheme := runtime.NewScheme()
+	g := NewWithT(t)
+	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
+	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
+
+	// hcp with owner ref and paused condition so it reaches reconcileNormal and gets a finalizer
+	cluster := createTestClusterWithPausedCondition("test-cluster", "default", false)
+	hcp := withConditions(
+		withOwnerReference(createTestHostedControlPlane("test-hcp", "default"), cluster),
+		[]metav1.Condition{{
+			Type:   capiv2.PausedCondition,
+			Status: metav1.ConditionFalse,
+			Reason: capiv2.NotPausedReason,
+		}},
+	)
+
+	buildClient := func() client.Client {
+		return fakeClient.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(hcp, cluster).
+			WithStatusSubresource(&v1alpha1.HostedControlPlane{}).
+			WithStatusSubresource(&capiv2.Cluster{}).
+			Build()
+	}
+
+	req := reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: hcp.Name, Namespace: hcp.Namespace},
+	}
+
+	hasFinalizer := func(t *testing.T, fc client.Client) bool {
+		t.Helper()
+		updated := &v1alpha1.HostedControlPlane{}
+		g := NewWithT(t)
+		g.Expect(fc.Get(t.Context(), req.NamespacedName, updated)).To(Succeed())
+		return len(updated.Finalizers) > 0
+	}
+
+	tests := []struct {
+		name            string
+		filter          string
+		expectFinalizer bool
+	}{
+		{
+			name:            "no filter reconciles all",
+			filter:          "",
+			expectFinalizer: true,
+		},
+		{
+			name:            "filter matches HCP name",
+			filter:          "test-hcp",
+			expectFinalizer: true,
+		},
+		{
+			name:            "filter matches cluster name",
+			filter:          "test-cluster",
+			expectFinalizer: true,
+		},
+		{
+			name:            "filter matches neither — skipped",
+			filter:          "other-hcp",
+			expectFinalizer: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			fc := buildClient()
+			reconciler := createTestReconcilerWithFilter(fc, tt.filter)
+
+			result, err := reconciler.Reconcile(t.Context(), req)
+
+			g.Expect(err).NotTo(HaveOccurred())
+			if !tt.expectFinalizer {
+				g.Expect(result).To(Equal(ctrl.Result{}))
+			}
+			g.Expect(hasFinalizer(t, fc)).To(Equal(tt.expectFinalizer))
+		})
+	}
 }
