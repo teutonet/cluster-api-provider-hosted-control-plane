@@ -204,8 +204,8 @@ func (in *ETCDBackupSecret) DeepCopyInto(out *ETCDBackupSecret) {
 		*out = new(string)
 		**out = **in
 	}
-	if in.EndpointKey != nil {
-		in, out := &in.EndpointKey, &out.EndpointKey
+	if in.HostKey != nil {
+		in, out := &in.HostKey, &out.HostKey
 		*out = new(string)
 		**out = **in
 	}

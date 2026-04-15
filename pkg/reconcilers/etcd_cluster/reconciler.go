@@ -42,7 +42,10 @@ import (
 var (
 	etcdVolumeResizeEvent           = "EtcdVolumeAutoResize"
 	etcdVolumeSizeReCalculatedEvent = "EtcdVolumeSizeRecalculated"
-	errETCDBackupStalled            = errors.New("etcd backup timed out: no progress in time window")
+	errETCDBackupStalled            = fmt.Errorf(
+		"etcd backup timed out: no progress in time window: %w",
+		context.Canceled,
+	)
 )
 
 const (
@@ -90,6 +93,7 @@ func NewEtcdClusterReconciler(
 		componentLabel:             componentLabel,
 		apiServerComponentLabel:    apiServerComponentLabel,
 		controllerComponent:        systemControllerComponent,
+		watchdogInterval:           1 * time.Minute,
 	}
 }
 
@@ -105,6 +109,7 @@ type etcdClusterReconciler struct {
 	componentLabel             string
 	apiServerComponentLabel    string
 	controllerComponent        string
+	watchdogInterval           time.Duration
 }
 
 var _ EtcdClusterReconciler = &etcdClusterReconciler{}
@@ -312,8 +317,7 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 			if lastBackupTime.IsZero() || resolvedSchedule.Next(lastBackupTime.Time).Before(time.Now()) {
 				ctx, cancel := context.WithCancelCause(ctx)
 				defer cancel(nil)
-				watchdogInterval := 1 * time.Minute
-				watchdog := time.AfterFunc(watchdogInterval, func() {
+				watchdog := time.AfterFunc(er.watchdogInterval, func() {
 					cancel(errETCDBackupStalled)
 				})
 				defer watchdog.Stop()
@@ -323,15 +327,17 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 					"EtcdBackup",
 					"Starting etcd backup",
 				)
-				snapshotResponse, closeClientFunc, err := etcdClient.CreateSnapshot(ctx)
-				defer closeClientFunc()
+				snapshotResponse, closeClientFunc, err := etcdClient.OpenSnapshotStream(ctx)
+				defer func() { err = errors.Join(err, closeClientFunc()) }()
 				if err != nil {
-					return fmt.Errorf("failed to create etcd snapshot: %w", err)
+					return fmt.Errorf("failed to create etcd snapshot: %w", context.Cause(ctx))
 				}
-				watchdog.Reset(watchdogInterval)
+				watchdog.Reset(er.watchdogInterval)
 
-				if err := s3Client.Upload(ctx, snapshotResponse.Snapshot, func() { watchdog.Reset(watchdogInterval) }); err != nil {
-					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", err)
+				if err := s3Client.Upload(ctx, snapshotResponse.Snapshot,
+					func() { watchdog.Reset(er.watchdogInterval) },
+				); err != nil {
+					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", context.Cause(ctx))
 				}
 
 				hostedControlPlane.Status.ETCDLastBackupTime = metav1.NewTime(time.Now())
