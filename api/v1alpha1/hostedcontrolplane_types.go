@@ -145,15 +145,20 @@ type ETCDComponent struct {
 	Backup *ETCDBackup `json:"backup,omitempty"`
 }
 
+// ETCDBackup configures periodic etcd snapshots uploaded to S3-compatible storage.
+// Backup retention is not managed by the operator; configure lifecycle rules on the
+// bucket itself (e.g. S3 Lifecycle Rules) to expire old snapshots automatically.
 type ETCDBackup struct {
+	// Schedule is a standard 5-field cron expression (minute hour day-of-month month day-of-week).
+	// See https://en.wikipedia.org/wiki/Cron#Overview, no `*/5` syntax, no lists and no ranges,
+	// only single values
+	// Additionally, @daily is supported; it is spread across clusters around midnight
+	// to avoid simultaneous backups.
 	//+kubebuilder:validation:Required
+	//+kubebuilder:validation:Pattern=`^(@daily|(\*|[0-9]|[1-5][0-9]) (\*|[0-9]|1[0-9]|2[0-3]) (\*|[0-9]|[1-2][0-9]|3[0-1]) (\*|[0-9]|1[0-2]) (\*|[0-6]))$`
 	Schedule string `json:"schedule"`
 	//+kubebuilder:validation:Required
-	Bucket string `json:"bucket"`
-	//+kubebuilder:validation:Required
 	Secret ETCDBackupSecret `json:"secret"`
-	//+kubebuilder:validation:Optional
-	Region string `json:"region,omitempty"`
 }
 
 type ETCDBackupSecret struct {
@@ -165,6 +170,18 @@ type ETCDBackupSecret struct {
 	AccessKeyIDKey *string `json:"accessKeyIDKey,omitempty"`
 	//+kubebuilder:validation:Optional
 	SecretAccessKeyKey *string `json:"secretAccessKeyKey,omitempty"`
+	// HostKey is the key in the referenced Secret whose value contains the S3 endpoint host.
+	// The Secret value must be a bare host name or host:port, for example
+	// `s3.example.com` or `s3.example.com:9000`. Do not include a URL scheme
+	// such as `http://` or `https://`, and do not include any path component.
+	//+kubebuilder:validation:Optional
+	HostKey *string `json:"hostKey,omitempty"`
+	//+kubebuilder:validation:Optional
+	RegionKey *string `json:"regionKey,omitempty"`
+	// The bucket will be split by `/` and only the first part is the bucket,
+	// the rest is a prefix for the file
+	//+kubebuilder:validation:Optional
+	BucketKey *string `json:"bucketKey,omitempty"`
 }
 
 type APIServerPod struct {
