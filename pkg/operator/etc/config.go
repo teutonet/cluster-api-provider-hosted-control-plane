@@ -25,6 +25,9 @@ type Config struct {
 	ControllerNamespace     string     `env:"CONTROLLER_NAMESPACE,required"`
 	LogFormat               LogFormat  `env:"LOG_FORMAT"                    envDefault:"json"`
 	LogLevel                slog.Level `env:"LOG_LEVEL"                     envDefault:"INFO"`
+	// ReconcileFilter, when non-empty, limits reconciliation to HostedControlPlanes whose name or
+	// owner Cluster name matches. Supports bare name or "namespace/name" format. Debugging aid only.
+	ReconcileFilter string `env:"HCP_RECONCILE_FILTER"`
 }
 
 func GetOperatorConfig() (Config, error) {

@@ -106,6 +106,7 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (retE
 	if err := setupControllers(ctx, mgr,
 		operatorConfig.MaxConcurrentReconciles,
 		operatorConfig.ControllerNamespace,
+		operatorConfig.ReconcileFilter,
 		tracerProvider, tracingWrapper,
 	); err != nil {
 		return err
@@ -158,6 +159,7 @@ func setupControllers(
 	mgr manager.Manager,
 	maxConcurrentReconciles int,
 	controllerNamespace string,
+	reconcileFilter string,
 	tracerProvider *trace.TracerProvider,
 	tracingWrapper func(rt http.RoundTripper) http.RoundTripper,
 ) error {
@@ -226,6 +228,7 @@ func setupControllers(
 		s3_client.NewS3Client,
 		mgr.GetEventRecorder(hostedControlPlaneControllerName),
 		controllerNamespace,
+		reconcileFilter,
 	).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}
