@@ -42,7 +42,6 @@ import (
 	"k8s.io/cluster-bootstrap/token/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/pkg/controller/certificates/rootcacertpublisher"
-	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/contract"
@@ -190,8 +189,8 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					Name:      "test-gateway",
 				},
 				ETCD: v1alpha1.ETCDComponent{
-					AutoGrow:   ptr.To(false),
-					VolumeSize: ptr.To(resource.MustParse("1Gi")),
+					AutoGrow:   new(false),
+					VolumeSize: new(resource.MustParse("1Gi")),
 				},
 			},
 		},
@@ -210,7 +209,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					Name:     "tls",
 					Protocol: gwv1.TLSProtocolType,
 					Port:     443,
-					Hostname: ptr.To(gwv1.Hostname("*.example.com")),
+					Hostname: new(gwv1.Hostname("*.example.com")),
 				},
 			},
 		},
@@ -1127,7 +1126,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		{
 			name: "Scale Up to 3 Replicas",
 			patchHCP: func() {
-				hcp.Spec.Replicas = ptr.To(int32(3))
+				hcp.Spec.Replicas = new(int32(3))
 			},
 			verifyResources: func(ctx context.Context, g *WithT) {
 				deploymentInterface := managementClusterClient.AppsV1().Deployments(hcp.Namespace)
@@ -1166,7 +1165,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		{
 			name: "Scale Up ETCD storage",
 			patchHCP: func() {
-				hcp.Spec.ETCD.VolumeSize = ptr.To(resource.MustParse("2Gi"))
+				hcp.Spec.ETCD.VolumeSize = new(resource.MustParse("2Gi"))
 			},
 			verifyResources: func(ctx context.Context, g *WithT) {
 				statefulSet, err := managementClusterClient.AppsV1().StatefulSets(hcp.Namespace).Get(
@@ -1201,7 +1200,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			name: "Switch from Custom Etcd volume size to autogrow",
 			patchHCP: func() {
 				hcp.Spec.ETCD.VolumeSize = nil
-				hcp.Spec.ETCD.AutoGrow = ptr.To(true)
+				hcp.Spec.ETCD.AutoGrow = new(true)
 			},
 		},
 		{
@@ -1209,13 +1208,13 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			simulateExternalSystems: func(ctx context.Context, g *WithT) {
 				etcdClient.StatusResponses = map[string]*clientv3.StatusResponse{
 					"etcd-0": {
-						DbSize: ptr.To(resource.MustParse("1.5Gi")).Value(),
+						DbSize: new(resource.MustParse("1.5Gi")).Value(),
 					},
 					"etcd-1": {
-						DbSize: ptr.To(resource.MustParse("1Gi")).Value(),
+						DbSize: new(resource.MustParse("1Gi")).Value(),
 					},
 					"etcd-2": {
-						DbSize: ptr.To(resource.MustParse("500Mi")).Value(),
+						DbSize: new(resource.MustParse("500Mi")).Value(),
 					},
 				}
 			},

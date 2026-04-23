@@ -8,7 +8,6 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 )
 
 func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
@@ -29,14 +28,14 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 				},
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					Version:  "v1.28.0",
-					Replicas: ptr.To[int32](3),
+					Replicas: new(int32(3)),
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						Gateway: v1alpha1.GatewayReference{
 							Name:      "test-gateway",
 							Namespace: "default",
 						},
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: ptr.To(true),
+							AutoGrow: new(true),
 						},
 					},
 				},
@@ -52,15 +51,15 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 				},
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					Version:  "1.28.0",
-					Replicas: ptr.To[int32](1),
+					Replicas: new(int32(1)),
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						Gateway: v1alpha1.GatewayReference{
 							Name:      "test-gateway",
 							Namespace: "default",
 						},
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow:   ptr.To(false),
-							VolumeSize: ptr.To(resource.MustParse("20Gi")),
+							AutoGrow:   new(false),
+							VolumeSize: new(resource.MustParse("20Gi")),
 						},
 					},
 				},
@@ -82,7 +81,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Namespace: "default",
 						},
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: ptr.To(true),
+							AutoGrow: new(true),
 						},
 					},
 				},
@@ -105,8 +104,8 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Namespace: "default",
 						},
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow:   ptr.To(true),
-							VolumeSize: ptr.To(resource.MustParse("20Gi")),
+							AutoGrow:   new(true),
+							VolumeSize: new(resource.MustParse("20Gi")),
 						},
 					},
 				},
@@ -129,7 +128,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 							Namespace: "default",
 						},
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: ptr.To(false),
+							AutoGrow: new(false),
 						},
 					},
 				},
@@ -145,7 +144,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 					Version: "v1.28.0",
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						Gateway: v1alpha1.GatewayReference{Name: "test-gateway", Namespace: "default"},
-						ETCD:    v1alpha1.ETCDComponent{AutoGrow: ptr.To(true)},
+						ETCD:    v1alpha1.ETCDComponent{AutoGrow: new(true)},
 						OIDCProviders: map[string]v1alpha1.OIDCProvider{
 							importcycle.LocalClusterOIDCEndpoint: {
 								Audiences: []string{"my-app"},
@@ -168,7 +167,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 					Version: "v1.28.0",
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						Gateway: v1alpha1.GatewayReference{Name: "test-gateway", Namespace: "default"},
-						ETCD:    v1alpha1.ETCDComponent{AutoGrow: ptr.To(true)},
+						ETCD:    v1alpha1.ETCDComponent{AutoGrow: new(true)},
 						OIDCProviders: map[string]v1alpha1.OIDCProvider{
 							"https://oidc.example.com": {
 								Audiences: []string{"my-app"},
@@ -215,14 +214,14 @@ func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 						Namespace: "default",
 					},
 					ETCD: v1alpha1.ETCDComponent{
-						AutoGrow: ptr.To(autoGrow),
+						AutoGrow: &autoGrow,
 					},
 				},
 			},
 		}
 
 		if volumeSize != "" {
-			hcp.Spec.ETCD.VolumeSize = ptr.To(resource.MustParse(volumeSize))
+			hcp.Spec.ETCD.VolumeSize = new(resource.MustParse(volumeSize))
 		}
 
 		return hcp
