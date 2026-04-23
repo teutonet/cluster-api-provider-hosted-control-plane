@@ -12,6 +12,7 @@ import (
 	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
+	semver "github.com/blang/semver/v4"
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
@@ -19,6 +20,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 )
 
 func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
@@ -281,16 +283,19 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 			},
 		}
 
+		returningFakeRecorder, rec := recorder.NewInfiniteReturningFakeRecorder()
+
 		reconciler := &etcdClusterReconciler{
-			recorder:                   &recorder.InfiniteDiscardingFakeRecorder{},
+			recorder:                   rec,
 			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
 			etcdServerStorageIncrement: resource.MustParse("10Gi"),
-			etcdClientFactory:          nil,
+			volumeStatsProvider:        NewEtcdVolumeStatsProviderStub(),
 		}
 
-		err := reconciler.reconcileETCDSpaceUsage(ctx, stub, hcp)
+		err := reconciler.reconcileETCDSpaceUsage(ctx, stub, hcp, nil)
 
-		g.Expect(err).To(MatchError(ContainSubstring("connection refused")))
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(returningFakeRecorder.Events).To(ContainElement(ContainSubstring("connection refused")))
 	})
 
 	t.Run("should update volume usage from etcd status", func(t *testing.T) {
@@ -321,14 +326,180 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 			recorder:                   &recorder.InfiniteDiscardingFakeRecorder{},
 			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
 			etcdServerStorageIncrement: resource.MustParse("10Gi"),
-			etcdClientFactory:          nil,
+			volumeStatsProvider:        NewEtcdVolumeStatsProviderStub(),
 		}
 
-		err := reconciler.reconcileETCDSpaceUsage(ctx, stub, hcp)
+		err := reconciler.reconcileETCDSpaceUsage(ctx, stub, hcp, nil)
 
 		g.Expect(err).NotTo(HaveOccurred())
 		expectedQuantity := resource.NewQuantity(highestMemberDBSize, resource.BinarySI)
 		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*expectedQuantity))
+	})
+
+	for _, tt := range []struct {
+		name          string
+		dbSize        int64
+		fsUsage       int64
+		expectedUsage int64
+	}{
+		{
+			name:          "should use filesystem usage when it exceeds DbSize",
+			dbSize:        2 * 1024 * 1024 * 1024, // 2Gi
+			fsUsage:       5 * 1024 * 1024 * 1024, // 5Gi - WAL files
+			expectedUsage: 5 * 1024 * 1024 * 1024,
+		},
+		{
+			name:          "should use DbSize when it exceeds filesystem usage",
+			dbSize:        5 * 1024 * 1024 * 1024, // 5Gi
+			fsUsage:       2 * 1024 * 1024 * 1024, // 2Gi
+			expectedUsage: 5 * 1024 * 1024 * 1024,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			etcdStub := NewEtcdClientStub()
+			etcdStub.StatusResponses = map[string]*clientv3.StatusResponse{
+				"etcd-0": {
+					Header: &etcdserverpb.ResponseHeader{ClusterId: 1},
+					DbSize: tt.dbSize,
+				},
+			}
+
+			volumeStub := NewEtcdVolumeStatsProviderStub()
+			volumeStub.MaxUsage = tt.fsUsage
+
+			hcp := &v1alpha1.HostedControlPlane{
+				Status: v1alpha1.HostedControlPlaneStatus{
+					ETCDVolumeSize: resource.MustParse("20Gi"),
+				},
+			}
+
+			reconciler := &etcdClusterReconciler{
+				recorder:            &recorder.InfiniteDiscardingFakeRecorder{},
+				volumeStatsProvider: volumeStub,
+				componentLabel:      "etcd",
+			}
+
+			err := reconciler.reconcileETCDSpaceUsage(ctx, etcdStub, hcp, nil)
+
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(hcp.Status.ETCDVolumeUsage).To(
+				EqualResource(*resource.NewQuantity(tt.expectedUsage, resource.BinarySI)),
+			)
+		})
+	}
+
+	t.Run("should fall back to DbSize when volume stats fails transiently", func(t *testing.T) {
+		g := NewWithT(t)
+		dbSize := int64(3 * 1024 * 1024 * 1024)
+
+		etcdStub := NewEtcdClientStub()
+		etcdStub.StatusResponses = map[string]*clientv3.StatusResponse{
+			"etcd-0": {
+				Header: &etcdserverpb.ResponseHeader{ClusterId: 1},
+				DbSize: dbSize,
+			},
+		}
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.Error = errors.New("connection refused")
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize: resource.MustParse("20Gi"),
+			},
+		}
+
+		returningFakeRecorder, rec := recorder.NewInfiniteReturningFakeRecorder()
+
+		reconciler := &etcdClusterReconciler{
+			recorder:            rec,
+			volumeStatsProvider: volumeStub,
+			componentLabel:      "etcd",
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, etcdStub, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*resource.NewQuantity(dbSize, resource.BinarySI)))
+		g.Expect(returningFakeRecorder.Events).To(ContainElement(ContainSubstring("connection refused")))
+	})
+
+	t.Run("should emit warning when filesystem usage diverges from DbSize by more than buffer", func(t *testing.T) {
+		g := NewWithT(t)
+		dbSize := int64(2 * 1024 * 1024 * 1024)  // 2Gi
+		fsUsage := int64(3 * 1024 * 1024 * 1024) // 3Gi - 1Gi more than DbSize, exceeds 500Mi buffer
+
+		etcdStub := NewEtcdClientStub()
+		etcdStub.StatusResponses = map[string]*clientv3.StatusResponse{
+			"etcd-0": {
+				Header: &etcdserverpb.ResponseHeader{ClusterId: 1},
+				DbSize: dbSize,
+			},
+		}
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = fsUsage
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize: resource.MustParse("20Gi"),
+			},
+		}
+
+		returningFakeRecorder, rec := recorder.NewInfiniteReturningFakeRecorder()
+
+		reconciler := &etcdClusterReconciler{
+			recorder:                rec,
+			volumeStatsProvider:     volumeStub,
+			etcdServerStorageBuffer: resource.MustParse("500Mi"),
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, etcdStub, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(returningFakeRecorder.Events).To(ContainElement(
+			ContainSubstring("EtcdFilesystemUsageDivergence"),
+		))
+	})
+
+	t.Run("should not emit warning when filesystem usage is within buffer of DbSize", func(t *testing.T) {
+		g := NewWithT(t)
+		dbSize := int64(2 * 1024 * 1024 * 1024)            // 2Gi
+		fsUsage := int64(2*1024*1024*1024 + 100*1024*1024) // ~2.1Gi - within 500Mi buffer
+
+		etcdStub := NewEtcdClientStub()
+		etcdStub.StatusResponses = map[string]*clientv3.StatusResponse{
+			"etcd-0": {
+				Header: &etcdserverpb.ResponseHeader{ClusterId: 1},
+				DbSize: dbSize,
+			},
+		}
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = fsUsage
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize: resource.MustParse("20Gi"),
+			},
+		}
+
+		returningFakeRecorder, rec := recorder.NewInfiniteReturningFakeRecorder()
+
+		reconciler := &etcdClusterReconciler{
+			recorder:                rec,
+			volumeStatsProvider:     volumeStub,
+			etcdServerStorageBuffer: resource.MustParse("500Mi"),
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, etcdStub, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(returningFakeRecorder.Events).NotTo(ContainElement(
+			ContainSubstring("EtcdFilesystemUsageDivergence"),
+		))
 	})
 }
 
@@ -713,4 +884,61 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
 		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
 	})
+}
+
+func TestBuildEtcdArgs_SnapshotCount(t *testing.T) {
+	tests := []struct {
+		name                string
+		etcdVersion         semver.Version
+		expectSnapshotCount bool
+	}{
+		{
+			name:                "version < 3.7 sets snapshot-count",
+			etcdVersion:         semver.MustParse("3.6.0"),
+			expectSnapshotCount: true,
+		},
+		{
+			name:                "version >= 3.7 omits snapshot-count",
+			etcdVersion:         semver.MustParse("3.7.0"),
+			expectSnapshotCount: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			reconciler := &etcdClusterReconciler{}
+			hcp := &v1alpha1.HostedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns"},
+				Status:     v1alpha1.HostedControlPlaneStatus{ETCDVolumeSize: resource.MustParse("10Gi")},
+			}
+			cluster := &capiv2.Cluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "test-ns"},
+			}
+			serverPort := corev1ac.ContainerPort().WithContainerPort(2379)
+			peerPort := corev1ac.ContainerPort().WithContainerPort(2380)
+			metricsPort := corev1ac.ContainerPort().WithContainerPort(2381)
+			dataMount := corev1ac.VolumeMount().WithMountPath("/var/lib/etcd")
+			certMount := corev1ac.VolumeMount().WithMountPath("/etc/etcd")
+
+			args := reconciler.buildEtcdArgs(
+				context.Background(),
+				hcp,
+				cluster,
+				tt.etcdVersion,
+				dataMount,
+				certMount,
+				serverPort,
+				peerPort,
+				metricsPort,
+			)
+
+			if tt.expectSnapshotCount {
+				g.Expect(args).To(ContainElement("--snapshot-count=10000"))
+			} else {
+				g.Expect(args).NotTo(ContainElement(ContainSubstring("snapshot-count")))
+			}
+		})
+	}
 }
