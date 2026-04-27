@@ -109,7 +109,7 @@ func (e *etcdClient) GetStatuses(ctx context.Context) (map[string]*clientv3.Stat
 }
 
 func (e *etcdClient) OpenSnapshotStream(ctx context.Context) (*clientv3.SnapshotResponse, func() error, error) {
-	return tracing.WithSpan3(ctx, tracer, "EtcdClient.CreateSnapshot",
+	return tracing.WithSpan3(ctx, tracer, "EtcdClient.OpenSnapshotStream",
 		func(ctx context.Context, span trace.Span) (_ *clientv3.SnapshotResponse, _ func() error, retErr error) {
 			endpoint := e.anyEndpoint
 			etcdClient, err := createEtcdClient(e, endpoint)

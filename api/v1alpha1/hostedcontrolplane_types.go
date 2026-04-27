@@ -155,7 +155,7 @@ type ETCDBackup struct {
 	// Additionally, @daily is supported; it is spread across clusters around midnight
 	// to avoid simultaneous backups.
 	//+kubebuilder:validation:Required
-	//+kubebuilder:validation:Pattern=`^(@daily|(\*|[0-9]|[1-5][0-9]) (\*|[0-9]|1[0-9]|2[0-3]) (\*|[0-9]|[1-2][0-9]|3[0-1]) (\*|[0-9]|1[0-2]) (\*|[0-6]))$`
+	//+kubebuilder:validation:Pattern=`^(@daily|(\*|[0-9]|[1-5][0-9]) (\*|[0-9]|1[0-9]|2[0-3]) (\*|[1-9]|[1-2][0-9]|3[0-1]) (\*|[1-9]|1[0-2]) (\*|[0-6]))$`
 	Schedule string `json:"schedule"`
 	//+kubebuilder:validation:Required
 	Secret ETCDBackupSecret `json:"secret"`

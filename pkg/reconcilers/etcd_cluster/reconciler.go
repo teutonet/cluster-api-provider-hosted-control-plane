@@ -325,14 +325,14 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 				snapshotResponse, closeClientFunc, err := etcdClient.OpenSnapshotStream(ctx)
 				defer func() { err = errors.Join(err, closeClientFunc()) }()
 				if err != nil {
-					return fmt.Errorf("failed to create etcd snapshot: %w", context.Cause(ctx))
+					return fmt.Errorf("failed to create etcd snapshot: %w", errors.Join(err, context.Cause(ctx)))
 				}
 				watchdog.Reset(er.watchdogInterval)
 
 				if err := s3Client.Upload(ctx, snapshotResponse.Snapshot,
 					func() { watchdog.Reset(er.watchdogInterval) },
 				); err != nil {
-					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", context.Cause(ctx))
+					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", errors.Join(err, context.Cause(ctx)))
 				}
 
 				hostedControlPlane.Status.ETCDLastBackupTime = metav1.NewTime(time.Now())
