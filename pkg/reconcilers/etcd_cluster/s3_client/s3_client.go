@@ -82,10 +82,6 @@ func NewS3Client(
 		span.SetAttributes(
 			attribute.String("etcd.backup.s3.secret.namespace", secretNamespace),
 			attribute.String("etcd.backup.s3.secret.name", secretName),
-			attribute.String(
-				"etcd.backup.s3.key",
-				fmt.Sprintf("%s/%s/<timestamp>.etcd", cluster.Namespace, cluster.Name),
-			),
 			attribute.String("etcd.backup.schedule", hostedControlPlane.Spec.ETCD.Backup.Schedule),
 		)
 		s3Secret, err := managementClusterClient.CoreV1().Secrets(secretNamespace).
@@ -104,7 +100,7 @@ func NewS3Client(
 		endpoint := ""
 		endpointBytes, found := s3Secret.Data[endpointKey]
 		if found {
-			endpoint = string(endpointBytes)
+			endpoint = strings.TrimSpace(string(endpointBytes))
 			span.SetAttributes(attribute.String("etcd.backup.s3.endpoint", endpoint))
 		}
 		regionBytes, found := s3Secret.Data[regionKey]
@@ -137,6 +133,10 @@ func NewS3Client(
 				span.SetAttributes(attribute.String("etcd.backup.s3.prefix", prefix))
 			}
 		}
+		span.SetAttributes(attribute.String(
+			"etcd.backup.s3.key",
+			fmt.Sprintf("%s%s/%s/<timestamp>.etcd", prefix, cluster.Namespace, cluster.Name),
+		))
 
 		s3ConfigOptions := []func(options *config.LoadOptions) error{
 			config.WithRegion(region),
