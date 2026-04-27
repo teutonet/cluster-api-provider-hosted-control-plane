@@ -11,7 +11,7 @@ require (
 	github.com/blang/semver/v4 v4.0.0
 	github.com/caarlos0/env/v6 v6.10.1
 	github.com/cert-manager/cert-manager v1.20.1
-	github.com/cilium/cilium v1.19.2
+	github.com/cilium/cilium v1.19.3
 	github.com/coredns/corefile-migration v1.0.31
 	github.com/go-logr/logr v1.4.3
 	github.com/onsi/gomega v1.39.1
@@ -186,7 +186,7 @@ require (
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
-	k8s.io/cli-runtime v0.35.2 // indirect
+	k8s.io/cli-runtime v0.35.3 // indirect
 	k8s.io/cloud-provider v0.35.0 // indirect
 	k8s.io/component-helpers v0.35.0 // indirect
 	k8s.io/controller-manager v0.35.0 // indirect
