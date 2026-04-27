@@ -11,7 +11,6 @@ import (
 	"time"
 
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
-	"github.com/robfig/cron/v3"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
@@ -43,6 +42,10 @@ import (
 var (
 	etcdVolumeResizeEvent           = "EtcdVolumeAutoResize"
 	etcdVolumeSizeReCalculatedEvent = "EtcdVolumeSizeRecalculated"
+	errETCDBackupStalled            = fmt.Errorf(
+		"etcd backup timed out: no progress in time window: %w",
+		context.Canceled,
+	)
 )
 
 type EtcdClusterReconciler interface {
@@ -85,6 +88,7 @@ func NewEtcdClusterReconciler(
 		componentLabel:             componentLabel,
 		apiServerComponentLabel:    apiServerComponentLabel,
 		controllerComponent:        systemControllerComponent,
+		watchdogInterval:           1 * time.Minute,
 	}
 }
 
@@ -100,6 +104,7 @@ type etcdClusterReconciler struct {
 	componentLabel             string
 	apiServerComponentLabel    string
 	controllerComponent        string
+	watchdogInterval           time.Duration
 }
 
 var _ EtcdClusterReconciler = &etcdClusterReconciler{}
@@ -294,31 +299,51 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 			if err != nil {
 				return fmt.Errorf("failed to create S3 client: %w", err)
 			}
-			schedule, err := cron.ParseStandard(hostedControlPlane.Spec.ETCD.Backup.Schedule)
+			resolvedSchedule, err := resolveBackupSchedule(
+				hostedControlPlane.Spec.ETCD.Backup.Schedule,
+				hostedControlPlane.Namespace,
+				hostedControlPlane.Name,
+			)
 			if err != nil {
-				return fmt.Errorf("failed to parse etcd backup schedule: %w", err)
+				return err
 			}
 
 			lastBackupTime := hostedControlPlane.Status.ETCDLastBackupTime
-			if lastBackupTime.IsZero() || schedule.Next(lastBackupTime.Time).Before(time.Now()) {
-				snapshotResponse, err := etcdClient.CreateSnapshot(ctx)
-				if err != nil {
-					return fmt.Errorf("failed to create etcd snapshot: %w", err)
-				}
-
-				if err := s3Client.Upload(ctx, snapshotResponse.Snapshot); err != nil {
-					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", err)
-				}
-
-				hostedControlPlane.Status.ETCDLastBackupTime = metav1.NewTime(time.Now())
-				hostedControlPlane.Status.ETCDNextBackupTime = metav1.NewTime(
-					schedule.Next(hostedControlPlane.Status.ETCDLastBackupTime.Time),
-				)
+			if lastBackupTime.IsZero() || resolvedSchedule.Next(lastBackupTime.Time).Before(time.Now()) {
+				ctx, cancel := context.WithCancelCause(ctx)
+				defer cancel(nil)
+				watchdog := time.AfterFunc(er.watchdogInterval, func() {
+					cancel(errETCDBackupStalled)
+				})
+				defer watchdog.Stop()
 				er.recorder.Normalf(
 					nil,
 					"CronScheduleTriggered",
 					"EtcdBackup",
-					"Created etcd backup. Next backup scheduled at %s",
+					"Starting etcd backup",
+				)
+				snapshotResponse, closeClientFunc, err := etcdClient.OpenSnapshotStream(ctx)
+				defer func() { err = errors.Join(err, closeClientFunc()) }()
+				if err != nil {
+					return fmt.Errorf("failed to create etcd snapshot: %w", errors.Join(err, context.Cause(ctx)))
+				}
+				watchdog.Reset(er.watchdogInterval)
+
+				if err := s3Client.Upload(ctx, snapshotResponse.Snapshot,
+					func() { watchdog.Reset(er.watchdogInterval) },
+				); err != nil {
+					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", errors.Join(err, context.Cause(ctx)))
+				}
+
+				hostedControlPlane.Status.ETCDLastBackupTime = metav1.NewTime(time.Now())
+				hostedControlPlane.Status.ETCDNextBackupTime = metav1.NewTime(
+					resolvedSchedule.Next(hostedControlPlane.Status.ETCDLastBackupTime.Time),
+				)
+				er.recorder.Normalf(
+					nil,
+					"EtcdBackupFinished",
+					"EtcdBackupFinished",
+					"Finished etcd backup. Next backup scheduled at %s",
 					hostedControlPlane.Status.ETCDNextBackupTime.String(),
 				)
 			}

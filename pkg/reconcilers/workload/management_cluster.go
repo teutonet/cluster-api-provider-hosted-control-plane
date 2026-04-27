@@ -35,9 +35,9 @@ type WorkloadClusterClientFactory = func(
 
 func GetWorkloadClusterClient(
 	ctx context.Context,
+	tracingWrapper func(http.RoundTripper) http.RoundTripper,
 	managementClusterClient *alias.ManagementClusterClient,
 	cluster *capiv2.Cluster,
-	tracingWrapper func(http.RoundTripper) http.RoundTripper,
 	controllerUsername string,
 ) (*alias.WorkloadClusterClient, ciliumclient.Interface, error) {
 	return tracing.WithSpan3(ctx, "managementCluster", "GetWorkloadClusterClient",

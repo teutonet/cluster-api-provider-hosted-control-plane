@@ -38,14 +38,14 @@ func (s *EtcdClientStub) GetStatuses(_ context.Context) (map[string]*clientv3.St
 	return s.StatusResponses, nil
 }
 
-func (s *EtcdClientStub) CreateSnapshot(_ context.Context) (*clientv3.SnapshotResponse, error) {
+func (s *EtcdClientStub) OpenSnapshotStream(_ context.Context) (*clientv3.SnapshotResponse, func() error, error) {
 	if s.SnapshotError != nil {
-		return nil, s.SnapshotError
+		return nil, func() error { return nil }, s.SnapshotError
 	}
 	return &clientv3.SnapshotResponse{
 		Header:   &etcdserverpb.ResponseHeader{ClusterId: 1},
 		Snapshot: io.NopCloser(bytes.NewReader(EtcdSnapshotData)),
-	}, nil
+	}, func() error { return nil }, nil
 }
 
 func (s *EtcdClientStub) ListAlarms(_ context.Context) (*clientv3.AlarmResponse, error) {
@@ -81,7 +81,7 @@ func NewS3ClientStub() *S3ClientStub {
 	return &S3ClientStub{}
 }
 
-func (s *S3ClientStub) Upload(_ context.Context, body io.ReadCloser) (retErr error) {
+func (s *S3ClientStub) Upload(_ context.Context, body io.ReadCloser, _ func()) (retErr error) {
 	defer func() {
 		if err := body.Close(); err != nil {
 			retErr = errors.Join(retErr, fmt.Errorf("failed to close body reader: %w", err))

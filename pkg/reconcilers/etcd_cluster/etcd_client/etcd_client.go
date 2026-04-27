@@ -34,7 +34,7 @@ var (
 
 type EtcdClient interface {
 	GetStatuses(ctx context.Context) (map[string]*clientv3.StatusResponse, error)
-	CreateSnapshot(ctx context.Context) (*clientv3.SnapshotResponse, error)
+	OpenSnapshotStream(ctx context.Context) (*clientv3.SnapshotResponse, func() error, error)
 	ListAlarms(ctx context.Context) (*clientv3.AlarmResponse, error)
 	DisarmAlarm(ctx context.Context, alarm *clientv3.AlarmMember) error
 }
@@ -97,43 +97,98 @@ func NewEtcdClient(
 func (e *etcdClient) GetStatuses(ctx context.Context) (map[string]*clientv3.StatusResponse, error) {
 	return tracing.WithSpan(ctx, tracer, "EtcdClient.GetStatuses",
 		func(ctx context.Context, span trace.Span) (map[string]*clientv3.StatusResponse, error) {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
 			return callETCDFuncOnAllMembers(
 				ctx,
-				e.tracerProvider,
-				e.caPool,
-				e.clientCertificate,
-				e.endpoints,
-				e.serverPort,
+				e,
 				clientv3.Client.Status,
 			)
 		},
 	)
 }
 
-func (e *etcdClient) CreateSnapshot(ctx context.Context) (*clientv3.SnapshotResponse, error) {
-	return tracing.WithSpan(ctx, tracer, "EtcdClient.CreateSnapshot",
-		func(ctx context.Context, span trace.Span) (*clientv3.SnapshotResponse, error) {
-			return callETCDFuncOnAnyMember(
+func (e *etcdClient) OpenSnapshotStream(ctx context.Context) (*clientv3.SnapshotResponse, func() error, error) {
+	return tracing.WithSpan3(ctx, tracer, "EtcdClient.OpenSnapshotStream",
+		func(ctx context.Context, span trace.Span) (_ *clientv3.SnapshotResponse, _ func() error, retErr error) {
+			endpoint := e.anyEndpoint
+			etcdClient, err := createEtcdClient(e, endpoint)
+			closeFunc := func() error {
+				var closeErr error
+				closeEtcdClient(etcdClient, &closeErr, endpoint)
+				return closeErr
+			}
+			if err != nil {
+				return nil, closeFunc, err
+			}
+
+			snapshotResponse, err := callETCDFuncOnAnyMember(
 				ctx,
-				e.tracerProvider,
-				e.caPool,
-				e.clientCertificate,
-				e.anyEndpoint,
+				etcdClient,
+				endpoint,
 				clientv3.Client.SnapshotWithVersion,
 			)
+			return snapshotResponse, closeFunc, err
 		},
 	)
 }
 
+func closeEtcdClient(etcdClient *clientv3.Client, retErr *error, endpoint string) { //nolint:gocritic
+	if etcdClient != nil {
+		if err := etcdClient.Close(); err != nil {
+			*retErr = errors.Join(
+				*retErr,
+				fmt.Errorf("failed to close etcd client for endpoint %s: %w", endpoint, err),
+			)
+		}
+	}
+}
+
+func createEtcdClient(etcd *etcdClient, endpoint string) (*clientv3.Client, error) {
+	etcdConfig := clientv3.Config{
+		Endpoints: []string{endpoint},
+		Logger:    zap.NewNop(),
+		TLS: &tls.Config{
+			InsecureSkipVerify: false,
+			RootCAs:            etcd.caPool,
+			Certificates:       []tls.Certificate{etcd.clientCertificate},
+			MinVersion:         tls.VersionTLS12,
+		},
+		DialOptions: []grpc.DialOption{
+			grpc.WithStatsHandler(
+				otelgrpc.NewClientHandler(
+					otelgrpc.WithTracerProvider(etcd.tracerProvider),
+					otelgrpc.WithMessageEvents(otelgrpc.ReceivedEvents, otelgrpc.SentEvents),
+				),
+			),
+		},
+		DialTimeout: 10 * time.Second,
+	}
+	etcdClient, err := clientv3.New(etcdConfig)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to create etcd client for endpoint %s: %w", endpoint,
+			err,
+		)
+	}
+	return etcdClient, nil
+}
+
 func (e *etcdClient) ListAlarms(ctx context.Context) (*clientv3.AlarmResponse, error) {
 	return tracing.WithSpan(ctx, tracer, "EtcdClient.ListAlarms",
-		func(ctx context.Context, span trace.Span) (*clientv3.AlarmResponse, error) {
+		func(ctx context.Context, span trace.Span) (_ *clientv3.AlarmResponse, retErr error) {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			endpoint := e.anyEndpoint
+			etcdClient, err := createEtcdClient(e, endpoint)
+			if err != nil {
+				return nil, err
+			}
+			defer closeEtcdClient(etcdClient, &retErr, endpoint)
 			return callETCDFuncOnAnyMember(
 				ctx,
-				e.tracerProvider,
-				e.caPool,
-				e.clientCertificate,
-				e.anyEndpoint,
+				etcdClient,
+				endpoint,
 				clientv3.Client.AlarmList,
 			)
 		},
@@ -142,13 +197,19 @@ func (e *etcdClient) ListAlarms(ctx context.Context) (*clientv3.AlarmResponse, e
 
 func (e *etcdClient) DisarmAlarm(ctx context.Context, alarm *clientv3.AlarmMember) error {
 	return tracing.WithSpan1(ctx, tracer, "EtcdClient.DisarmAlarm",
-		func(ctx context.Context, span trace.Span) error {
-			_, err := callETCDFuncOnAnyMember(
+		func(ctx context.Context, span trace.Span) (retErr error) {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			endpoint := e.anyEndpoint
+			etcdClient, err := createEtcdClient(e, endpoint)
+			if err != nil {
+				return err
+			}
+			defer closeEtcdClient(etcdClient, &retErr, endpoint)
+			_, err = callETCDFuncOnAnyMember(
 				ctx,
-				e.tracerProvider,
-				e.caPool,
-				e.clientCertificate,
-				e.anyEndpoint,
+				etcdClient,
+				endpoint,
 				func(client clientv3.Client, ctx context.Context) (*clientv3.AlarmResponse, error) {
 					response, err := client.AlarmDisarm(ctx, alarm)
 					if err != nil {
@@ -167,24 +228,26 @@ func (e *etcdClient) DisarmAlarm(ctx context.Context, alarm *clientv3.AlarmMembe
 
 func callETCDFuncOnAllMembers[R any](
 	ctx context.Context,
-	tracerProvider trace.TracerProvider,
-	caPool *x509.CertPool,
-	clientCertificate tls.Certificate,
-	endpoints map[string]string,
-	etcdServerPort int32,
+	etcd *etcdClient,
 	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (*R, error),
 ) (map[string]*R, error) {
 	return tracing.WithSpan(ctx, tracer, "CallETCDFuncOnAllMembers",
 		func(ctx context.Context, span trace.Span) (map[string]*R, error) {
-			endpointMap := slices.MapValues(endpoints, func(endpoint string, _ string) string {
-				return fmt.Sprintf("https://%s", net.JoinHostPort(endpoint, strconv.Itoa(int(etcdServerPort))))
+			endpointMap := slices.MapValues(etcd.endpoints, func(endpoint string, _ string) string {
+				return fmt.Sprintf("https://%s", net.JoinHostPort(endpoint, strconv.Itoa(int(etcd.serverPort))))
 			})
 			results := make(map[string]*R, len(endpointMap))
 			var errs error
 			for _, endpoint := range endpointMap {
-				result, err := callETCDFuncOnMember(ctx, tracerProvider, endpoint, caPool, clientCertificate, etcdFunc)
-				errs = errors.Join(errs, err)
+				etcdClient, err := createEtcdClient(etcd, endpoint)
+				if err != nil {
+					errs = errors.Join(errs, err)
+					continue
+				}
+				result, err := callETCDFuncOnMember(ctx, etcdClient, endpoint, etcdFunc)
+				closeEtcdClient(etcdClient, &err, endpoint)
 				results[endpoint] = result
+				errs = errors.Join(errs, err)
 			}
 
 			return results, errs
@@ -234,53 +297,18 @@ func getETCDConnectionTLS(
 
 func callETCDFuncOnMember[R any](
 	ctx context.Context,
-	tracerProvider trace.TracerProvider,
+	etcdClient *clientv3.Client,
 	endpoint string,
-	caPool *x509.CertPool,
-	clientCertificate tls.Certificate,
 	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (R, error),
 ) (R, error) {
 	return tracing.WithSpan(ctx, tracer, "CallETCDFuncOnMember",
-		func(ctx context.Context, span trace.Span) (_ R, retErr error) {
+		func(ctx context.Context, span trace.Span) (R, error) {
 			span.SetAttributes(
 				attribute.String("etcd.endpoint", endpoint),
 			)
-			etcdConfig := clientv3.Config{
-				Endpoints: []string{endpoint},
-				Logger:    zap.NewNop(),
-				TLS: &tls.Config{
-					InsecureSkipVerify: false,
-					RootCAs:            caPool,
-					Certificates:       []tls.Certificate{clientCertificate},
-					MinVersion:         tls.VersionTLS12,
-				},
-				DialOptions: []grpc.DialOption{
-					grpc.WithStatsHandler(
-						otelgrpc.NewClientHandler(
-							otelgrpc.WithTracerProvider(tracerProvider),
-							otelgrpc.WithMessageEvents(otelgrpc.ReceivedEvents, otelgrpc.SentEvents),
-						),
-					),
-				},
-				DialTimeout: 10 * time.Second,
-			}
-			etcdClient, err := clientv3.New(etcdConfig)
-			if err != nil {
-				return *new(R), fmt.Errorf("failed to create etcd client for endpoint %s: %w", endpoint, err)
-			}
-			defer func() {
-				if err := etcdClient.Close(); err != nil {
-					retErr = errors.Join(
-						retErr,
-						fmt.Errorf("failed to close etcd client for endpoint %s: %w", endpoint, err),
-					)
-				}
-			}()
-
+			var err error
 			var result R
 			_, _, err = slices.AttemptWithDelay(4, 5*time.Second, func(_ int, _ time.Duration) (err error) {
-				ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				defer cancel()
 				result, err = etcdFunc(*etcdClient, ctx, endpoint)
 				return err
 			})
@@ -292,19 +320,16 @@ func callETCDFuncOnMember[R any](
 
 func callETCDFuncOnAnyMember[R any](
 	ctx context.Context,
-	tracerProvider trace.TracerProvider,
-	caPool *x509.CertPool,
-	clientCertificate tls.Certificate,
+	etcdClient *clientv3.Client,
 	endpoint string,
 	etcdFunc func(client clientv3.Client, ctx context.Context) (R, error),
 ) (R, error) {
 	return tracing.WithSpan(ctx, tracer, "CallETCDFuncOnAnyMember",
 		func(ctx context.Context, span trace.Span) (R, error) {
-			return callETCDFuncOnMember(ctx, tracerProvider, endpoint, caPool, clientCertificate,
+			return callETCDFuncOnMember(ctx, etcdClient, endpoint,
 				func(client clientv3.Client, ctx context.Context, _ string) (R, error) {
 					return etcdFunc(client, ctx)
-				},
-			)
+				})
 		},
 	)
 }
