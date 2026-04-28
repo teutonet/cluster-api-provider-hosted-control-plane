@@ -30,6 +30,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/kubeconfig"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/tlsroutes"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload"
+	konnectivityreverse "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/konnectivity-reverse"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
@@ -106,14 +107,15 @@ func NewHostedControlPlaneReconciler(
 		etcdServerPort:                 int32(2379),
 		etcdServerStorageBuffer:        resource.MustParse("500Mi"),
 		etcdServerStorageIncrement:     resource.MustParse("1Gi"),
-		konnectivityNamespace:          metav1.NamespaceSystem,
-		konnectivityServiceAccount:     "konnectivity-agent",
-		konnectivityClientUsername:     importcycle.KonnectivityClientUsername,
-		controllerUsername:             importcycle.ControllerUsername,
-		konnectivityServerAudience:     "system:konnectivity-server",
-		apiServerServiceLegacyPortName: "legacy-api",
-		konnectivityServicePort:        int32(8132),
-		finalizer:                      fmt.Sprintf("hcp.%s", api.GroupName),
+		konnectivityNamespace:            metav1.NamespaceSystem,
+		konnectivityServiceAccount:      "konnectivity-agent",
+		konnectivityClientUsername:      importcycle.KonnectivityClientUsername,
+		controllerUsername:              importcycle.ControllerUsername,
+		konnectivityServerAudience:      "system:konnectivity-server",
+		apiServerServiceLegacyPortName:  "legacy-api",
+		konnectivityServicePort:         int32(8132),
+		konnectivityReverseServicePort:  int32(8134),
+		finalizer:                       fmt.Sprintf("hcp.%s", api.GroupName),
 		tracer:                         tracing.GetTracer(""),
 	}
 }
@@ -145,15 +147,16 @@ type hostedControlPlaneReconciler struct {
 	etcdServerPort                 int32
 	etcdServerStorageBuffer        resource.Quantity
 	etcdServerStorageIncrement     resource.Quantity
-	konnectivityNamespace          string
-	konnectivityServiceAccount     string
-	konnectivityClientUsername     string
-	controllerUsername             string
-	konnectivityServerAudience     string
-	apiServerServiceLegacyPortName string
-	konnectivityServicePort        int32
-	finalizer                      string
-	tracer                         string
+	konnectivityNamespace            string
+	konnectivityServiceAccount       string
+	konnectivityClientUsername       string
+	controllerUsername               string
+	konnectivityServerAudience       string
+	apiServerServiceLegacyPortName   string
+	konnectivityServicePort          int32
+	konnectivityReverseServicePort   int32
+	finalizer                        string
+	tracer                           string
 }
 
 var _ HostedControlPlaneReconciler = &hostedControlPlaneReconciler{}
@@ -653,6 +656,37 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.apiServerServicePort,
 			)
 
+			reverseKonnectivityReconcileFunc := func(
+				ctx context.Context,
+				hostedControlPlane *v1alpha1.HostedControlPlane,
+				cluster *capiv2.Cluster,
+			) (string, error) {
+				if hostedControlPlane.Spec.KonnectivityReverse == nil ||
+					!hostedControlPlane.Spec.KonnectivityReverse.Enabled {
+					return "", nil
+				}
+
+				workloadClusterClient, ciliumClient, err := r.workloadClusterClientFactory(
+					ctx, r.managementClusterClient, cluster, r.controllerUsername,
+				)
+				if err != nil {
+					return "", fmt.Errorf("failed to create workload cluster client: %w", err)
+				}
+
+				reverseKonnectivityReconciler := konnectivityreverse.NewReverseKonnectivityReconciler(
+					workloadClusterClient,
+					ciliumClient,
+					r.konnectivityNamespace,
+					"konnectivity-server",
+					r.konnectivityServerAudience,
+					r.konnectivityReverseServicePort,
+				)
+
+				return reverseKonnectivityReconciler.ReconcileReverseKonnectivity(
+					ctx, hostedControlPlane, cluster,
+				)
+			}
+
 			phases := []Phase{
 				{
 					Name:         "CA certificates",
@@ -713,6 +747,12 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					Reconcile:    workloadClusterReconciler.ReconcileWorkloadClusterResources,
 					Condition:    v1alpha1.WorkloadClusterResourcesReadyCondition,
 					FailedReason: v1alpha1.WorkloadClusterResourcesFailedReason,
+				},
+				{
+					Name:         "reverse konnectivity",
+					Reconcile:    reverseKonnectivityReconcileFunc,
+					Condition:    v1alpha1.ReverseKonnectivityReadyCondition,
+					FailedReason: v1alpha1.ReverseKonnectivityFailedReason,
 				},
 			}
 
