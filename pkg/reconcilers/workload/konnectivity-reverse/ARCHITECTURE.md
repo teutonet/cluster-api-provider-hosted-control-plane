@@ -39,9 +39,12 @@ This provides symmetric, bidirectional communication.
 - Managed by existing reconciler
 
 **Reverse:** Konnectivity server as sidecar/service (new)
-- Binds to port 8134 in konnectivity pod
+- Main server/gRPC port: 8132 (accepts connections from CP)
+- Admin port: 8133
+- Health port: 8134
 - Accepts connections from CP
 - New DaemonSet/StatefulSet or pod sidecar
+- Manifests/services/probes must target the correct port by purpose to avoid collisions
 
 ### RBAC & Authentication
 

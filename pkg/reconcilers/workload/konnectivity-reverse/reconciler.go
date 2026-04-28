@@ -42,6 +42,7 @@ func NewReverseKonnectivityReconciler(
 	konnectivityServiceAccount string,
 	konnectivityServerAudience string,
 	konnectivityServerPort int32,
+	konnectivityServerHealthPort int32,
 ) ReverseKonnectivityReconciler {
 	return &reverseKonnectivityReconciler{
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
@@ -51,6 +52,7 @@ func NewReverseKonnectivityReconciler(
 		},
 		konnectivityServerAudience:       konnectivityServerAudience,
 		konnectivityServerPort:           konnectivityServerPort,
+		konnectivityServerHealthPort:     konnectivityServerHealthPort,
 		konnectivityNamespace:            konnectivityNamespace,
 		konnectivityServerServiceAccount: konnectivityServiceAccount,
 		konnectivityServerTokenName:      "konnectivity-server-token",
@@ -62,6 +64,7 @@ type reverseKonnectivityReconciler struct {
 	konnectivityNamespace            string
 	konnectivityServerAudience       string
 	konnectivityServerPort           int32
+	konnectivityServerHealthPort     int32
 	konnectivityServerServiceAccount string
 	konnectivityServerTokenName      string
 }
@@ -266,7 +269,7 @@ func (rkr *reverseKonnectivityReconciler) reconcileReverseKonnectivityService(
 						WithTargetPort(intstr.FromString("server")),
 					corev1ac.ServicePort().
 						WithName("health").
-						WithPort(8134).
+						WithPort(rkr.konnectivityServerHealthPort).
 						WithProtocol(corev1.ProtocolTCP).
 						WithTargetPort(intstr.FromString("health")),
 				},
@@ -321,7 +324,7 @@ func (rkr *reverseKonnectivityReconciler) reconcileReverseKonnectivityDeployment
 
 			healthPort := corev1ac.ContainerPort().
 				WithName("health").
-				WithContainerPort(8134).
+				WithContainerPort(rkr.konnectivityServerHealthPort).
 				WithProtocol(corev1.ProtocolTCP)
 
 			serverPort := corev1ac.ContainerPort().
@@ -347,7 +350,7 @@ func (rkr *reverseKonnectivityReconciler) reconcileReverseKonnectivityDeployment
 					"server",
 					"--bind-address=0.0.0.0",
 					fmt.Sprintf("--server-port=%d", serverPortNum),
-					"--health-port=8134",
+					fmt.Sprintf("--health-port=%d", rkr.konnectivityServerHealthPort),
 					"--mode=grpc",
 					fmt.Sprintf("--service-account-token-file=%s", "/var/run/secrets/tokens/"+rkr.konnectivityServerTokenName),
 					"--server-ca-file=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
@@ -366,17 +369,16 @@ func (rkr *reverseKonnectivityReconciler) reconcileReverseKonnectivityDeployment
 				return "", fmt.Errorf("failed to list nodes: %w", err)
 			}
 
-			replicas := int32(1)
-			if serverConfig.Replicas != nil {
-				replicas = *serverConfig.Replicas
-			} else {
-				replicas = int32(math.Max(1, float64(len(nodes.Items))))
+			nodeReplicas := int32(math.Max(1, float64(len(nodes.Items))))
+			replicas := serverConfig.ReplicaCount(2)
+			if replicas == 0 {
+				replicas = int32(math.Min(float64(nodeReplicas), 2))
 			}
 
 			_, ready, err := rkr.ReconcileDeployment(
 				ctx,
 				rkr.konnectivityNamespace,
-				"konnectivity-server",
+				rkr.konnectivityServerServiceAccount,
 				false,
 				replicas,
 				reconcilers.PodOptions{
@@ -391,7 +393,7 @@ func (rkr *reverseKonnectivityReconciler) reconcileReverseKonnectivityDeployment
 				names.GetControlPlaneLabels(cluster, "konnectivity-reverse"),
 				map[int32][]networkpolicy.IngressNetworkPolicyTarget{
 					serverPortNum: {
-						networkpolicy.NewCIDRNetworkPolicyTarget("0.0.0.0/0"),
+						networkpolicy.NewAPIServerNetworkPolicyTarget(hostedControlPlane),
 					},
 				},
 				map[int32][]networkpolicy.EgressNetworkPolicyTarget{},
