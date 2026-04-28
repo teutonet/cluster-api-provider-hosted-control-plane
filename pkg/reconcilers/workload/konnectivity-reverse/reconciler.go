@@ -82,9 +82,6 @@ func (rkr *reverseKonnectivityReconciler) ReconcileReverseKonnectivity(
 ) (string, error) {
 	return tracing.WithSpan(ctx, rkr.Tracer, "ReconcileReverseKonnectivity",
 		func(ctx context.Context, span trace.Span) (string, error) {
-			// TODO: Implement reverse konnectivity reconciliation
-			// See ARCHITECTURE.md for design details
-
 			phases := []struct {
 				Name      string
 				Reconcile func(context.Context) (string, error)
@@ -192,7 +189,11 @@ func (rkr *reverseKonnectivityReconciler) reconcileReverseKonnectivityRBAC(ctx c
 				return "", fmt.Errorf("failed to apply reverse konnectivity server role binding: %w", err)
 			}
 
-			clusterRoleBinding := rbacv1ac.ClusterRoleBinding(rkr.konnectivityServerAudience).
+			reverseClusterRoleBindingName := fmt.Sprintf(
+				"%s-reverse",
+				rkr.konnectivityServerAudience,
+			)
+			clusterRoleBinding := rbacv1ac.ClusterRoleBinding(reverseClusterRoleBindingName).
 				WithRoleRef(
 					rbacv1ac.RoleRef().
 						WithAPIGroup(rbacv1.GroupName).
