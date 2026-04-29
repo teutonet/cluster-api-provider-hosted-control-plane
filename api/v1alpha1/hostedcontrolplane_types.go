@@ -66,6 +66,8 @@ type HostedControlPlaneInlineSpec struct {
 	//+kubebuilder:validation:Optional
 	KonnectivityClient ScalablePod `json:"konnectivityClient,omitempty"`
 	//+kubebuilder:validation:Optional
+	KonnectivityReverse *KonnectivityReverse `json:"konnectivityReverse,omitempty"`
+	//+kubebuilder:validation:Optional
 	KubeProxy KubeProxyComponent `json:"kubeProxy,omitempty"`
 	//+kubebuilder:validation:Optional
 	CoreDNS ScalablePod `json:"coredns,omitempty"`
@@ -328,4 +330,29 @@ func (hcp *HostedControlPlane) GetConditions() []metav1.Condition {
 
 func (hcp *HostedControlPlane) SetConditions(conditions []metav1.Condition) {
 	hcp.Status.Conditions = conditions
+}
+
+// KonnectivityReverse configures bidirectional konnectivity tunnel
+// (workload cluster → control plane communication).
+type KonnectivityReverse struct {
+	//+kubebuilder:validation:Optional
+	Enabled bool `json:"enabled,omitempty"`
+	//+kubebuilder:validation:Optional
+	Server *KonnectivityReverseServer `json:"server,omitempty"`
+	//+kubebuilder:validation:Optional
+	Client *KonnectivityReverseClient `json:"client,omitempty"`
+}
+
+// KonnectivityReverseServer configures the reverse konnectivity server
+// deployed in the workload cluster to accept connections from the control plane.
+type KonnectivityReverseServer struct {
+	ScalablePod `json:",inline"`
+	//+kubebuilder:validation:Optional
+	Port *int32 `json:"port,omitempty"`
+}
+
+// KonnectivityReverseClient configures the reverse konnectivity client
+// deployed in the control plane to initiate connections to the workload cluster.
+type KonnectivityReverseClient struct {
+	Container `json:",inline"`
 }

@@ -208,3 +208,15 @@ func GetKonnectivityTLSRouteName(cluster *capiv2.Cluster) string {
 func GetKonnectivityServerHost(cluster *capiv2.Cluster) string {
 	return fmt.Sprintf("konnectivity.%s", cluster.Spec.ControlPlaneEndpoint.Host)
 }
+
+func GetReverseKonnectivityServerHost(cluster *capiv2.Cluster) string {
+	return fmt.Sprintf("reverse-konnectivity.%s", cluster.Spec.ControlPlaneEndpoint.Host)
+}
+
+func GetReverseKonnectivityServerServiceName(cluster *capiv2.Cluster) string {
+	return fmt.Sprintf("reverse-konnectivity.%s.svc", cluster.Namespace)
+}
+
+func GetReverseKonnectivityConfigMapName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-konnectivity-reverse"
+}

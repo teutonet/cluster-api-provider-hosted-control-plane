@@ -35,4 +35,6 @@ const (
 	WorkloadCoreDNSFailedReason            = "WorkloadCoreDNSFailed"
 	WorkloadKubeProxyReadyCondition        = "WorkloadKubeProxyReady"
 	WorkloadKubeProxyFailedReason          = "WorkloadKubeProxyFailed"
+	ReverseKonnectivityReadyCondition      = "ReverseKonnectivityReady"
+	ReverseKonnectivityFailedReason        = "ReverseKonnectivityFailed"
 )
