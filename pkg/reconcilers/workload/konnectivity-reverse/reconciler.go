@@ -21,6 +21,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -48,21 +49,21 @@ func NewReverseKonnectivityReconciler(
 			CiliumClient:          ciliumClient,
 			Tracer:                tracing.GetTracer("konnectivity-reverse"),
 		},
-		konnectivityServerAudience:      konnectivityServerAudience,
-		konnectivityServerPort:          konnectivityServerPort,
-		konnectivityNamespace:           konnectivityNamespace,
+		konnectivityServerAudience:       konnectivityServerAudience,
+		konnectivityServerPort:           konnectivityServerPort,
+		konnectivityNamespace:            konnectivityNamespace,
 		konnectivityServerServiceAccount: konnectivityServiceAccount,
-		konnectivityServerTokenName:     "konnectivity-server-token",
+		konnectivityServerTokenName:      "konnectivity-server-token",
 	}
 }
 
 type reverseKonnectivityReconciler struct {
 	reconcilers.WorkloadResourceReconciler
-	konnectivityNamespace              string
-	konnectivityServerAudience         string
-	konnectivityServerPort             int32
-	konnectivityServerServiceAccount   string
-	konnectivityServerTokenName        string
+	konnectivityNamespace            string
+	konnectivityServerAudience       string
+	konnectivityServerPort           int32
+	konnectivityServerServiceAccount string
+	konnectivityServerTokenName      string
 }
 
 var _ ReverseKonnectivityReconciler = &reverseKonnectivityReconciler{}
@@ -91,6 +92,12 @@ func (rkr *reverseKonnectivityReconciler) ReconcileReverseKonnectivity(
 				{
 					Name:      "RBAC",
 					Reconcile: rkr.reconcileReverseKonnectivityRBAC,
+				},
+				{
+					Name: "Service",
+					Reconcile: func(ctx context.Context) (string, error) {
+						return rkr.reconcileReverseKonnectivityService(ctx, hostedControlPlane, cluster)
+					},
 				},
 				{
 					Name: "Deployment",
@@ -218,6 +225,56 @@ func (rkr *reverseKonnectivityReconciler) reconcileReverseKonnectivityRBAC(ctx c
 					*clusterRoleBinding.Name,
 					err,
 				)
+			}
+
+			return "", nil
+		},
+	)
+}
+
+func (rkr *reverseKonnectivityReconciler) reconcileReverseKonnectivityService(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv2.Cluster,
+) (string, error) {
+	return tracing.WithSpan(ctx, rkr.Tracer, "reconcileReverseKonnectivityService",
+		func(ctx context.Context, span trace.Span) (string, error) {
+			if hostedControlPlane.Spec.KonnectivityReverse == nil ||
+				hostedControlPlane.Spec.KonnectivityReverse.Server == nil {
+				return "", fmt.Errorf("reverse konnectivity server configuration is missing")
+			}
+
+			serverPortNum := rkr.konnectivityServerPort
+			if hostedControlPlane.Spec.KonnectivityReverse.Server.Port != nil {
+				serverPortNum = *hostedControlPlane.Spec.KonnectivityReverse.Server.Port
+			}
+
+			_, ready, err := rkr.ReconcileService(
+				ctx,
+				rkr.konnectivityNamespace,
+				"konnectivity-server",
+				names.GetControlPlaneLabels(cluster, "konnectivity-reverse"),
+				corev1.ServiceTypeClusterIP,
+				nil,
+				false,
+				[]*corev1ac.ServicePortApplyConfiguration{
+					corev1ac.ServicePort().
+						WithName("server").
+						WithPort(serverPortNum).
+						WithProtocol(corev1.ProtocolTCP).
+						WithTargetPort(intstr.FromString("server")),
+					corev1ac.ServicePort().
+						WithName("health").
+						WithPort(8134).
+						WithProtocol(corev1.ProtocolTCP).
+						WithTargetPort(intstr.FromString("health")),
+				},
+			)
+			if err != nil {
+				return "", fmt.Errorf("failed to reconcile reverse konnectivity server service: %w", err)
+			}
+			if !ready {
+				return "reverse konnectivity server service not ready", nil
 			}
 
 			return "", nil

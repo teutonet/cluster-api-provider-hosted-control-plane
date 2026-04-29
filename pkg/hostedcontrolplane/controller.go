@@ -147,16 +147,16 @@ type hostedControlPlaneReconciler struct {
 	etcdServerPort                 int32
 	etcdServerStorageBuffer        resource.Quantity
 	etcdServerStorageIncrement     resource.Quantity
-	konnectivityNamespace            string
-	konnectivityServiceAccount       string
-	konnectivityClientUsername       string
-	controllerUsername               string
-	konnectivityServerAudience       string
-	apiServerServiceLegacyPortName   string
-	konnectivityServicePort          int32
-	konnectivityReverseServicePort   int32
-	finalizer                        string
-	tracer                           string
+	konnectivityNamespace          string
+	konnectivityServiceAccount     string
+	konnectivityClientUsername     string
+	controllerUsername             string
+	konnectivityServerAudience     string
+	apiServerServiceLegacyPortName string
+	konnectivityServicePort        int32
+	konnectivityReverseServicePort int32
+	finalizer                      string
+	tracer                         string
 }
 
 var _ HostedControlPlaneReconciler = &hostedControlPlaneReconciler{}
