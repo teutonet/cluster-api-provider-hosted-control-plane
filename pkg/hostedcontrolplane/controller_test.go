@@ -71,6 +71,7 @@ func createTestReconcilerWithFilter(client client.Client, reconcileFilter string
 		workloadClusterClientStubFactory,
 		etcdClientStubFactory,
 		s3ClientStubFactory,
+		test.NewEtcdVolumeStatsProviderStub(),
 		&recorder.InfiniteDiscardingFakeRecorder{},
 		"test-namespace",
 		reconcileFilter,

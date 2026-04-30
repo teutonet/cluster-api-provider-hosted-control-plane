@@ -26,6 +26,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/volume_stats"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/infrastructure_cluster"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/kubeconfig"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/tlsroutes"
@@ -80,6 +81,7 @@ func NewHostedControlPlaneReconciler(
 	) (*alias.WorkloadClusterClient, ciliumclient.Interface, error),
 	etcdClientFactory etcd_client.EtcdClientFactory,
 	s3ClientFactory s3_client.S3ClientFactory,
+	volumeStatsProvider volume_stats.EtcdVolumeStatsProvider,
 	recorder events.EventRecorder,
 	controllerNamespace string,
 	reconcileFilter string,
@@ -91,6 +93,7 @@ func NewHostedControlPlaneReconciler(
 		gatewayClient:                  gatewayClient,
 		etcdClientFactory:              etcdClientFactory,
 		s3ClientFactory:                s3ClientFactory,
+		volumeStatsProvider:            volumeStatsProvider,
 		ciliumClientFactory:            ciliumClientFactory,
 		workloadClusterClientFactory:   workloadClusterClientFactory,
 		recorder:                       recorder,
@@ -125,6 +128,7 @@ type hostedControlPlaneReconciler struct {
 	gatewayClient                gwclient.Interface
 	etcdClientFactory            etcd_client.EtcdClientFactory
 	s3ClientFactory              s3_client.S3ClientFactory
+	volumeStatsProvider          volume_stats.EtcdVolumeStatsProvider
 	ciliumClientFactory          func(ctx context.Context) (ciliumclient.Interface, error)
 	workloadClusterClientFactory func(
 		ctx context.Context,
@@ -349,7 +353,7 @@ func (r *hostedControlPlaneReconciler) resolveOwnerRefsToHostedControlPlanes(
 //+kubebuilder:rbac:groups=controlplane.cluster.x-k8s.io,resources=hostedcontrolplanes/finalizers,verbs=update
 //+kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=list;watch
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=get
-//+kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create
+//+kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	return tracing.WithSpan(ctx, r.tracer, "Reconcile",
@@ -600,6 +604,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.etcdServerStorageIncrement,
 				r.etcdClientFactory,
 				r.s3ClientFactory,
+				r.volumeStatsProvider,
 				recorder.FromContext(ctx),
 				r.etcdComponentLabel,
 				r.apiServerComponentLabel,

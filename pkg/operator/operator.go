@@ -21,6 +21,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/volume_stats"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/logging"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -226,6 +227,7 @@ func setupControllers(
 			)
 		},
 		s3_client.NewS3Client,
+		volume_stats.NewEtcdVolumeStatsProvider(&managementClusterClient),
 		mgr.GetEventRecorder(hostedControlPlaneControllerName),
 		controllerNamespace,
 		reconcileFilter,

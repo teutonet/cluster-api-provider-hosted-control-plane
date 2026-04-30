@@ -24,7 +24,6 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -246,6 +245,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 	) (s3_client.S3Client, error) {
 		return NewS3ClientStub(), nil
 	}
+	volumeStatsStub := NewEtcdVolumeStatsProviderStub()
 	workloadClusterClientFactory := func(
 		_ context.Context,
 		_ *alias.ManagementClusterClient,
@@ -265,6 +265,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		workloadClusterClientFactory,
 		etcdClientFactory,
 		s3ClientFactory,
+		volumeStatsStub,
 		&recorder.InfiniteDiscardingFakeRecorder{},
 		"default",
 		"",
@@ -688,17 +689,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			simulateExternalSystems: func(ctx context.Context, g *WithT) {
 				etcdClient.AlarmError = nil
 				etcdClient.StatusError = nil
-				etcdClient.StatusResponses = map[string]*clientv3.StatusResponse{
-					"etcd-0": {
-						DbSize: 1024,
-					},
-					"etcd-1": {
-						DbSize: 1024,
-					},
-					"etcd-2": {
-						DbSize: 2048,
-					},
-				}
+				volumeStatsStub.MaxUsage = 2048
 			},
 			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 				true: {
@@ -1207,17 +1198,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		{
 			name: "Let Etcd grow",
 			simulateExternalSystems: func(ctx context.Context, g *WithT) {
-				etcdClient.StatusResponses = map[string]*clientv3.StatusResponse{
-					"etcd-0": {
-						DbSize: ptr.To(resource.MustParse("1.5Gi")).Value(),
-					},
-					"etcd-1": {
-						DbSize: ptr.To(resource.MustParse("1Gi")).Value(),
-					},
-					"etcd-2": {
-						DbSize: ptr.To(resource.MustParse("500Mi")).Value(),
-					},
-				}
+				volumeStatsStub.MaxUsage = ptr.To(resource.MustParse("1.5Gi")).Value()
 			},
 			verifyResources: func(ctx context.Context, g *WithT) {
 				g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(resource.MustParse("1.5Gi")))
