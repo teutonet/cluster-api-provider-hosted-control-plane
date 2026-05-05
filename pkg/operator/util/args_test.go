@@ -5,6 +5,7 @@ import (
 
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -83,7 +84,7 @@ func TestArgsToSlice(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			result := argsToSlice(tt.userArgs, tt.controllerArgs, nil)
 
 			g.Expect(result).To(Equal(tt.expected))
@@ -96,7 +97,7 @@ func TestArgsToSlice(t *testing.T) {
 }
 
 func TestArgsToSlice_Ordering(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	input1 := map[string]string{
 		"z": "26", "a": "1", "m": "13",
 	}
@@ -257,7 +258,7 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := log.IntoContext(t.Context(), log.Log.WithName("test"))
-			g := NewWithT(t)
+			g, _, _ := G(t)
 
 			returningFakeRecorder, eventRecorder := recorder.NewInfiniteReturningFakeRecorder()
 
@@ -283,7 +284,7 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 }
 
 func TestArgsToSliceWithObservabilityNilInputs(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	ctx := log.IntoContext(t.Context(), log.Log.WithName("test"))
 
 	ctx = recorder.IntoContext(ctx, &recorder.InfiniteDiscardingFakeRecorder{})
@@ -300,7 +301,7 @@ func TestArgsToSliceWithObservabilityNilInputs(t *testing.T) {
 }
 
 func TestOverriddenArgStruct(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	arg := OverriddenArg{
 		Key:             "test-key",
 		UserValue:       "user-value",
@@ -314,7 +315,7 @@ func TestOverriddenArgStruct(t *testing.T) {
 }
 
 func TestArgsToSliceWithObservabilityBackwardCompatibility(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	ctx := log.IntoContext(t.Context(), log.Log.WithName("test"))
 	ctx = recorder.IntoContext(ctx, &recorder.InfiniteDiscardingFakeRecorder{})
 

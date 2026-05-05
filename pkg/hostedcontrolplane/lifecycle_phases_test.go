@@ -72,11 +72,11 @@ type testPhase struct {
 	patchCluster func()
 	// Function to simulate external systems BEFORE reconciliation
 	// (e.g., cert-manager creating secrets, marking resources as ready)
-	simulateExternalSystems func(ctx context.Context, g *WithT)
+	simulateExternalSystems func(ctx context.Context, g Gomega)
 	verifyConditionsBefore  map[bool][]types2.GomegaMatcher
 	verifyConditionsAfter   map[bool][]types2.GomegaMatcher
 	// Custom resource verifications AFTER reconciliation and simulation
-	verifyResources        func(ctx context.Context, g *WithT)
+	verifyResources        func(ctx context.Context, g Gomega)
 	expectError            string
 	expectNoGenerationBump bool
 }
@@ -109,7 +109,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		Level: slog.LevelError, // Set to LevelDebug for verbose output
 	}))
 	ctx := log.IntoContext(t.Context(), logger)
-	g := NewWithT(t)
+	g, _, _ := G(t)
 
 	scheme, err := NewScheme()
 	g.Expect(err).To(Succeed())
@@ -290,19 +290,19 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				},
 			},
 			expectNoGenerationBump: true,
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(hcp.Status.ObservedGeneration).To(BeNumerically("==", 0))
 			},
 		},
 		{
 			name: "Verify ExternalManagedControlPlane Status",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(hcp.Status.ExternalManagedControlPlane).To(PointTo(BeTrue()))
 			},
 		},
 		{
 			name: "Add Finalizer",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(hcp.Finalizers).To(ContainElement("hcp.controlplane.cluster.x-k8s.io"))
 			},
 		},
@@ -384,7 +384,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				makeCertificateReady(certManagerclient, managementClusterClient, hcp, cluster, "etcd-ca")(ctx, g)
 				makeCertificateReady(certManagerclient, managementClusterClient, hcp, cluster, "front-proxy-ca")(ctx, g)
 			},
@@ -413,7 +413,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				makeIssuerReady(certManagerclient, cluster, "etcd-ca")(ctx, g)
 				makeIssuerReady(certManagerclient, cluster, "front-proxy-ca")(ctx, g)
 			},
@@ -438,7 +438,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				serviceInterface := managementClusterClient.CoreV1().Services(hcp.Namespace)
 				svc, err := serviceInterface.Get(ctx, fmt.Sprintf("s-%s", cluster.Name), metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
@@ -466,7 +466,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(hcp.Status.LegacyIP).To(Equal("1.1.1.1"))
 			},
 		},
@@ -480,7 +480,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				endpoint, found, err := unstructured.NestedMap(infraCluster.Object, "spec", "controlPlaneEndpoint")
 				g.Expect(err).To(Succeed())
 				g.Expect(found).To(BeTrue())
@@ -577,7 +577,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				secretInterface := managementClusterClient.CoreV1().Secrets(hcp.Namespace)
 				for _, name := range []string{
 					"admin",
@@ -608,7 +608,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				serviceInterface := managementClusterClient.CoreV1().Services(hcp.Namespace)
 				service, err := serviceInterface.Get(
 					ctx,
@@ -646,7 +646,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				statefulSetInterface := managementClusterClient.AppsV1().StatefulSets(hcp.Namespace)
 				statefulSet, err := statefulSetInterface.Get(
 					ctx,
@@ -669,7 +669,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				)).Error().To(Succeed())
 			},
 			expectError: "statefulset offline",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(hcp.Status.ETCDVolumeSize.Cmp(resource.MustParse("1Gi"))).To(Equal(0))
 				g.Expect(managementClusterClient.NetworkingV1().NetworkPolicies(hcp.Namespace).Get(
 					ctx, fmt.Sprintf("%s-etcd", cluster.Name), metav1.GetOptions{},
@@ -686,7 +686,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				etcdClient.AlarmError = nil
 				etcdClient.StatusError = nil
 				volumeStatsStub.MaxUsage = 2048
@@ -698,13 +698,13 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(resource.MustParse("2Ki")))
 			},
 		},
 		{
 			name: "Verify konnectivity Config",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(managementClusterClient.CoreV1().ConfigMaps(hcp.Namespace).Get(
 					ctx,
 					fmt.Sprintf("%s-konnectivity", cluster.Name),
@@ -714,7 +714,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 		{
 			name: "Verify no audit Config",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				_, err := managementClusterClient.CoreV1().Secrets(hcp.Namespace).Get(
 					ctx,
 					fmt.Sprintf("%s-audit", cluster.Name),
@@ -837,7 +837,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 		{
 			name: "Verify Metadata ConfigMaps exist",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				coreV1Interface := workloadClusterClient.CoreV1()
 				g.Expect(coreV1Interface.ConfigMaps(metav1.NamespacePublic).Get(ctx,
 					api.ConfigMapClusterInfo, metav1.GetOptions{}),
@@ -852,7 +852,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 		{
 			name: "Verify CoreDNS Deployment is scaled to 1",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
 				deployment, err := deploymentInterface.Get(ctx, "coredns", metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
@@ -888,7 +888,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 		{
 			name: "Verify Konnectivity Deployment is scaled to 1",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
 				deployment, err := deploymentInterface.Get(ctx, "konnectivity-agent", metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
@@ -927,7 +927,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 		{
 			name: "Add Node to Cluster",
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				g.Expect(workloadClusterClient.CoreV1().Nodes().Create(ctx, &corev1.Node{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "node-1",
@@ -949,7 +949,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 		{
 			name: "Verify CoreDNS and Konnectivity Agent Deployments are still scaled to 1",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
 				for _, name := range []string{"coredns", "konnectivity-agent"} {
 					deployment, err := deploymentInterface.Get(ctx, name, metav1.GetOptions{})
@@ -960,7 +960,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 		{
 			name: "Make Kube Proxy Daemonset Ready",
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				daemonSetInterface := workloadClusterClient.AppsV1().DaemonSets(metav1.NamespaceSystem)
 				daemonSet, err := daemonSetInterface.Get(ctx, "kube-proxy", metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
@@ -989,7 +989,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 		{
 			name: "Add 3 Nodes to Cluster",
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				slices.RepeatBy(3, func(i int) bool {
 					g.Expect(workloadClusterClient.CoreV1().Nodes().Create(ctx, &corev1.Node{
 						ObjectMeta: metav1.ObjectMeta{
@@ -1014,7 +1014,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				daemonSetInterface := workloadClusterClient.AppsV1().DaemonSets(metav1.NamespaceSystem)
 				daemonSet, err := daemonSetInterface.Get(ctx, "kube-proxy", metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
@@ -1043,7 +1043,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 		{
 			name: "Verify CoreDNS Deployment is scaled to 2",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
 				corednsDeployment, err := deploymentInterface.Get(ctx, "coredns", metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
@@ -1080,7 +1080,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 		{
 			name: "Verify Konnectivity Agent Deployment is scaled to 2",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				deploymentInterface := workloadClusterClient.AppsV1().Deployments(metav1.NamespaceSystem)
 				konnectivityDeployment, err := deploymentInterface.Get(ctx, "konnectivity-agent", metav1.GetOptions{})
 				g.Expect(err).To(Succeed())
@@ -1120,7 +1120,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			patchHCP: func() {
 				hcp.Spec.Replicas = ptr.To(int32(3))
 			},
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				deploymentInterface := managementClusterClient.AppsV1().Deployments(hcp.Namespace)
 				apiServerDeployment, err := deploymentInterface.Get(
 					ctx,
@@ -1159,7 +1159,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			patchHCP: func() {
 				hcp.Spec.ETCD.VolumeSize = ptr.To(resource.MustParse("2Gi"))
 			},
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				statefulSet, err := managementClusterClient.AppsV1().StatefulSets(hcp.Namespace).Get(
 					ctx,
 					fmt.Sprintf("%s-etcd", cluster.Name),
@@ -1197,16 +1197,16 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 		{
 			name: "Let Etcd grow",
-			simulateExternalSystems: func(ctx context.Context, g *WithT) {
+			simulateExternalSystems: func(ctx context.Context, g Gomega) {
 				volumeStatsStub.MaxUsage = ptr.To(resource.MustParse("1.5Gi")).Value()
 			},
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(resource.MustParse("1.5Gi")))
 			},
 		},
 		{
 			name: "Verify Etcd has been resized",
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(hcp.Status.ETCDVolumeSize).To(EqualResource(resource.MustParse("2Gi")))
 			},
 		},
@@ -1223,7 +1223,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					},
 				}
 			},
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				deploymentInterface := managementClusterClient.AppsV1().Deployments(hcp.Namespace)
 				deployment, err := deploymentInterface.Get(
 					ctx,
@@ -1254,7 +1254,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					},
 				}
 			},
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				deploymentInterface := managementClusterClient.AppsV1().Deployments(hcp.Namespace)
 				deployment, err := deploymentInterface.Get(
 					ctx,
@@ -1289,7 +1289,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					},
 				}
 			},
-			verifyResources: func(ctx context.Context, g *WithT) {
+			verifyResources: func(ctx context.Context, g Gomega) {
 				deploymentInterface := managementClusterClient.AppsV1().Deployments(hcp.Namespace)
 				deployment, err := deploymentInterface.Get(
 					ctx,
@@ -1402,7 +1402,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 	g.Expect(foundConditions).To(BeNumerically(">", 0), "Should have at least some conditions set")
 }
 
-func simulateK8sAPI(ctx context.Context, kubernetesClient kubernetes.Interface, g *WithT) {
+func simulateK8sAPI(ctx context.Context, kubernetesClient kubernetes.Interface, g Gomega) {
 	namespaces := []string{metav1.NamespaceSystem}
 	nodes, err := kubernetesClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	g.Expect(err).To(Succeed())
@@ -1468,7 +1468,7 @@ func simulateK8sAPI(ctx context.Context, kubernetesClient kubernetes.Interface, 
 	}
 }
 
-func verifyConditions(after map[bool][]types2.GomegaMatcher, hcp *v1alpha1.HostedControlPlane, g *WithT) {
+func verifyConditions(after map[bool][]types2.GomegaMatcher, hcp *v1alpha1.HostedControlPlane, g Gomega) {
 	for status, matchers := range after {
 		conditionStatus := slices.Ternary(status, metav1.ConditionTrue, metav1.ConditionFalse)
 		partitionedConditions := slices.GroupBy(hcp.Status.Conditions,
@@ -1496,8 +1496,8 @@ func makeTLSRouteReady(
 	gatewayInterface *gwfake.Clientset,
 	hcp *v1alpha1.HostedControlPlane,
 	name string,
-) func(ctx context.Context, g *WithT) {
-	return func(ctx context.Context, g *WithT) {
+) func(ctx context.Context, g Gomega) {
+	return func(ctx context.Context, g Gomega) {
 		tlsRouteInterface := gatewayInterface.GatewayV1alpha2().TLSRoutes(hcp.Namespace)
 		tlsRoute, err := tlsRouteInterface.Get(ctx, name, metav1.GetOptions{})
 		g.Expect(err).To(Succeed())
@@ -1530,8 +1530,8 @@ func makeDeploymentReady(
 	kubernetesInterface kubernetes.Interface,
 	namespace string,
 	name string,
-) func(ctx context.Context, g *WithT) {
-	return func(ctx context.Context, g *WithT) {
+) func(ctx context.Context, g Gomega) {
+	return func(ctx context.Context, g Gomega) {
 		deploymentInterface := kubernetesInterface.AppsV1().Deployments(namespace)
 		deployment, err := deploymentInterface.Get(ctx, name, metav1.GetOptions{})
 		g.Expect(err).To(Succeed())
@@ -1557,8 +1557,8 @@ func makeCertificateReady(
 	hcp *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 	name string,
-) func(ctx context.Context, g *WithT) {
-	return func(ctx context.Context, g *WithT) {
+) func(ctx context.Context, g Gomega) {
+	return func(ctx context.Context, g Gomega) {
 		certificatesInterface := certManagerClient.CertmanagerV1().Certificates(cluster.Namespace)
 		secretInterface := managementClusterClient.CoreV1().Secrets(hcp.Namespace)
 		certName := fmt.Sprintf("%s-%s", cluster.Name, name)
@@ -1608,8 +1608,8 @@ func makeIssuerReady(
 	certManagerClient *certmanagerfake.Clientset,
 	cluster *capiv2.Cluster,
 	name string,
-) func(ctx context.Context, g *WithT) {
-	return func(ctx context.Context, g *WithT) {
+) func(ctx context.Context, g Gomega) {
+	return func(ctx context.Context, g Gomega) {
 		issuersInterface := certManagerClient.CertmanagerV1().Issuers(cluster.Namespace)
 		issuerName := fmt.Sprintf("%s-%s", cluster.Name, name)
 		issuer, err := issuersInterface.Get(ctx, issuerName, metav1.GetOptions{})

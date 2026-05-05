@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 )
 
@@ -12,7 +13,8 @@ func TestValidateMounts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			validateMountTest(NewWithT(t), tt)
+			g, _, _ := G(t)
+			validateMountTest(g, tt)
 		})
 	}
 }
@@ -231,7 +233,7 @@ func validateExpectedError(g Gomega, err error, expectedMsg string) {
 }
 
 func TestValidateMountsErrorMessage(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	// Test specific error message format
 	podSpec := corev1ac.PodSpec().
 		WithContainers(
@@ -253,7 +255,7 @@ func TestValidateMountsErrorMessage(t *testing.T) {
 }
 
 func TestValidateMountsNilPodSpec(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	// Test edge case with nil pod spec - this will panic, which is acceptable
 	// since it indicates a programming error
 	defer func() {

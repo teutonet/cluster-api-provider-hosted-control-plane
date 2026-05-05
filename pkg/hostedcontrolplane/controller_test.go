@@ -13,7 +13,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -34,7 +34,7 @@ var (
 		_ *v1alpha1.HostedControlPlane,
 		_ *capiv2.Cluster,
 	) (s3_client.S3Client, error) {
-		return test.NewS3ClientStub(), nil
+		return NewS3ClientStub(), nil
 	}
 	etcdClientStubFactory = func(
 		_ context.Context,
@@ -43,7 +43,7 @@ var (
 		_ *capiv2.Cluster,
 		_ int32,
 	) (etcd_client.EtcdClient, error) {
-		return test.NewEtcdClientStub(), nil
+		return NewEtcdClientStub(), nil
 	}
 	workloadClusterClientStubFactory = func(
 		_ context.Context,
@@ -71,7 +71,7 @@ func createTestReconcilerWithFilter(client client.Client, reconcileFilter string
 		workloadClusterClientStubFactory,
 		etcdClientStubFactory,
 		s3ClientStubFactory,
-		test.NewEtcdVolumeStatsProviderStub(),
+		NewEtcdVolumeStatsProviderStub(),
 		&recorder.InfiniteDiscardingFakeRecorder{},
 		"test-namespace",
 		reconcileFilter,
@@ -220,7 +220,7 @@ func TestHostedControlPlaneReconciler_ReconcileWorkflow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := log.IntoContext(t.Context(), log.Log)
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			scheme := runtime.NewScheme()
 			g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 			g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
@@ -270,13 +270,13 @@ func TestHostedControlPlaneReconciler_ReconcileWorkflow(t *testing.T) {
 
 func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
 	scheme := runtime.NewScheme()
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
 	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 
 	t.Run("finalizer behavior during reconcile lifecycle", func(t *testing.T) {
 		ctx := log.IntoContext(t.Context(), log.Log)
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		cluster := createTestCluster("test-cluster", "default")
 		hostedControlPlane := withReplicas(
 			withOwnerReference(createTestHostedControlPlane("test-hcp", "default"), cluster),
@@ -319,7 +319,7 @@ func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
 
 	t.Run("finalizer should be removed during deletion", func(t *testing.T) {
 		ctx := log.IntoContext(t.Context(), log.Log)
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		cluster := createTestClusterWithPausedCondition("test-cluster", "default", false)
 		hostedControlPlane := withDeletion(
 			withOwnerReference(createTestHostedControlPlane("test-hcp", "default"), cluster),
@@ -366,13 +366,13 @@ func TestHostedControlPlaneReconciler_FinalizerManagement(t *testing.T) {
 
 func TestHostedControlPlaneReconciler_OwnerReferenceValidation(t *testing.T) {
 	scheme := runtime.NewScheme()
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
 	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 
 	t.Run("should requeue when owner cluster is not found", func(t *testing.T) {
 		ctx := log.IntoContext(t.Context(), log.Log)
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		hostedControlPlane := createTestHostedControlPlane("test-hcp", "default")
 
 		fakeClient := fakeClient.NewClientBuilder().
@@ -399,7 +399,7 @@ func TestHostedControlPlaneReconciler_OwnerReferenceValidation(t *testing.T) {
 
 	t.Run("should proceed when valid owner cluster is found", func(t *testing.T) {
 		ctx := log.IntoContext(t.Context(), log.Log)
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		cluster := createTestCluster("test-cluster", "default")
 		hostedControlPlane := withReplicas(
 			withOwnerReference(createTestHostedControlPlane("test-hcp", "default"), cluster),
@@ -436,13 +436,13 @@ func TestHostedControlPlaneReconciler_OwnerReferenceValidation(t *testing.T) {
 
 func TestHostedControlPlaneReconciler_StatusConditions(t *testing.T) {
 	scheme := runtime.NewScheme()
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
 	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 
 	t.Run("should set paused condition when cluster is paused", func(t *testing.T) {
 		ctx := log.IntoContext(t.Context(), log.Log)
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		cluster := withPaused(createTestCluster("test-cluster", "default"), true)
 		hostedControlPlane := withOwnerReference(createTestHostedControlPlane("test-hcp", "default"), cluster)
 
@@ -488,7 +488,7 @@ func TestHostedControlPlaneReconciler_StatusConditions(t *testing.T) {
 
 func TestHostedControlPlaneReconciler_ObservedGeneration(t *testing.T) {
 	scheme := runtime.NewScheme()
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
 	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 
@@ -540,7 +540,7 @@ func TestHostedControlPlaneReconciler_ObservedGeneration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := log.IntoContext(t.Context(), log.Log)
-			g := NewWithT(t)
+			g, _, _ := G(t)
 
 			objs := []client.Object{tt.hostedControlPlane}
 			if tt.cluster != nil {
@@ -590,7 +590,7 @@ func TestHostedControlPlaneReconciler_ObservedGeneration(t *testing.T) {
 
 func TestHostedControlPlaneReconciler_NonExistentResource(t *testing.T) {
 	scheme := runtime.NewScheme()
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
 
 	fakeClient := fakeClient.NewClientBuilder().
@@ -613,7 +613,7 @@ func TestHostedControlPlaneReconciler_NonExistentResource(t *testing.T) {
 
 func TestHostedControlPlaneReconciler_ReconcileFilter(t *testing.T) {
 	scheme := runtime.NewScheme()
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	g.Expect(v1alpha1.AddToScheme(scheme)).To(Succeed())
 	g.Expect(capiv2.AddToScheme(scheme)).To(Succeed())
 
@@ -644,7 +644,7 @@ func TestHostedControlPlaneReconciler_ReconcileFilter(t *testing.T) {
 	hasFinalizer := func(t *testing.T, fc client.Client) bool {
 		t.Helper()
 		updated := &v1alpha1.HostedControlPlane{}
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		g.Expect(fc.Get(t.Context(), req.NamespacedName, updated)).To(Succeed())
 		return len(updated.Finalizers) > 0
 	}
@@ -693,7 +693,7 @@ func TestHostedControlPlaneReconciler_ReconcileFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			fc := buildClient()
 			reconciler := createTestReconcilerWithFilter(fc, tt.filter)
 

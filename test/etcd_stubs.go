@@ -99,10 +99,7 @@ func NewEtcdVolumeStatsProviderStub() *EtcdVolumeStatsProviderStub {
 func (s *EtcdVolumeStatsProviderStub) GetMaxEtcdVolumeUsage(
 	_ context.Context, _ []corev1.Pod,
 ) (int64, error) {
-	if s.Error != nil {
-		return 0, s.Error
-	}
-	return s.MaxUsage, nil
+	return s.MaxUsage, s.Error
 }
 
 type S3ClientStub struct {

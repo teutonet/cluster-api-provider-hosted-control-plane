@@ -45,6 +45,10 @@ func (p *kubeletEtcdVolumeStatsProvider) GetMaxEtcdVolumeUsage(
 ) (int64, error) {
 	return tracing.WithSpan(ctx, tracer, "GetMaxEtcdVolumeUsage",
 		func(ctx context.Context, span trace.Span) (int64, error) {
+			if len(pods) == 0 {
+				return 0, nil
+			}
+
 			nodeStats := parallel.Map(
 				slices.Uniq(slices.Map(pods, func(pod corev1.Pod, _ int) string { return pod.Spec.NodeName })),
 				func(node string, _ int) slices.Tuple2[string, slices.Tuple2[kubeletstatsv1alpha1.Summary, error]] {
@@ -65,7 +69,9 @@ func (p *kubeletEtcdVolumeStatsProvider) GetMaxEtcdVolumeUsage(
 			results := slices.Map(pods, func(pod corev1.Pod, _ int) slices.Tuple2[int64, error] {
 				nodeResult, ok := statsByNode[pod.Spec.NodeName]
 				if !ok {
-					return slices.T2(int64(0), fmt.Errorf("%w for node %s", errNoStatsForNode, pod.Spec.NodeName))
+					return slices.T2(int64(0), fmt.Errorf(
+						"missing stats for node %s: %w", pod.Spec.NodeName, errNoStatsForNode,
+					))
 				}
 				if nodeResult.B != nil {
 					return slices.T2(int64(0), nodeResult.B)

@@ -7,6 +7,7 @@ import (
 	. "github.com/onsi/gomega/gcustom"
 	. "github.com/onsi/gomega/gstruct"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
@@ -140,7 +141,7 @@ func TestTLSRoutesReconciler_TrafficRouting(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			gatewayClient := fake.NewClientset(tt.existingTLSRoutes...)
 
 			reconciler := &tlsRoutesReconciler{
@@ -262,7 +263,7 @@ func TestTLSRoutesReconciler_CertificateIntegration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			gatewayClient := fake.NewClientset()
 
 			reconciler := &tlsRoutesReconciler{
@@ -373,7 +374,7 @@ func TestTLSRoutesReconciler_GatewayFailover(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			gatewayClient := fake.NewClientset()
 
 			reconciler := &tlsRoutesReconciler{
@@ -403,7 +404,7 @@ func TestTLSRoutesReconciler_GatewayFailover(t *testing.T) {
 }
 
 func TestTLSRoutesReconciler_MultipleEndpoints(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	hostedControlPlane := &v1alpha1.HostedControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-hcp",

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -37,7 +38,7 @@ func TestGetRootIssuerName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetRootIssuerName(cluster)
@@ -66,7 +67,7 @@ func TestGetCAIssuerName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetCAIssuerName(cluster)
@@ -95,7 +96,7 @@ func TestGetServiceName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetServiceName(cluster)
@@ -133,7 +134,7 @@ func TestGetInternalServiceHost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
@@ -166,7 +167,7 @@ func TestGetEtcdClientServiceDNSName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
@@ -207,7 +208,7 @@ func TestGetEtcdDNSNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			cluster.Namespace = tt.clusterNS
@@ -255,7 +256,7 @@ func TestGetKubeconfigSecretName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetKubeconfigSecretName(cluster, tt.kubeconfigName)
@@ -293,7 +294,7 @@ func TestGetKonnectivityServerHost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			cluster.Spec.ControlPlaneEndpoint.Host = tt.controlPlaneEndpointHost
@@ -323,7 +324,7 @@ func TestGetTLSRouteName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetTLSRouteName(cluster)
@@ -352,7 +353,7 @@ func TestGetKonnectivityTLSRouteName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			cluster := &capiv2.Cluster{}
 			cluster.Name = tt.clusterName
 			result := GetKonnectivityTLSRouteName(cluster)
@@ -393,7 +394,7 @@ func TestCertificateNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			result := tt.function(cluster)
 			g.Expect(result).To(Equal(tt.expected))
 		})

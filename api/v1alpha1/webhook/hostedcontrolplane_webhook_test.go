@@ -6,6 +6,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -186,7 +187,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			_, err := webhook.ValidateCreate(t.Context(), tt.hcp)
 
 			if tt.expectErr {
@@ -318,7 +319,7 @@ func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			_, err := webhook.ValidateUpdate(t.Context(), tt.oldHCP, tt.newHCP)
 
 			if tt.expectErr {
@@ -332,7 +333,7 @@ func TestHostedControlPlaneWebhook_ValidateUpdate(t *testing.T) {
 
 func TestHostedControlPlaneWebhook_ValidateDelete(t *testing.T) {
 	webhook := &hostedControlPlaneWebhook{}
-	g := NewWithT(t)
+	g, _, _ := G(t)
 
 	hcp := &v1alpha1.HostedControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
@@ -386,7 +387,7 @@ func TestHostedControlPlaneWebhook_ParseVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			hcp := &v1alpha1.HostedControlPlane{
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					Version: tt.version,

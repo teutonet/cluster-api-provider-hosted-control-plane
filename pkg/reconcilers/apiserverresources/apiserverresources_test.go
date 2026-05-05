@@ -6,12 +6,13 @@ import (
 	. "github.com/onsi/gomega"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	corev1 "k8s.io/api/core/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 )
 
 func TestApiServerResourcesReconciler_extractAdditionalVolumesAndMounts(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	reconciler := &apiServerResourcesReconciler{}
 
 	configMapMountName := "custom-config"
@@ -150,7 +151,7 @@ func TestApiServerResourcesReconciler_ResourceLifecycle_MountConfiguration(t *te
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			volumes, mounts := reconciler.extractAdditionalVolumesAndMounts(tt.mounts)
 
 			g.Expect(volumes).To(HaveLen(tt.expectedVolumeCount))

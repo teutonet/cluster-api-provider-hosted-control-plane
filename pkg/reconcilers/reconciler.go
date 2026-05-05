@@ -17,7 +17,7 @@ import (
 	"github.com/cilium/cilium/pkg/policy/api"
 	slices "github.com/samber/lo"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/emit"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
@@ -189,11 +189,14 @@ func reconcileWorkload[RA any, RSA any, R any](
 					"failed to delete existing %s %s: %w", kind, name, err,
 				)
 			}
-			recorder.FromContext(ctx).Warnf(
+			emit.Warn(
+				ctx,
+				emit.SinkRecorder,
 				getObject(appliedResource),
 				"ImmutableSpecField",
 				fmt.Sprintf("Deleted%s", kind),
-				"Deleted existing %s %s due to immutable spec fields", kind, name,
+				"Deleted existing resource due to immutable spec fields",
+				"kind", kind, "name", name,
 			)
 			// don't retry immediately, the funcs might not be idempotent
 			// (and go can't figure out the generics anyways...)
@@ -907,11 +910,14 @@ func reconcileSecret(
 					"failed to delete existing secret %s: %w", name, err,
 				)
 			}
-			recorder.FromContext(ctx).Normalf(
+			emit.Info(
+				ctx,
+				emit.SinkRecorder,
 				appliedSecret,
 				"ImmutableTypeField",
 				"DeletedSecret",
-				"Deleted existing secret %s/%s due to immutable type field", namespace, name,
+				"Deleted existing secret due to immutable type field",
+				"namespace", namespace, "name", name,
 			)
 			return reconcileSecret(
 				ctx,

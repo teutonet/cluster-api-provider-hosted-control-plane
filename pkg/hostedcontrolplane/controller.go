@@ -19,6 +19,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/emit"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/apiserverresources"
@@ -386,7 +387,10 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				return ctrl.Result{}, fmt.Errorf("failed to retrieve owner Cluster: %w", err)
 			}
 			if cluster == nil {
-				span.AddEvent("Cluster Controller has not yet set OwnerRef")
+				emit.Info(ctx, emit.SinkSpanEvent, hostedControlPlane,
+					"ClusterOwnerRefMissing", "OwnerRefCheck",
+					"Cluster Controller has not yet set OwnerRef",
+				)
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			}
 
@@ -405,12 +409,13 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 					clusterMatch = cluster.Name == r.reconcileFilter
 				}
 				if !hcpMatch && !clusterMatch {
-					logr.FromContextAsSlogLogger(ctx).
-						InfoContext(ctx, "skipping reconciliation due to reconcile filter",
-							"filter", r.reconcileFilter,
-							"hcp", hostedControlPlane.Namespace+"/"+hostedControlPlane.Name,
-							"cluster", cluster.Namespace+"/"+cluster.Name,
-						)
+					emit.Info(ctx, emit.SinkLogger, hostedControlPlane,
+						"ReconcileFilterMismatch", "SkipReconcile",
+						"skipping reconciliation due to reconcile filter",
+						"filter", r.reconcileFilter,
+						"hcp", hostedControlPlane.Namespace+"/"+hostedControlPlane.Name,
+						"cluster", cluster.Namespace+"/"+cluster.Name,
+					)
 					return reconcile.Result{}, nil
 				}
 			}
@@ -588,7 +593,6 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.caCertificatesDuration,
 				r.certificatesDuration,
 				r.konnectivityServerAudience,
-				recorder.FromContext(ctx),
 			)
 			kubeconfigReconciler := kubeconfig.NewKubeconfigReconciler(
 				r.managementClusterClient,
@@ -605,7 +609,6 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.etcdClientFactory,
 				r.s3ClientFactory,
 				r.volumeStatsProvider,
-				recorder.FromContext(ctx),
 				r.etcdComponentLabel,
 				r.apiServerComponentLabel,
 				r.controllerNamespace,
