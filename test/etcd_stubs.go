@@ -8,10 +8,13 @@ import (
 	"io"
 
 	slices "github.com/samber/lo"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+var _ etcd_client.EtcdClient = &EtcdClientStub{}
 
 var EtcdSnapshotData = []byte("etcd snapshot data")
 
@@ -20,6 +23,8 @@ type EtcdClientStub struct {
 	SnapshotError   error
 	AlarmError      error
 	DisarmError     error
+	DefragError     error
+	DefragCount     int
 	StatusResponses map[string]*clientv3.StatusResponse
 	ActiveAlarms    []*etcdserverpb.AlarmMember
 }
@@ -56,6 +61,14 @@ func (s *EtcdClientStub) ListAlarms(_ context.Context) (*clientv3.AlarmResponse,
 		Header: &etcdserverpb.ResponseHeader{ClusterId: 1},
 		Alarms: s.ActiveAlarms,
 	}, nil
+}
+
+func (s *EtcdClientStub) Defragment(_ context.Context) error {
+	if s.DefragError != nil {
+		return s.DefragError
+	}
+	s.DefragCount++
+	return nil
 }
 
 func (s *EtcdClientStub) DisarmAlarm(_ context.Context, alarm *clientv3.AlarmMember) error {

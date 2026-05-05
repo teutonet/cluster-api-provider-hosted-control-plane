@@ -422,6 +422,8 @@ func (in *HostedControlPlaneStatus) DeepCopyInto(out *HostedControlPlaneStatus) 
 	out.ETCDVolumeUsage = in.ETCDVolumeUsage.DeepCopy()
 	in.ETCDLastBackupTime.DeepCopyInto(&out.ETCDLastBackupTime)
 	in.ETCDNextBackupTime.DeepCopyInto(&out.ETCDNextBackupTime)
+	in.ETCDLastDefragTime.DeepCopyInto(&out.ETCDLastDefragTime)
+	in.ETCDLastAttemptedDefragTime.DeepCopyInto(&out.ETCDLastAttemptedDefragTime)
 	in.Initialization.DeepCopyInto(&out.Initialization)
 	if in.ExternalManagedControlPlane != nil {
 		in, out := &in.ExternalManagedControlPlane, &out.ExternalManagedControlPlane
