@@ -39,7 +39,9 @@ func ResolveKonnectivityImage(imageSpec *v1alpha1.ImageSpec, component string, m
 		imageSpec,
 		"registry.k8s.io",
 		fmt.Sprintf("kas-network-proxy/%s", component),
-		fmt.Sprintf("v0.%d.0", minorVersion),
+		// there is no image for 35 and above
+		// TODO: update when new image is available
+		fmt.Sprintf("v0.%d.0", min(minorVersion, 34)),
 	)
 }
 
