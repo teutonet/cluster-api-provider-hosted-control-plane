@@ -9,6 +9,7 @@ import (
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
 	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -731,6 +732,42 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
 	})
 
+	t.Run("should fail when snapshot open stalls", func(t *testing.T) {
+		g := NewWithT(t)
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Spec: v1alpha1.HostedControlPlaneSpec{
+				HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+					ETCD: v1alpha1.ETCDComponent{
+						Backup: &v1alpha1.ETCDBackup{
+							Schedule: cronAt2AM,
+						},
+					},
+				},
+			},
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDLastBackupTime: yesterday,
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			recorder:         &recorder.InfiniteDiscardingFakeRecorder{},
+			watchdogInterval: 10 * time.Millisecond,
+			s3ClientFactory: func(
+				context.Context, *alias.ManagementClusterClient,
+				*v1alpha1.HostedControlPlane, *capiv2.Cluster,
+			) (s3_client.S3Client, error) {
+				return NewS3ClientStub(), nil
+			},
+		}
+
+		err := reconciler.reconcileETCDBackup(ctx, &stallingEtcdClient{}, hcp, nil)
+
+		g.Expect(err).To(MatchError(errETCDBackupStalled))
+		g.Expect(err).To(MatchError(ContainSubstring("failed to create etcd snapshot")))
+		g.Expect(hcp.Status.ETCDLastBackupTime).To(Equal(yesterday))
+	})
+
 	t.Run("should fail when upload stalls", func(t *testing.T) {
 		g := NewWithT(t)
 		etcdClientStub := NewEtcdClientStub()
@@ -771,10 +808,37 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 type stallingS3Client struct{}
 
+var _ s3_client.S3Client = new(stallingS3Client)
+
 func (s *stallingS3Client) Upload(ctx context.Context, body io.ReadCloser, _ func()) error {
 	defer func() { _ = body.Close() }()
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+type stallingEtcdClient struct{}
+
+var _ etcd_client.EtcdClient = new(stallingEtcdClient)
+
+func (s *stallingEtcdClient) GetStatuses(_ context.Context) (map[string]*clientv3.StatusResponse, error) {
+	return make(map[string]*clientv3.StatusResponse), nil
+}
+
+func (s *stallingEtcdClient) OpenSnapshotStream(ctx context.Context) (*clientv3.SnapshotResponse, func() error, error) {
+	<-ctx.Done()
+	return nil, func() error { return nil }, ctx.Err()
+}
+
+func (s *stallingEtcdClient) ListAlarms(_ context.Context) (*clientv3.AlarmResponse, error) {
+	return &clientv3.AlarmResponse{}, nil
+}
+
+func (s *stallingEtcdClient) DisarmAlarm(_ context.Context, _ *clientv3.AlarmMember) error {
+	return nil
+}
+
+func (s *stallingEtcdClient) Defragment(_ context.Context) error {
+	return nil
 }
 
 func TestEtcdClusterReconciler_reconcileETCDMaintenance_GetStatusesError(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -32,14 +33,18 @@ var (
 )
 
 type ProgressWatcher struct {
-	Watcher func()
+	watcher atomic.Pointer[func()]
 }
 
 var _ transfermanager.ObjectBytesTransferredListener = &ProgressWatcher{}
 
+func (p *ProgressWatcher) setWatcher(fn func()) {
+	p.watcher.Store(&fn)
+}
+
 func (p *ProgressWatcher) OnObjectBytesTransferred(_ context.Context, _ *transfermanager.ObjectBytesTransferredEvent) {
-	if p.Watcher != nil {
-		p.Watcher()
+	if fn := p.watcher.Load(); fn != nil {
+		(*fn)()
 	}
 }
 
@@ -107,13 +112,13 @@ func NewS3Client(
 		if !found {
 			return nil, fmt.Errorf("missing %s: %w", regionKey, errCredentialIsMissingKey)
 		}
-		region := string(regionBytes)
+		region := strings.TrimSpace(string(regionBytes))
 		span.SetAttributes(attribute.String("etcd.backup.s3.region", region))
 		bucketBytes, found := s3Secret.Data[bucketKey]
 		if !found {
 			return nil, fmt.Errorf("missing %s: %w", bucketKey, errCredentialIsMissingKey)
 		}
-		bucketString := string(bucketBytes)
+		bucketString := strings.TrimSpace(string(bucketBytes))
 
 		parts := strings.SplitN(bucketString, "/", 2)
 		bucket := parts[0]
@@ -200,7 +205,7 @@ func (s *s3Client) Upload(ctx context.Context, body io.ReadCloser, progressWatch
 				retErr = errors.Join(retErr, fmt.Errorf("failed to close body reader: %w", closeErr))
 			}
 		}()
-		s.progressWatcher.Watcher = progressWatcher
+		s.progressWatcher.setWatcher(progressWatcher)
 		countingReader := readerutil.CountingReader{Reader: body, N: new(int64)}
 		if result, err := s.uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
 			Bucket: aws.String(s.bucket),

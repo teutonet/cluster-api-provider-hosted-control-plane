@@ -33,7 +33,7 @@ var (
 )
 
 const (
-	etcdDefaultCallTimeout = 10 * time.Second
+	etcdDefaultCallTimeout = 30 * time.Second
 	etcdDefragCallTimeout  = 5 * time.Minute
 )
 
@@ -183,7 +183,7 @@ func createEtcdClient(etcd *etcdClient, endpoint string) (*clientv3.Client, erro
 func (e *etcdClient) ListAlarms(ctx context.Context) (*clientv3.AlarmResponse, error) {
 	return tracing.WithSpan(ctx, tracer, "EtcdClient.ListAlarms",
 		func(ctx context.Context, span trace.Span) (_ *clientv3.AlarmResponse, retErr error) {
-			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			ctx, cancel := context.WithTimeout(ctx, etcdDefaultCallTimeout)
 			defer cancel()
 			endpoint := e.anyEndpoint
 			etcdClient, err := createEtcdClient(e, endpoint)
@@ -267,8 +267,11 @@ func callETCDFuncOnAllMembers[R any](
 				}
 				result, err := callETCDFuncOnMember(ctx, etcdClient, endpoint, etcdFunc)
 				closeEtcdClient(etcdClient, &err, endpoint)
+				if err != nil {
+					errs = errors.Join(errs, err)
+					continue
+				}
 				results[endpoint] = result
-				errs = errors.Join(errs, err)
 			}
 
 			return results, errs

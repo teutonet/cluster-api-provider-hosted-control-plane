@@ -42,10 +42,7 @@ import (
 var (
 	etcdVolumeResizeEvent           = "EtcdVolumeAutoResize"
 	etcdVolumeSizeReCalculatedEvent = "EtcdVolumeSizeRecalculated"
-	errETCDBackupStalled            = fmt.Errorf(
-		"etcd backup timed out: no progress in time window: %w",
-		context.Canceled,
-	)
+	errETCDBackupStalled            = errors.New("etcd backup timed out: no progress in time window")
 )
 
 const (
