@@ -32,11 +32,17 @@ var (
 	errETCDCAFailedToAppend = errors.New("failed to append etcd CA certificate")
 )
 
+const (
+	etcdDefaultCallTimeout = 10 * time.Second
+	etcdDefragCallTimeout  = 5 * time.Minute
+)
+
 type EtcdClient interface {
 	GetStatuses(ctx context.Context) (map[string]*clientv3.StatusResponse, error)
 	CreateSnapshot(ctx context.Context) (*clientv3.SnapshotResponse, error)
 	ListAlarms(ctx context.Context) (*clientv3.AlarmResponse, error)
 	DisarmAlarm(ctx context.Context, alarm *clientv3.AlarmMember) error
+	Defragment(ctx context.Context) error
 }
 
 type etcdClient struct {
@@ -104,6 +110,7 @@ func (e *etcdClient) GetStatuses(ctx context.Context) (map[string]*clientv3.Stat
 				e.clientCertificate,
 				e.endpoints,
 				e.serverPort,
+				etcdDefaultCallTimeout,
 				clientv3.Client.Status,
 			)
 		},
@@ -140,6 +147,24 @@ func (e *etcdClient) ListAlarms(ctx context.Context) (*clientv3.AlarmResponse, e
 	)
 }
 
+func (e *etcdClient) Defragment(ctx context.Context) error {
+	return tracing.WithSpan1(ctx, tracer, "EtcdClient.Defragment",
+		func(ctx context.Context, span trace.Span) error {
+			_, err := callETCDFuncOnAllMembers(
+				ctx,
+				e.tracerProvider,
+				e.caPool,
+				e.clientCertificate,
+				e.endpoints,
+				e.serverPort,
+				etcdDefragCallTimeout,
+				clientv3.Client.Defragment,
+			)
+			return err
+		},
+	)
+}
+
 func (e *etcdClient) DisarmAlarm(ctx context.Context, alarm *clientv3.AlarmMember) error {
 	return tracing.WithSpan1(ctx, tracer, "EtcdClient.DisarmAlarm",
 		func(ctx context.Context, span trace.Span) error {
@@ -172,6 +197,7 @@ func callETCDFuncOnAllMembers[R any](
 	clientCertificate tls.Certificate,
 	endpoints map[string]string,
 	etcdServerPort int32,
+	callTimeout time.Duration,
 	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (*R, error),
 ) (map[string]*R, error) {
 	return tracing.WithSpan(ctx, tracer, "CallETCDFuncOnAllMembers",
@@ -182,7 +208,15 @@ func callETCDFuncOnAllMembers[R any](
 			results := make(map[string]*R, len(endpointMap))
 			var errs error
 			for _, endpoint := range endpointMap {
-				result, err := callETCDFuncOnMember(ctx, tracerProvider, endpoint, caPool, clientCertificate, etcdFunc)
+				result, err := callETCDFuncOnMember(
+					ctx,
+					tracerProvider,
+					endpoint,
+					caPool,
+					clientCertificate,
+					callTimeout,
+					etcdFunc,
+				)
 				errs = errors.Join(errs, err)
 				results[endpoint] = result
 			}
@@ -238,6 +272,7 @@ func callETCDFuncOnMember[R any](
 	endpoint string,
 	caPool *x509.CertPool,
 	clientCertificate tls.Certificate,
+	callTimeout time.Duration,
 	etcdFunc func(client clientv3.Client, ctx context.Context, endpoint string) (R, error),
 ) (R, error) {
 	return tracing.WithSpan(ctx, tracer, "CallETCDFuncOnMember",
@@ -279,7 +314,7 @@ func callETCDFuncOnMember[R any](
 
 			var result R
 			_, _, err = slices.AttemptWithDelay(4, 5*time.Second, func(_ int, _ time.Duration) (err error) {
-				ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				ctx, cancel := context.WithTimeout(ctx, callTimeout)
 				defer cancel()
 				result, err = etcdFunc(*etcdClient, ctx, endpoint)
 				return err
@@ -300,7 +335,13 @@ func callETCDFuncOnAnyMember[R any](
 ) (R, error) {
 	return tracing.WithSpan(ctx, tracer, "CallETCDFuncOnAnyMember",
 		func(ctx context.Context, span trace.Span) (R, error) {
-			return callETCDFuncOnMember(ctx, tracerProvider, endpoint, caPool, clientCertificate,
+			return callETCDFuncOnMember(
+				ctx,
+				tracerProvider,
+				endpoint,
+				caPool,
+				clientCertificate,
+				etcdDefaultCallTimeout,
 				func(client clientv3.Client, ctx context.Context, _ string) (R, error) {
 					return etcdFunc(client, ctx)
 				},

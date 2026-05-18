@@ -279,6 +279,10 @@ type HostedControlPlaneStatus struct {
 	ETCDLastBackupTime metav1.Time `json:"etcdLastBackupTime,omitempty"`
 	//+kubebuilder:validation:Optional
 	ETCDNextBackupTime metav1.Time `json:"etcdNextBackupTime,omitempty"`
+	//+kubebuilder:validation:Optional
+	ETCDLastDefragTime metav1.Time `json:"etcdLastDefragTime,omitempty"`
+	//+kubebuilder:validation:Optional
+	ETCDLastAttemptedDefragTime metav1.Time `json:"etcdLastAttemptedDefragTime,omitempty"`
 
 	// Required fields by CAPI
 	// https://cluster-api.sigs.k8s.io/developer/providers/contracts/control-plane#controlplane-replicas

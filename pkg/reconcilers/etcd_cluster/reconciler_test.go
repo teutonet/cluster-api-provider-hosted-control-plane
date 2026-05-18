@@ -269,35 +269,10 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("should handle etcd status error gracefully", func(t *testing.T) {
-		g := NewWithT(t)
-		stub := NewEtcdClientStub()
-		stub.StatusError = errors.New("connection refused")
-
-		hcp := &v1alpha1.HostedControlPlane{
-			Status: v1alpha1.HostedControlPlaneStatus{
-				ETCDVolumeSize:  resource.MustParse("20Gi"),
-				ETCDVolumeUsage: resource.MustParse("15Gi"),
-			},
-		}
-
-		reconciler := &etcdClusterReconciler{
-			recorder:                   &recorder.InfiniteDiscardingFakeRecorder{},
-			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
-			etcdServerStorageIncrement: resource.MustParse("10Gi"),
-			etcdClientFactory:          nil,
-		}
-
-		err := reconciler.reconcileETCDSpaceUsage(ctx, stub, hcp)
-
-		g.Expect(err).To(MatchError(ContainSubstring("connection refused")))
-	})
-
 	t.Run("should update volume usage from etcd status", func(t *testing.T) {
 		g := NewWithT(t)
-		stub := NewEtcdClientStub()
 		highestMemberDBSize := int64(5368709120)
-		stub.StatusResponses = map[string]*clientv3.StatusResponse{
+		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {
 				Header:  &etcdserverpb.ResponseHeader{ClusterId: 1},
 				Version: "3.5.0",
@@ -324,7 +299,7 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 			etcdClientFactory:          nil,
 		}
 
-		err := reconciler.reconcileETCDSpaceUsage(ctx, stub, hcp)
+		err := reconciler.reconcileETCDSpaceUsage(ctx, statuses, hcp)
 
 		g.Expect(err).NotTo(HaveOccurred())
 		expectedQuantity := resource.NewQuantity(highestMemberDBSize, resource.BinarySI)
@@ -712,5 +687,185 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		g.Expect(s3ClientStub.LastUploadedBody).To(Equal(EtcdSnapshotData))
 		g.Expect(hcp.Status.ETCDLastBackupTime).NotTo(BeZero())
 		g.Expect(hcp.Status.ETCDNextBackupTime).NotTo(BeZero())
+	})
+}
+
+func TestEtcdClusterReconciler_reconcileETCDMaintenance_GetStatusesError(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("should return wrapped error when GetStatuses fails", func(t *testing.T) {
+		g := NewWithT(t)
+		stub := NewEtcdClientStub()
+		stub.StatusError = errors.New("connection refused")
+		hcp := &v1alpha1.HostedControlPlane{}
+
+		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+
+		err := reconciler.reconcileETCDMaintenance(ctx, stub, hcp)
+
+		g.Expect(err).To(MatchError(ContainSubstring("failed to get etcd statuses")))
+		g.Expect(err).To(MatchError(ContainSubstring("connection refused")))
+	})
+}
+
+func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
+	ctx := context.Background()
+	emptyHCP := &v1alpha1.HostedControlPlane{}
+
+	t.Run("should defrag when fragmentation exceeds threshold", func(t *testing.T) {
+		g := NewWithT(t)
+		stub := NewEtcdClientStub()
+		statuses := map[string]*clientv3.StatusResponse{
+			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above 20% threshold
+		}
+		hcp := &v1alpha1.HostedControlPlane{}
+
+		returningFakeRecorder, fakeRecorder := recorder.NewInfiniteReturningFakeRecorder()
+		reconciler := &etcdClusterReconciler{recorder: fakeRecorder}
+
+		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(stub.DefragCount).To(Equal(1))
+		g.Expect(hcp.Status.ETCDLastDefragTime).NotTo(BeZero())
+		g.Expect(hcp.Status.ETCDLastAttemptedDefragTime).NotTo(BeZero())
+		g.Expect(returningFakeRecorder.Events).To(ContainElement(
+			And(ContainSubstring("EtcdDefrag"), ContainSubstring("Defragmented")),
+		))
+	})
+
+	t.Run("should not defrag when all members are below threshold", func(t *testing.T) {
+		g := NewWithT(t)
+		stub := NewEtcdClientStub()
+		statuses := map[string]*clientv3.StatusResponse{
+			"etcd-0": {DbSize: 1000, DbSizeInUse: 900}, // 10% fragmented — below 20% threshold
+			"etcd-1": {DbSize: 1000, DbSizeInUse: 850}, // 15% fragmented — below 20% threshold
+		}
+
+		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+
+		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, emptyHCP)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(stub.DefragCount).To(Equal(0))
+	})
+
+	t.Run("should skip members with DbSize zero", func(t *testing.T) {
+		g := NewWithT(t)
+		stub := NewEtcdClientStub()
+		statuses := map[string]*clientv3.StatusResponse{
+			"etcd-0": {DbSize: 0, DbSizeInUse: 0}, // uninitialised
+		}
+
+		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+
+		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, emptyHCP)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(stub.DefragCount).To(Equal(0))
+	})
+
+	t.Run("should skip defrag within cooldown period", func(t *testing.T) {
+		g := NewWithT(t)
+		stub := NewEtcdClientStub()
+		statuses := map[string]*clientv3.StatusResponse{
+			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
+		}
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDLastAttemptedDefragTime: metav1.NewTime(time.Now().Add(-30 * time.Minute)), // 30 min ago
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+
+		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(stub.DefragCount).To(Equal(0))
+	})
+
+	t.Run("should defrag after cooldown period expires", func(t *testing.T) {
+		g := NewWithT(t)
+		stub := NewEtcdClientStub()
+		statuses := map[string]*clientv3.StatusResponse{
+			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
+		}
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDLastAttemptedDefragTime: metav1.NewTime(time.Now().Add(-2 * time.Hour)), // 2 hours ago
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+
+		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(stub.DefragCount).To(Equal(1))
+	})
+
+	t.Run("should propagate Defragment error and not update timestamp on failure", func(t *testing.T) {
+		g := NewWithT(t)
+		stub := NewEtcdClientStub()
+		statuses := map[string]*clientv3.StatusResponse{
+			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented
+		}
+		stub.DefragError = errors.New("defrag failed")
+		hcp := &v1alpha1.HostedControlPlane{}
+
+		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+
+		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
+
+		g.Expect(err).To(MatchError(ContainSubstring("defrag failed")))
+		g.Expect(hcp.Status.ETCDLastDefragTime).To(BeZero())
+		g.Expect(hcp.Status.ETCDLastAttemptedDefragTime).NotTo(BeZero())
+	})
+
+	t.Run("should skip retry within cooldown after a failed defrag", func(t *testing.T) {
+		g := NewWithT(t)
+		stub := NewEtcdClientStub()
+		statuses := map[string]*clientv3.StatusResponse{
+			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
+		}
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDLastAttemptedDefragTime: metav1.NewTime(time.Now().Add(-30 * time.Minute)), // failed 30 min ago
+				// ETCDLastDefragTime is zero — last attempt failed
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+
+		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(stub.DefragCount).To(Equal(0))
+	})
+
+	t.Run("should not use ETCDLastDefragTime for cooldown", func(t *testing.T) {
+		g := NewWithT(t)
+		stub := NewEtcdClientStub()
+		statuses := map[string]*clientv3.StatusResponse{
+			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
+		}
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDLastDefragTime: metav1.NewTime(time.Now().Add(-30 * time.Minute)), // successful 30 min ago
+				// ETCDLastAttemptedDefragTime is zero — cooldown is not triggered
+			},
+		}
+
+		returningFakeRecorder, fakeRecorder := recorder.NewInfiniteReturningFakeRecorder()
+		reconciler := &etcdClusterReconciler{recorder: fakeRecorder}
+
+		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(stub.DefragCount).To(Equal(1))
+		g.Expect(returningFakeRecorder.Events).To(ContainElement(
+			And(ContainSubstring("EtcdDefrag"), ContainSubstring("Defragmented")),
+		))
 	})
 }

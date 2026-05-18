@@ -45,6 +45,11 @@ var (
 	etcdVolumeSizeReCalculatedEvent = "EtcdVolumeSizeRecalculated"
 )
 
+const (
+	etcdDefragmentationFragmentationThreshold = 0.20
+	etcdDefragmentationCooldown               = 1 * time.Hour
+)
+
 type EtcdClusterReconciler interface {
 	ReconcileEtcdCluster(
 		ctx context.Context,
@@ -179,8 +184,8 @@ func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 				return "etcd StatefulSet is not ready", nil
 			}
 
-			if err := er.reconcileETCDSpaceUsage(ctx, etcdClient, hostedControlPlane); err != nil {
-				return "", fmt.Errorf("failed to reconcile etcd space usage: %w", err)
+			if err := er.reconcileETCDMaintenance(ctx, etcdClient, hostedControlPlane); err != nil {
+				return "", err
 			}
 
 			if hostedControlPlane.Spec.ETCD.Backup != nil {
@@ -327,18 +332,34 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 	)
 }
 
-func (er *etcdClusterReconciler) reconcileETCDSpaceUsage(
+func (er *etcdClusterReconciler) reconcileETCDMaintenance(
 	ctx context.Context,
 	etcdClient etcd_client.EtcdClient,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 ) error {
+	statuses, err := etcdClient.GetStatuses(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get etcd statuses: %w", err)
+	}
+
+	if err := er.reconcileETCDSpaceUsage(ctx, statuses, hostedControlPlane); err != nil {
+		return fmt.Errorf("failed to reconcile etcd space usage: %w", err)
+	}
+
+	if err := er.reconcileETCDDefragmentation(ctx, etcdClient, statuses, hostedControlPlane); err != nil {
+		return fmt.Errorf("failed to reconcile etcd defragmentation: %w", err)
+	}
+
+	return nil
+}
+
+func (er *etcdClusterReconciler) reconcileETCDSpaceUsage(
+	ctx context.Context,
+	statuses map[string]*clientv3.StatusResponse,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
 	return tracing.WithSpan1(ctx, er.Tracer, "ReconcileETCDSpaceUsage",
 		func(ctx context.Context, span trace.Span) (err error) {
-			statuses, err := etcdClient.GetStatuses(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to get etcd member statuses: %w", err)
-			}
-
 			dbSize := slices.Max(slices.Map(slices.Values(statuses),
 				func(status *clientv3.StatusResponse, _ int) int64 {
 					return status.DbSize
@@ -351,6 +372,44 @@ func (er *etcdClusterReconciler) reconcileETCDSpaceUsage(
 				attribute.String("etcd.volume.usage", hostedControlPlane.Status.ETCDVolumeUsage.String()),
 			)
 
+			return nil
+		},
+	)
+}
+
+func (er *etcdClusterReconciler) reconcileETCDDefragmentation(
+	ctx context.Context,
+	etcdClient etcd_client.EtcdClient,
+	statuses map[string]*clientv3.StatusResponse,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) error {
+	return tracing.WithSpan1(ctx, er.Tracer, "ReconcileETCDDefragmentation",
+		func(ctx context.Context, span trace.Span) error {
+			if !hostedControlPlane.Status.ETCDLastAttemptedDefragTime.IsZero() &&
+				time.Since(hostedControlPlane.Status.ETCDLastAttemptedDefragTime.Time) < etcdDefragmentationCooldown {
+				return nil
+			}
+
+			for _, status := range statuses {
+				if status.DbSize == 0 || status.DbSizeInUse > status.DbSize ||
+					float64(
+						status.DbSize-status.DbSizeInUse,
+					)/float64(
+						status.DbSize,
+					) <= etcdDefragmentationFragmentationThreshold {
+					continue
+				}
+				hostedControlPlane.Status.ETCDLastAttemptedDefragTime = metav1.NewTime(time.Now())
+				if defragmentationErr := etcdClient.Defragment(ctx); defragmentationErr != nil {
+					return fmt.Errorf("failed to defragment etcd: %w", defragmentationErr)
+				}
+				hostedControlPlane.Status.ETCDLastDefragTime = metav1.NewTime(time.Now())
+				er.recorder.Normalf(nil, "FragmentationThresholdExceeded", "EtcdDefragmentation",
+					"Defragmented etcd members due to fragmentation above %.0f%%",
+					etcdDefragmentationFragmentationThreshold*100,
+				)
+				return nil
+			}
 			return nil
 		},
 	)
