@@ -24,6 +24,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test/etcdtest"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"

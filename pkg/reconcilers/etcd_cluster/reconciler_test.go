@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test/etcdtest"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -779,7 +781,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should create backup with @daily schedule spread by cluster identity", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		etcdClientStub := NewEtcdClientStub()
 		s3ClientStub := NewS3ClientStub()
 
@@ -803,7 +805,6 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -822,7 +823,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should fail when snapshot open stalls", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -840,7 +841,6 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:         &recorder.InfiniteDiscardingFakeRecorder{},
 			watchdogInterval: 10 * time.Millisecond,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -858,7 +858,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should fail when upload stalls", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		etcdClientStub := NewEtcdClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
@@ -877,7 +877,6 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:         &recorder.InfiniteDiscardingFakeRecorder{},
 			watchdogInterval: 10 * time.Millisecond,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -934,12 +933,12 @@ func TestEtcdClusterReconciler_reconcileETCDMaintenance_GetStatusesError(t *test
 	ctx := context.Background()
 
 	t.Run("should return wrapped error when GetStatuses fails", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		stub.StatusError = errors.New("connection refused")
 		hcp := &v1alpha1.HostedControlPlane{}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDMaintenance(ctx, stub, hcp, nil)
 
@@ -953,7 +952,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	emptyHCP := &v1alpha1.HostedControlPlane{}
 
 	t.Run("should defrag when fragmentation exceeds threshold", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above 20% threshold
@@ -961,7 +960,8 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 		hcp := &v1alpha1.HostedControlPlane{}
 
 		returningFakeRecorder, fakeRecorder := recorder.NewInfiniteReturningFakeRecorder()
-		reconciler := &etcdClusterReconciler{recorder: fakeRecorder}
+		reconciler := &etcdClusterReconciler{}
+		ctx := recorder.IntoContext(ctx, fakeRecorder)
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 
@@ -975,14 +975,14 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should not defrag when all members are below threshold", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 900}, // 10% fragmented — below 20% threshold
 			"etcd-1": {DbSize: 1000, DbSizeInUse: 850}, // 15% fragmented — below 20% threshold
 		}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, emptyHCP)
 
@@ -991,13 +991,13 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should skip members with DbSize zero", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 0, DbSizeInUse: 0}, // uninitialised
 		}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, emptyHCP)
 
@@ -1006,7 +1006,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should skip defrag within cooldown period", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
@@ -1017,7 +1017,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 			},
 		}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 
@@ -1026,7 +1026,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should defrag after cooldown period expires", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
@@ -1037,7 +1037,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 			},
 		}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 
@@ -1046,7 +1046,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should propagate Defragment error and not update timestamp on failure", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented
@@ -1054,7 +1054,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 		stub.DefragError = errors.New("defrag failed")
 		hcp := &v1alpha1.HostedControlPlane{}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 
@@ -1064,7 +1064,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should skip retry within cooldown after a failed defrag", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
@@ -1076,7 +1076,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 			},
 		}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 
@@ -1085,7 +1085,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should not use ETCDLastDefragTime for cooldown", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
@@ -1098,7 +1098,8 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 		}
 
 		returningFakeRecorder, fakeRecorder := recorder.NewInfiniteReturningFakeRecorder()
-		reconciler := &etcdClusterReconciler{recorder: fakeRecorder}
+		reconciler := &etcdClusterReconciler{}
+		ctx := recorder.IntoContext(ctx, fakeRecorder)
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 

@@ -46,7 +46,7 @@ var (
 	etcdVolumeResizeEvent           = "EtcdVolumeAutoResize"
 	etcdVolumeSizeReCalculatedEvent = "EtcdVolumeSizeRecalculated"
 	errETCDBackupStalled            = errors.New("etcd backup timed out: no progress in time window")
-	etcdClientVersion37            = semver.MustParse(version.V3_7.String())
+	etcdClientVersion37             = semver.MustParse(version.V3_7.String())
 )
 
 const (
@@ -198,7 +198,6 @@ func (er *etcdClusterReconciler) ReconcileEtcdCluster(
 			} else if !ready {
 				return "etcd StatefulSet is not ready", nil
 			}
-
 
 			if err := er.reconcileETCDMaintenance(ctx, etcdClient, hostedControlPlane, etcdPods); err != nil {
 				return "", err
@@ -360,12 +359,7 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 					cancel(errETCDBackupStalled)
 				})
 				defer watchdog.Stop()
-				er.recorder.Normalf(
-					nil,
-					"CronScheduleTriggered",
-					"EtcdBackup",
-					"Starting etcd backup",
-				)
+				emit.Info(ctx, emit.SinkRecorder, nil, "CronScheduleTriggered", "EtcdBackup", "Starting etcd backup")
 				snapshotResponse, closeClientFunc, err := etcdClient.OpenSnapshotStream(ctx)
 				defer func() { err = errors.Join(err, closeClientFunc()) }()
 				if err != nil {
@@ -504,7 +498,6 @@ func (er *etcdClusterReconciler) reconcileETCDDefragmentation(
 		},
 	)
 }
-
 
 //+kubebuilder:rbac:groups="",resources=services,verbs=create;patch
 

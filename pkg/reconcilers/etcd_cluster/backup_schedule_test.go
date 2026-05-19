@@ -6,11 +6,12 @@ import (
 	"time"
 
 	. "github.com/onsi/gomega"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 )
 
 func TestDailyScheduleFor(t *testing.T) {
 	t.Run("result is within the 20:00–03:59 window", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		identities := [][2]string{
 			{"ns-a", "cluster-1"},
 			{"ns-b", "cluster-2"},
@@ -34,19 +35,19 @@ func TestDailyScheduleFor(t *testing.T) {
 	})
 
 	t.Run("is deterministic for the same cluster", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		g.Expect(dailyScheduleFor("default", "my-cluster")).To(Equal(dailyScheduleFor("default", "my-cluster")))
 	})
 
 	t.Run("produces different schedules for different clusters", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		g.Expect(dailyScheduleFor("ns", "cluster-a")).NotTo(Equal(dailyScheduleFor("ns", "cluster-b")))
 	})
 }
 
 func TestResolveBackupSchedule(t *testing.T) {
 	t.Run("@daily returns a usable schedule within the midnight window", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		schedule, err := resolveBackupSchedule("@daily", "default", "my-cluster")
 		g.Expect(err).NotTo(HaveOccurred())
 
@@ -61,7 +62,7 @@ func TestResolveBackupSchedule(t *testing.T) {
 	})
 
 	t.Run("@daily is deterministic for the same cluster", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		s1, _ := resolveBackupSchedule("@daily", "default", "my-cluster")
 		s2, _ := resolveBackupSchedule("@daily", "default", "my-cluster")
@@ -69,7 +70,7 @@ func TestResolveBackupSchedule(t *testing.T) {
 	})
 
 	t.Run("@daily produces different next-run times for different clusters", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 		a, _ := resolveBackupSchedule("@daily", "ns", "cluster-a")
 		b, _ := resolveBackupSchedule("@daily", "ns", "cluster-b")
@@ -77,7 +78,7 @@ func TestResolveBackupSchedule(t *testing.T) {
 	})
 
 	t.Run("standard cron parses successfully", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		schedule, err := resolveBackupSchedule("0 2 * * *", "ns", "cluster")
 		g.Expect(err).NotTo(HaveOccurred())
 		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -85,7 +86,7 @@ func TestResolveBackupSchedule(t *testing.T) {
 	})
 
 	t.Run("invalid schedule returns an error", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		_, err := resolveBackupSchedule("invalid cron", "ns", "cluster")
 		g.Expect(err).To(HaveOccurred())
 	})
