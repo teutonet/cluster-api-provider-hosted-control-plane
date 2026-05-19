@@ -410,10 +410,6 @@ func (er *etcdClusterReconciler) reconcileETCDMaintenance(
 		return fmt.Errorf("failed to get etcd statuses: %w", err)
 	}
 
-	if err := er.reconcileETCDSpaceUsage(ctx, hostedControlPlane, pods); err != nil {
-		return fmt.Errorf("failed to reconcile etcd space usage: %w", err)
-	}
-
 	if err := er.reconcileETCDDefragmentation(ctx, etcdClient, statuses, hostedControlPlane); err != nil {
 		return fmt.Errorf("failed to reconcile etcd defragmentation: %w", err)
 	}
