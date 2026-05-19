@@ -52,6 +52,30 @@ func (a *Audit) ModeOrDefault() string {
 	return ptr.Deref(a.Mode, defaultMode)
 }
 
+func (ebs *ETCDBackupSecret) HostKeyOrDefault() string {
+	defaultKey := "host"
+	if ebs == nil {
+		return defaultKey
+	}
+	return ptr.Deref(ebs.HostKey, defaultKey)
+}
+
+func (ebs *ETCDBackupSecret) RegionKeyOrDefault() string {
+	defaultKey := "region"
+	if ebs == nil {
+		return defaultKey
+	}
+	return ptr.Deref(ebs.RegionKey, defaultKey)
+}
+
+func (ebs *ETCDBackupSecret) BucketKeyOrDefault() string {
+	defaultKey := "bucket"
+	if ebs == nil {
+		return defaultKey
+	}
+	return ptr.Deref(ebs.BucketKey, defaultKey)
+}
+
 func (ebs *ETCDBackupSecret) AccessKeyIDKeyOrDefault() string {
 	defaultKey := "accessKeyID"
 	if ebs == nil {

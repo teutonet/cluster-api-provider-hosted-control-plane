@@ -566,11 +566,10 @@ func (arr *apiServerResourcesReconciler) extractAdditionalVolumesAndMounts(
 		volume := corev1ac.Volume().
 			WithName(name)
 		if mount.Secret != nil {
-			items := mount.Secret.Items
 			volume = volume.WithSecret(corev1ac.SecretVolumeSource().
 				WithSecretName(mount.Secret.SecretName).
 				WithOptional(false).
-				WithItems(convertItems(items)...),
+				WithItems(convertItems(mount.Secret.Items)...),
 			)
 		}
 		if mount.ConfigMap != nil {

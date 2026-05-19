@@ -204,13 +204,14 @@ func setupControllers(
 		) (*alias.WorkloadClusterClient, ciliumclient.Interface, error) {
 			return workload.GetWorkloadClusterClient(
 				ctx,
+				tracingWrapper,
 				managementClusterClient,
 				cluster,
-				tracingWrapper,
 				controllerUsername,
 			)
 		},
-		func(ctx context.Context,
+		func(
+			ctx context.Context,
 			managementClusterClient *alias.ManagementClusterClient,
 			hostedControlPlane *v1alpha1.HostedControlPlane,
 			cluster *capiv2.Cluster,
@@ -225,7 +226,20 @@ func setupControllers(
 				serverPort,
 			)
 		},
-		s3_client.NewS3Client,
+		func(
+			ctx context.Context,
+			managementClusterClient *alias.ManagementClusterClient,
+			hostedControlPlane *v1alpha1.HostedControlPlane,
+			cluster *capiv2.Cluster,
+		) (s3_client.S3Client, error) {
+			return s3_client.NewS3Client(
+				ctx,
+				tracerProvider,
+				managementClusterClient,
+				hostedControlPlane,
+				cluster,
+			)
+		},
 		mgr.GetEventRecorder(hostedControlPlaneControllerName),
 		controllerNamespace,
 		reconcileFilter,
