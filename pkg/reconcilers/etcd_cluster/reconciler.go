@@ -753,7 +753,7 @@ func isEtcdVersionBefore37(ctx context.Context, imageSpec *v1alpha1.ImageSpec) b
 		return semver.MustParse(version.Version).LT(etcdClientVersion37)
 	}
 
-	parsed, err := semver.Parse(tag)
+	parsed, err := semver.ParseTolerant(tag)
 	if err != nil {
 		emit.Warn(ctx,
 			emit.SinkRecorder|emit.SinkLogger,
