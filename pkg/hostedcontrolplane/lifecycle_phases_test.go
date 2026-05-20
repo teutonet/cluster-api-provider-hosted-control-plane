@@ -268,6 +268,8 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		&recorder.InfiniteDiscardingFakeRecorder{},
 		"default",
 		"",
+		0, // caCertificatesDuration: fallback to legacy default 48h
+		0, // certificatesDuration: fallback to legacy default 24h
 	)
 
 	req := reconcile.Request{

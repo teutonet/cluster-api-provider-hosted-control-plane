@@ -83,7 +83,17 @@ func NewHostedControlPlaneReconciler(
 	recorder events.EventRecorder,
 	controllerNamespace string,
 	reconcileFilter string,
+	caCertificatesDuration time.Duration,
+	certificatesDuration time.Duration,
 ) HostedControlPlaneReconciler {
+	// Fallback to original defaults if the operator didn't override.
+	// Keeps backward compatibility for downstream callers (tests etc.).
+	if caCertificatesDuration <= 0 {
+		caCertificatesDuration = 2 * 24 * time.Hour
+	}
+	if certificatesDuration <= 0 {
+		certificatesDuration = 24 * time.Hour
+	}
 	return &hostedControlPlaneReconciler{
 		client:                         client,
 		managementClusterClient:        managementClusterClient,
@@ -98,8 +108,8 @@ func NewHostedControlPlaneReconciler(
 		controllerNamespace:            controllerNamespace,
 		controllerComponent:            "hosted-control-plane-controller",
 		reconcileFilter:                reconcileFilter,
-		caCertificatesDuration:         2 * 24 * time.Hour,
-		certificatesDuration:           24 * time.Hour,
+		caCertificatesDuration:         caCertificatesDuration,
+		certificatesDuration:           certificatesDuration,
 		apiServerComponentLabel:        "api-server",
 		apiServerServicePort:           int32(443),
 		etcdComponentLabel:             "etcd",

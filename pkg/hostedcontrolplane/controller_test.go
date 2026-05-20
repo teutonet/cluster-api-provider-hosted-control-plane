@@ -74,6 +74,8 @@ func createTestReconcilerWithFilter(client client.Client, reconcileFilter string
 		&recorder.InfiniteDiscardingFakeRecorder{},
 		"test-namespace",
 		reconcileFilter,
+		0, // caCertificatesDuration: fallback to legacy default 48h
+		0, // certificatesDuration: fallback to legacy default 24h
 	)
 }
 

@@ -259,6 +259,16 @@ func (cr *certificateReconciler) createCertificateSpec(
 		usages = append(usages, certmanagerv1.UsageCertSign)
 	}
 
+	// Use renewBefore (absolute) instead of renewBeforePercentage to avoid
+	// a cert-manager webhook validation edge case observed with high
+	// durations: with `renewBeforePercentage: 50` and `duration: 87600h`
+	// (10y), the webhook rejected the patch with "renewBeforePercentage
+	// must result in a renewBefore greater than 5m0s" despite 50% of
+	// 87600h = 43800h being way more than 5m.
+	// `renewBefore = duration / 2` preserves the original 50% renew
+	// behavior in absolute terms, which the webhook validates correctly.
+	duration := slices.Ternary(isCA, cr.caCertificateDuration, cr.certificateDuration)
+	renewBefore := duration / 2
 	return certmanagerv1ac.CertificateSpec().
 		WithSecretName(secretName).
 		WithIssuerRef(certmanagermetav1ac.IssuerReference().
@@ -268,8 +278,8 @@ func (cr *certificateReconciler) createCertificateSpec(
 		WithUsages(usages...).
 		WithIsCA(isCA).
 		WithCommonName(commonName).
-		WithDuration(metav1.Duration{Duration: slices.Ternary(isCA, cr.caCertificateDuration, cr.certificateDuration)}).
-		WithRenewBeforePercentage(cr.certificateRenewBefore)
+		WithDuration(metav1.Duration{Duration: duration}).
+		WithRenewBefore(metav1.Duration{Duration: renewBefore})
 }
 
 func (cr *certificateReconciler) createCertificateSpecs(
