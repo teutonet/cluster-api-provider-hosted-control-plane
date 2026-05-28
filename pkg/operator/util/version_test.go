@@ -5,6 +5,7 @@ import (
 
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 )
 
 func TestGetMinorVersion(t *testing.T) {
@@ -120,7 +121,7 @@ func TestGetMinorVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			hcp := &v1alpha1.HostedControlPlane{
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					Version: tt.version,
@@ -141,7 +142,7 @@ func TestGetMinorVersion(t *testing.T) {
 }
 
 func TestGetMinorVersionNilHostedControlPlane(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	// Test edge case with nil input - this will panic, which is acceptable behavior
 	// since it indicates a programming error
 	defer func() {

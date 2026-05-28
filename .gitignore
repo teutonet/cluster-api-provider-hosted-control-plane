@@ -40,3 +40,5 @@ testbin/*
 *.swp
 *.swo
 *~
+
+.claude

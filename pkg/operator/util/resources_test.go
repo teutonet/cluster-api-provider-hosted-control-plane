@@ -5,6 +5,7 @@ import (
 
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
@@ -16,7 +17,8 @@ func TestResourceRequirementsToResourcesApplyConfiguration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := ResourceRequirementsToResourcesApplyConfiguration(tt.input)
-			tt.validate(NewWithT(t), result)
+			g, _, _ := G(t)
+			tt.validate(g, result)
 		})
 	}
 }
@@ -230,7 +232,7 @@ func getAdvancedResourceTestCases() []resourceTestCase {
 }
 
 func TestResourceRequirementsToResourcesApplyConfigurationReturnType(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	input := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
 			corev1.ResourceCPU: resource.MustParse("100m"),

@@ -144,6 +144,8 @@ linters:
           alias: kubeletv1beta1
         - pkg: k8s.io/kubelet/config/v1beta1
           alias: kubelettypes
+        - pkg: k8s.io/kubelet/pkg/apis/stats/v1alpha1
+          alias: kubeletstatsv1alpha1
         - pkg: k8s.io/kubernetes/cmd/kube-controller-manager/names
           alias: kubenames
         - pkg: k8s.io/client-go/tools/clientcmd/api/v1
@@ -262,6 +264,15 @@ linters:
         #   msg: Use slog instead
         - pattern: ^(record|events)\.NewFakeRecorder(For)?$
           msg: Use pkg/operator/util/recorder/fake_recorder.go instead.
+        - pattern: ^trace\.Span\.AddEvent$
+          msg: use emit.Warnf/Infof with SinkSpanEvent instead
+        - pattern: ^slog\.Logger\.(Warn|Info)Context$
+          msg: use emit.Warnf/emit.Infof instead
+        - pattern: ^recorder\.Recorder\.(Warnf|Normalf)$
+          msg: use emit.Warnf/emit.Infof instead
+        - pattern: ^(gomega\.)?NewWithT$
+          pkg: ^github\.com/onsi/gomega$
+          msg: use G() from the test package instead
     revive:
       rules:
         - name: exported
@@ -336,6 +347,13 @@ linters:
           - gocritic
         text: "deferInLoop: Possible resource leak, 'defer' is called in the 'for' loop"
         path: *testFiles
+      - linters:
+          - forbidigo
+        path: pkg/operator/util/emit/emit\.go
+      # volume_stats_test cannot import the test package: test imports volume_stats (cycle)
+      - linters:
+          - forbidigo
+        path: pkg/reconcilers/etcd_cluster/volume_stats/volume_stats_test\.go
 
 run:
   timeout: 10m

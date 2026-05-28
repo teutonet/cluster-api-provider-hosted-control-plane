@@ -4,11 +4,12 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 )
 
 func Test_fieldOwnerIsTheSame(t *testing.T) {
 	t.Run("field owner is the same", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		g.Expect(hostedControlPlaneControllerName).To(
 			Equal("hcp-controller"),
 			"field owner has changed, this needs a migration, better undo it: got %s, want %s",
@@ -38,7 +39,7 @@ func Test_newResource(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			_, err := newResource(tt.args.serviceName, tt.args.version)
 			if tt.wantErr {
 				g.Expect(err).To(HaveOccurred())

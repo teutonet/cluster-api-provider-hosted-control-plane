@@ -16,8 +16,8 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/emit"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -47,7 +47,6 @@ func NewCertificateReconciler(
 	caCertificateDuration time.Duration,
 	certificateDuration time.Duration,
 	konnectivityServerAudience string,
-	recorder recorder.Recorder,
 ) CertificateReconciler {
 	return &certificateReconciler{
 		certManagerClient:          certManagerClient,
@@ -56,7 +55,6 @@ func NewCertificateReconciler(
 		certificateDuration:        certificateDuration,
 		certificateRenewBefore:     int32(50),
 		konnectivityServerAudience: konnectivityServerAudience,
-		recorder:                   recorder,
 		tracer:                     tracing.GetTracer("certificates"),
 	}
 }
@@ -68,7 +66,6 @@ type certificateReconciler struct {
 	certificateDuration        time.Duration
 	certificateRenewBefore     int32
 	konnectivityServerAudience string
-	recorder                   recorder.Recorder
 	tracer                     string
 }
 
@@ -584,12 +581,12 @@ func (cr *certificateReconciler) cleanupOrphanedCertificates(
 							); err != nil && !apierrors.IsNotFound(err) {
 								return fmt.Errorf("failed to delete orphaned certificate %s: %w", cert.Name, err)
 							}
-							cr.recorder.Normalf(
+							emit.Info(ctx, emit.SinkRecorder,
 								&cert,
 								"CertificateDeleted",
 								"CertificateDeleted",
-								"Deleted orphaned certificate %s",
-								cert.Name,
+								"Deleted orphaned certificate",
+								"name", cert.Name,
 							)
 							return nil
 						},

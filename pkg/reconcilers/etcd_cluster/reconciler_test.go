@@ -7,20 +7,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
-	"k8s.io/utils/ptr"
-	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-
-	. "github.com/onsi/gomega"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test/etcdtest"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	"k8s.io/utils/ptr"
+	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+
+	. "github.com/onsi/gomega"
 )
 
 func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
@@ -43,12 +45,12 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 				},
 				Status: v1alpha1.HostedControlPlaneStatus{
 					ETCDVolumeSize:  resource.MustParse("20Gi"),
-					ETCDVolumeUsage: resource.MustParse("15Gi"), // 5Gi free
+					ETCDVolumeUsage: resource.MustParse("15Gi"),
 				},
 			},
-			etcdServerStorageBuffer:    resource.MustParse("2Gi"), // Buffer requirement
+			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
 			etcdServerStorageIncrement: resource.MustParse("10Gi"),
-			expectedSize:               resource.MustParse("20Gi"), // No growth needed
+			expectedSize:               resource.MustParse("20Gi"),
 		},
 		{
 			name: "autogrow enabled needs more space",
@@ -62,12 +64,12 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 				},
 				Status: v1alpha1.HostedControlPlaneStatus{
 					ETCDVolumeSize:  resource.MustParse("20Gi"),
-					ETCDVolumeUsage: resource.MustParse("19Gi"), // 1Gi free, less than buffer
+					ETCDVolumeUsage: resource.MustParse("19Gi"),
 				},
 			},
-			etcdServerStorageBuffer:    resource.MustParse("2Gi"), // Buffer requirement
+			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
 			etcdServerStorageIncrement: resource.MustParse("10Gi"),
-			expectedSize:               resource.MustParse("30Gi"), // Should grow
+			expectedSize:               resource.MustParse("30Gi"),
 		},
 		{
 			name: "autogrow disabled uses specified size",
@@ -81,27 +83,25 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 					},
 				},
 				Status: v1alpha1.HostedControlPlaneStatus{
-					ETCDVolumeSize:  resource.MustParse("20Gi"), // Current size
+					ETCDVolumeSize:  resource.MustParse("20Gi"),
 					ETCDVolumeUsage: resource.MustParse("19Gi"),
 				},
 			},
 			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
 			etcdServerStorageIncrement: resource.MustParse("10Gi"),
-			expectedSize:               resource.MustParse("25Gi"), // Uses spec size
+			expectedSize:               resource.MustParse("25Gi"),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
-			returningFakeRecorder, rec := recorder.NewInfiniteReturningFakeRecorder(tt.hostedControlPlane)
+			g, ctx, returningFakeRecorder := G(t, tt.hostedControlPlane)
 			reconciler := &etcdClusterReconciler{
-				recorder:                   rec,
 				etcdServerStorageBuffer:    tt.etcdServerStorageBuffer,
 				etcdServerStorageIncrement: tt.etcdServerStorageIncrement,
 			}
 
-			result := reconciler.getETCDVolumeSize(tt.hostedControlPlane)
+			result := reconciler.getETCDVolumeSize(ctx, tt.hostedControlPlane)
 
 			g.Expect(result.Cmp(tt.expectedSize)).To(Equal(0))
 
@@ -135,10 +135,10 @@ func TestEtcdClusterReconciler_ErrorHandling_InvalidVolumeData(t *testing.T) {
 				},
 				Status: v1alpha1.HostedControlPlaneStatus{
 					ETCDVolumeSize:  resource.MustParse("20Gi"),
-					ETCDVolumeUsage: resource.MustParse("-5Gi"), // Invalid negative value
+					ETCDVolumeUsage: resource.MustParse("-5Gi"),
 				},
 			},
-			expectedVolumeSize: resource.MustParse("20Gi"), // Should not grow with invalid data
+			expectedVolumeSize: resource.MustParse("20Gi"),
 			description:        "Should handle negative volume usage gracefully",
 		},
 		{
@@ -152,18 +152,18 @@ func TestEtcdClusterReconciler_ErrorHandling_InvalidVolumeData(t *testing.T) {
 					},
 				},
 				Status: v1alpha1.HostedControlPlaneStatus{
-					ETCDVolumeSize:  resource.Quantity{}, // Zero value
+					ETCDVolumeSize:  resource.Quantity{},
 					ETCDVolumeUsage: resource.MustParse("5Gi"),
 				},
 			},
-			expectedVolumeSize: resource.MustParse("10Gi"), // Should default to minimum increment
+			expectedVolumeSize: resource.MustParse("10Gi"),
 			description:        "Should handle zero current volume size",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, ctx, _ := G(t)
 			defer func() {
 				if r := recover(); r != nil && !tt.expectPanicRecovery {
 					g.Expect(r).To(BeNil())
@@ -171,11 +171,10 @@ func TestEtcdClusterReconciler_ErrorHandling_InvalidVolumeData(t *testing.T) {
 			}()
 
 			reconciler := &etcdClusterReconciler{
-				recorder:                   &recorder.InfiniteDiscardingFakeRecorder{},
 				etcdServerStorageBuffer:    resource.MustParse("2Gi"),
 				etcdServerStorageIncrement: resource.MustParse("10Gi"),
 			}
-			result := reconciler.getETCDVolumeSize(tt.hostedControlPlane)
+			result := reconciler.getETCDVolumeSize(ctx, tt.hostedControlPlane)
 
 			g.Expect(result.Cmp(tt.expectedVolumeSize)).
 				To(Equal(0))
@@ -195,7 +194,7 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 		{
 			name:           "just below threshold - should trigger growth",
 			currentSize:    "20Gi",
-			currentUsage:   "17.1Gi", // 20 - 17.1 = 2.9Gi free, less than 3Gi buffer
+			currentUsage:   "17.1Gi",
 			expectedSize:   "30Gi",
 			expectedGrowth: true,
 			description:    "Should grow when free space is less than buffer requirement",
@@ -203,7 +202,7 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 		{
 			name:           "at threshold - should not grow",
 			currentSize:    "20Gi",
-			currentUsage:   "17Gi", // 20-17 = 3Gi free, equal to buffer
+			currentUsage:   "17Gi",
 			expectedSize:   "20Gi",
 			expectedGrowth: false,
 			description:    "Should not grow when free space equals buffer requirement",
@@ -211,7 +210,7 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 		{
 			name:           "well below threshold - should trigger growth",
 			currentSize:    "20Gi",
-			currentUsage:   "19Gi", // 20-19 = 1Gi free, well below buffer
+			currentUsage:   "19Gi",
 			expectedSize:   "30Gi",
 			expectedGrowth: true,
 			description:    "Should grow when free space is well below buffer",
@@ -219,8 +218,8 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 		{
 			name:           "massive usage spike - should grow by increment only",
 			currentSize:    "20Gi",
-			currentUsage:   "19.5Gi", // Nearly full
-			expectedSize:   "30Gi",   // Should grow by a single increment, not double
+			currentUsage:   "19.5Gi",
+			expectedSize:   "30Gi",
 			expectedGrowth: true,
 			description:    "Should grow by single increment regardless of usage spike size",
 		},
@@ -228,10 +227,8 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
-			returningFakeRecorder, fakeRecorder := recorder.NewInfiniteReturningFakeRecorder()
+			g, ctx, returningFakeRecorder := G(t)
 			reconciler := &etcdClusterReconciler{
-				recorder:                   fakeRecorder,
 				etcdServerStorageBuffer:    resource.MustParse("3Gi"),
 				etcdServerStorageIncrement: resource.MustParse("10Gi"),
 			}
@@ -250,7 +247,7 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 				},
 			}
 
-			result := reconciler.getETCDVolumeSize(hcp)
+			result := reconciler.getETCDVolumeSize(ctx, hcp)
 			expectedQuantity := resource.MustParse(tt.expectedSize)
 
 			g.Expect(result.Cmp(expectedQuantity)).To(Equal(0))
@@ -269,23 +266,9 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 }
 
 func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
-	ctx := context.Background()
-
-	t.Run("should update volume usage from etcd status", func(t *testing.T) {
-		g := NewWithT(t)
-		highestMemberDBSize := int64(5368709120)
-		statuses := map[string]*clientv3.StatusResponse{
-			"etcd-0": {
-				Header:  &etcdserverpb.ResponseHeader{ClusterId: 1},
-				Version: "3.5.0",
-				DbSize:  highestMemberDBSize,
-			},
-			"etcd-1": {
-				Header:  &etcdserverpb.ResponseHeader{ClusterId: 1},
-				Version: "3.5.0",
-				DbSize:  highestMemberDBSize / 2,
-			},
-		}
+	t.Run("should update volume usage from filesystem stats", func(t *testing.T) {
+		g, ctx, _ := G(t)
+		fsUsage := int64(5368709120) // 5 GiB
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Status: v1alpha1.HostedControlPlaneStatus{
@@ -294,33 +277,126 @@ func TestEtcdClusterReconciler_reconcileETCDSpaceUsage(t *testing.T) {
 			},
 		}
 
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = fsUsage
+
 		reconciler := &etcdClusterReconciler{
-			recorder:                   &recorder.InfiniteDiscardingFakeRecorder{},
-			etcdServerStorageBuffer:    resource.MustParse("2Gi"),
-			etcdServerStorageIncrement: resource.MustParse("10Gi"),
-			etcdClientFactory:          nil,
+			volumeStatsProvider: volumeStub,
 		}
 
-		err := reconciler.reconcileETCDSpaceUsage(ctx, statuses, hcp)
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
 
 		g.Expect(err).NotTo(HaveOccurred())
-		expectedQuantity := resource.NewQuantity(highestMemberDBSize, resource.BinarySI)
-		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*expectedQuantity))
+		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*resource.NewQuantity(fsUsage, resource.BinarySI)))
+	})
+
+	t.Run("should use filesystem usage when it exceeds previous", func(t *testing.T) {
+		g, ctx, _ := G(t)
+		fsUsage := int64(5 * 1024 * 1024 * 1024)
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = fsUsage
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("2Gi"),
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*resource.NewQuantity(fsUsage, resource.BinarySI)))
+	})
+
+	t.Run("should update to actual usage when all stats succeed", func(t *testing.T) {
+		g, ctx, _ := G(t)
+		fsUsage := int64(1 * 1024 * 1024 * 1024) // 1 GiB
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = fsUsage
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("5Gi"),
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(hcp.Status.ETCDVolumeUsage).To(EqualResource(*resource.NewQuantity(fsUsage, resource.BinarySI)))
+	})
+
+	t.Run("should log warning and continue when volume stats fails", func(t *testing.T) {
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = 10 * (1 << 30)
+		volumeStub.Error = errors.New("connection refused")
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("15Gi"),
+			},
+		}
+
+		g, ctx, returningFakeRecorder := G(t)
+
+		reconciler := &etcdClusterReconciler{
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(returningFakeRecorder.Events).To(ContainElement(ContainSubstring("connection refused")))
+	})
+
+	t.Run("should not shrink when stats fail", func(t *testing.T) {
+		g, ctx, _ := G(t)
+
+		volumeStub := NewEtcdVolumeStatsProviderStub()
+		volumeStub.MaxUsage = 10 * (1 << 30)
+		volumeStub.Error = errors.New("connection refused")
+
+		hcp := &v1alpha1.HostedControlPlane{
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDVolumeSize:  resource.MustParse("20Gi"),
+				ETCDVolumeUsage: resource.MustParse("15Gi"),
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			volumeStatsProvider: volumeStub,
+		}
+
+		err := reconciler.reconcileETCDSpaceUsage(ctx, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(hcp.Status.ETCDVolumeUsage).
+			To(EqualResource(*resource.NewQuantity(int64(15*1024*1024*1024), resource.BinarySI)))
 	})
 }
 
 func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
-	ctx := context.Background()
-
 	t.Run("should handle etcd alarm errors", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		stub := NewEtcdClientStub()
 		stub.AlarmError = errors.New("failed to list alarms")
 
 		hcp := &v1alpha1.HostedControlPlane{}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
 			etcdClientFactory: nil,
 		}
 
@@ -329,74 +405,98 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 		g.Expect(err).To(MatchError(ContainSubstring("failed to list alarms")))
 	})
 
-	t.Run("should disarm NOSPACE alarms when autogrow is enabled", func(t *testing.T) {
-		g := NewWithT(t)
-		stub := NewEtcdClientStub()
-		stub.ActiveAlarms = []*etcdserverpb.AlarmMember{
-			{
-				MemberID: 12345,
-				Alarm:    etcdserverpb.AlarmType_NOSPACE,
-			},
-		}
+	for _, tc := range []struct {
+		name           string
+		volumeSize     resource.Quantity
+		volumeUsage    resource.Quantity
+		expectDisarmed bool
+	}{
+		{
+			name:           "should disarm NOSPACE when headroom is sufficient",
+			volumeSize:     resource.MustParse("10Gi"),
+			volumeUsage:    resource.MustParse("5Gi"),
+			expectDisarmed: true,
+		},
+		{
+			name:           "should not disarm NOSPACE when headroom is insufficient",
+			volumeSize:     resource.MustParse("10Gi"),
+			volumeUsage:    resource.MustParse("9500Mi"),
+			expectDisarmed: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, ctx, _ := G(t)
+			stub := NewEtcdClientStub()
+			stub.ActiveAlarms = []*etcdserverpb.AlarmMember{
+				{MemberID: 12345, Alarm: etcdserverpb.AlarmType_NOSPACE},
+			}
 
-		hcp := &v1alpha1.HostedControlPlane{
-			Spec: v1alpha1.HostedControlPlaneSpec{
-				HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
-					ETCD: v1alpha1.ETCDComponent{
-						AutoGrow: ptr.To(true),
+			hcp := &v1alpha1.HostedControlPlane{
+				Spec: v1alpha1.HostedControlPlaneSpec{
+					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+						ETCD: v1alpha1.ETCDComponent{AutoGrow: ptr.To(true)},
 					},
 				},
-			},
-		}
+				Status: v1alpha1.HostedControlPlaneStatus{
+					ETCDVolumeSize:  tc.volumeSize,
+					ETCDVolumeUsage: tc.volumeUsage,
+				},
+			}
 
-		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
-			etcdClientFactory: nil,
-		}
+			reconciler := &etcdClusterReconciler{
+				etcdServerStorageBuffer: resource.MustParse("1Gi"),
+			}
 
-		err := reconciler.etcdIsHealthy(ctx, stub, hcp)
+			g.Expect(reconciler.etcdIsHealthy(ctx, stub, hcp)).NotTo(HaveOccurred())
+			if tc.expectDisarmed {
+				g.Expect(stub.ActiveAlarms).ToNot(ContainElement(HaveField("Alarm", etcdserverpb.AlarmType_NOSPACE)))
+			} else {
+				g.Expect(stub.ActiveAlarms).To(ContainElement(HaveField("Alarm", etcdserverpb.AlarmType_NOSPACE)))
+			}
+		})
+	}
 
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(stub.ActiveAlarms).ToNot(ContainElement(
-			HaveField("Alarm", etcdserverpb.AlarmType_NOSPACE),
-		))
-	})
+	t.Run(
+		"should return error for active NOSPACE alarms when autogrow is disabled and headroom is insufficient",
+		func(t *testing.T) {
+			g, ctx, _ := G(t)
+			stub := NewEtcdClientStub()
+			stub.ActiveAlarms = []*etcdserverpb.AlarmMember{
+				{
+					MemberID: 12345,
+					Alarm:    etcdserverpb.AlarmType_NOSPACE,
+				},
+			}
 
-	t.Run("should return error for active NOSPACE alarms when autogrow is disabled", func(t *testing.T) {
-		g := NewWithT(t)
-		stub := NewEtcdClientStub()
-		stub.ActiveAlarms = []*etcdserverpb.AlarmMember{
-			{
-				MemberID: 12345,
-				Alarm:    etcdserverpb.AlarmType_NOSPACE,
-			},
-		}
-
-		hcp := &v1alpha1.HostedControlPlane{
-			Spec: v1alpha1.HostedControlPlaneSpec{
-				HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
-					ETCD: v1alpha1.ETCDComponent{
-						AutoGrow: ptr.To(false),
+			hcp := &v1alpha1.HostedControlPlane{
+				Spec: v1alpha1.HostedControlPlaneSpec{
+					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+						ETCD: v1alpha1.ETCDComponent{
+							AutoGrow: ptr.To(false),
+						},
 					},
 				},
-			},
-		}
+				Status: v1alpha1.HostedControlPlaneStatus{
+					ETCDVolumeSize:  resource.MustParse("10Gi"),
+					ETCDVolumeUsage: resource.MustParse("9500Mi"),
+				},
+			}
 
-		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
-			etcdClientFactory: nil,
-		}
+			reconciler := &etcdClusterReconciler{
+				etcdServerStorageBuffer: resource.MustParse("1Gi"),
+			}
 
-		err := reconciler.etcdIsHealthy(ctx, stub, hcp)
+			err := reconciler.etcdIsHealthy(ctx, stub, hcp)
 
-		g.Expect(err).To(MatchError(ContainSubstring(etcdserverpb.AlarmType_NOSPACE.String())))
-		g.Expect(stub.ActiveAlarms).To(ContainElement(
-			HaveField("Alarm", etcdserverpb.AlarmType_NOSPACE),
-		))
-	})
+			g.Expect(err).To(MatchError(ContainSubstring(etcdserverpb.AlarmType_NOSPACE.String())))
+			g.Expect(stub.ActiveAlarms).To(ContainElement(
+				HaveField("Alarm", etcdserverpb.AlarmType_NOSPACE),
+			))
+		},
+	)
 
 	t.Run("should return error for active non-NOSPACE alarms", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		stub := NewEtcdClientStub()
 		stub.ActiveAlarms = []*etcdserverpb.AlarmMember{
 			{
@@ -416,7 +516,6 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
 			etcdClientFactory: nil,
 		}
 
@@ -426,13 +525,12 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 	})
 
 	t.Run("should pass when no alarms present", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		stub := NewEtcdClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
 			etcdClientFactory: nil,
 		}
 
@@ -443,12 +541,10 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 }
 
 func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
-	ctx := context.Background()
-
 	yesterday := metav1.Time{Time: time.Now().Add(-25 * time.Hour)}
 	cronAt2AM := "0 2 * * *"
+
 	t.Run("should create snapshot and upload to S3 when scheduled", func(t *testing.T) {
-		g := NewWithT(t)
 		etcdClientStub := NewEtcdClientStub()
 		s3ClientStub := NewS3ClientStub()
 
@@ -463,13 +559,13 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 				},
 			},
 			Status: v1alpha1.HostedControlPlaneStatus{
-				ETCDLastBackupTime: yesterday, // Last backup was 25 hours ago
+				ETCDLastBackupTime: yesterday,
 			},
 		}
 
-		returningFakeRecorder, fakeRecorder := recorder.NewInfiniteReturningFakeRecorder(hcp)
+		g, ctx, returningFakeRecorder := G(t, hcp)
+
 		reconciler := &etcdClusterReconciler{
-			recorder:          fakeRecorder,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -495,7 +591,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should not create backup when not scheduled", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		etcdClientStub := NewEtcdClientStub()
 		s3ClientStub := NewS3ClientStub()
 
@@ -510,12 +606,11 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 				},
 			},
 			Status: v1alpha1.HostedControlPlaneStatus{
-				ETCDLastBackupTime: metav1.Time{Time: time.Now().Add(-1 * time.Hour)}, // Recent backup
+				ETCDLastBackupTime: metav1.Time{Time: time.Now().Add(-1 * time.Hour)},
 			},
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -532,7 +627,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should handle etcd snapshot creation failure", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		etcdClientStub := NewEtcdClientStub()
 		etcdClientStub.SnapshotError = errors.New("failed to create snapshot")
 		s3ClientStub := NewS3ClientStub()
@@ -548,12 +643,11 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 				},
 			},
 			Status: v1alpha1.HostedControlPlaneStatus{
-				ETCDLastBackupTime: yesterday, // Last backup was 25 hours ago
+				ETCDLastBackupTime: yesterday,
 			},
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -570,7 +664,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should handle S3 upload failure", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		etcdClientStub := NewEtcdClientStub()
 		s3ClientStub := NewS3ClientStub()
 		s3ClientStub.UploadError = errors.New("failed to upload to S3")
@@ -586,12 +680,11 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 				},
 			},
 			Status: v1alpha1.HostedControlPlaneStatus{
-				ETCDLastBackupTime: yesterday, // Last backup was 25 hours ago
+				ETCDLastBackupTime: yesterday,
 			},
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -608,7 +701,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should handle invalid cron schedule", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		etcdClientStub := NewEtcdClientStub()
 		s3ClientStub := NewS3ClientStub()
 
@@ -617,7 +710,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 				HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 					ETCD: v1alpha1.ETCDComponent{
 						Backup: &v1alpha1.ETCDBackup{
-							Schedule: "invalid cron", // Invalid schedule
+							Schedule: "invalid cron",
 						},
 					},
 				},
@@ -628,7 +721,6 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -645,7 +737,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should create first backup when ETCDLastBackupTime is zero", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		etcdClientStub := NewEtcdClientStub()
 		s3ClientStub := NewS3ClientStub()
 
@@ -666,12 +758,11 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 				},
 			},
 			Status: v1alpha1.HostedControlPlaneStatus{
-				ETCDLastBackupTime: metav1.Time{}, // Zero time - first backup
+				ETCDLastBackupTime: metav1.Time{},
 			},
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -690,7 +781,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should create backup with @daily schedule spread by cluster identity", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		etcdClientStub := NewEtcdClientStub()
 		s3ClientStub := NewS3ClientStub()
 
@@ -714,7 +805,6 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:          &recorder.InfiniteDiscardingFakeRecorder{},
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -733,7 +823,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should fail when snapshot open stalls", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 
 		hcp := &v1alpha1.HostedControlPlane{
 			Spec: v1alpha1.HostedControlPlaneSpec{
@@ -751,7 +841,6 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:         &recorder.InfiniteDiscardingFakeRecorder{},
 			watchdogInterval: 10 * time.Millisecond,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -769,7 +858,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 	})
 
 	t.Run("should fail when upload stalls", func(t *testing.T) {
-		g := NewWithT(t)
+		g, ctx, _ := G(t)
 		etcdClientStub := NewEtcdClientStub()
 
 		hcp := &v1alpha1.HostedControlPlane{
@@ -788,7 +877,6 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
-			recorder:         &recorder.InfiniteDiscardingFakeRecorder{},
 			watchdogInterval: 10 * time.Millisecond,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -820,7 +908,7 @@ type stallingEtcdClient struct{}
 
 var _ etcd_client.EtcdClient = new(stallingEtcdClient)
 
-func (s *stallingEtcdClient) GetStatuses(_ context.Context) (map[string]*clientv3.StatusResponse, error) {
+func (s *stallingEtcdClient) GetStatuses(_ context.Context, _ []string) (map[string]*clientv3.StatusResponse, error) {
 	return make(map[string]*clientv3.StatusResponse), nil
 }
 
@@ -845,14 +933,14 @@ func TestEtcdClusterReconciler_reconcileETCDMaintenance_GetStatusesError(t *test
 	ctx := context.Background()
 
 	t.Run("should return wrapped error when GetStatuses fails", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		stub.StatusError = errors.New("connection refused")
 		hcp := &v1alpha1.HostedControlPlane{}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
-		err := reconciler.reconcileETCDMaintenance(ctx, stub, hcp)
+		err := reconciler.reconcileETCDMaintenance(ctx, stub, hcp, nil)
 
 		g.Expect(err).To(MatchError(ContainSubstring("failed to get etcd statuses")))
 		g.Expect(err).To(MatchError(ContainSubstring("connection refused")))
@@ -864,7 +952,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	emptyHCP := &v1alpha1.HostedControlPlane{}
 
 	t.Run("should defrag when fragmentation exceeds threshold", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above 20% threshold
@@ -872,7 +960,8 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 		hcp := &v1alpha1.HostedControlPlane{}
 
 		returningFakeRecorder, fakeRecorder := recorder.NewInfiniteReturningFakeRecorder()
-		reconciler := &etcdClusterReconciler{recorder: fakeRecorder}
+		reconciler := &etcdClusterReconciler{}
+		ctx := recorder.IntoContext(ctx, fakeRecorder)
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 
@@ -886,14 +975,14 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should not defrag when all members are below threshold", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 900}, // 10% fragmented — below 20% threshold
 			"etcd-1": {DbSize: 1000, DbSizeInUse: 850}, // 15% fragmented — below 20% threshold
 		}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, emptyHCP)
 
@@ -902,13 +991,13 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should skip members with DbSize zero", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 0, DbSizeInUse: 0}, // uninitialised
 		}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, emptyHCP)
 
@@ -917,7 +1006,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should skip defrag within cooldown period", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
@@ -928,7 +1017,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 			},
 		}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 
@@ -937,7 +1026,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should defrag after cooldown period expires", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
@@ -948,7 +1037,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 			},
 		}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 
@@ -957,7 +1046,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should propagate Defragment error and not update timestamp on failure", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented
@@ -965,7 +1054,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 		stub.DefragError = errors.New("defrag failed")
 		hcp := &v1alpha1.HostedControlPlane{}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 
@@ -975,7 +1064,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should skip retry within cooldown after a failed defrag", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
@@ -987,7 +1076,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 			},
 		}
 
-		reconciler := &etcdClusterReconciler{recorder: &recorder.InfiniteDiscardingFakeRecorder{}}
+		reconciler := &etcdClusterReconciler{}
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 
@@ -996,7 +1085,7 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 	})
 
 	t.Run("should not use ETCDLastDefragTime for cooldown", func(t *testing.T) {
-		g := NewWithT(t)
+		g, _, _ := G(t)
 		stub := NewEtcdClientStub()
 		statuses := map[string]*clientv3.StatusResponse{
 			"etcd-0": {DbSize: 1000, DbSizeInUse: 700}, // 30% fragmented — above threshold
@@ -1009,7 +1098,8 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 		}
 
 		returningFakeRecorder, fakeRecorder := recorder.NewInfiniteReturningFakeRecorder()
-		reconciler := &etcdClusterReconciler{recorder: fakeRecorder}
+		reconciler := &etcdClusterReconciler{}
+		ctx := recorder.IntoContext(ctx, fakeRecorder)
 
 		err := reconciler.reconcileETCDDefragmentation(ctx, stub, statuses, hcp)
 
@@ -1019,4 +1109,61 @@ func TestEtcdClusterReconciler_reconcileETCDDefragmentation(t *testing.T) {
 			And(ContainSubstring("EtcdDefrag"), ContainSubstring("Defragmented")),
 		))
 	})
+}
+
+func TestBuildEtcdArgs_SnapshotCount(t *testing.T) {
+	tests := []struct {
+		name                 string
+		etcdVersionBefore3_7 bool
+		expectSnapshotCount  bool
+	}{
+		{
+			name:                 "version < 3.7 sets snapshot-count",
+			etcdVersionBefore3_7: true,
+			expectSnapshotCount:  true,
+		},
+		{
+			name:                 "version >= 3.7 omits snapshot-count",
+			etcdVersionBefore3_7: false,
+			expectSnapshotCount:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, ctx, _ := G(t)
+
+			reconciler := &etcdClusterReconciler{}
+			hcp := &v1alpha1.HostedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns"},
+				Status:     v1alpha1.HostedControlPlaneStatus{ETCDVolumeSize: resource.MustParse("10Gi")},
+			}
+			cluster := &capiv2.Cluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "test-ns"},
+			}
+			serverPort := corev1ac.ContainerPort().WithContainerPort(2379)
+			peerPort := corev1ac.ContainerPort().WithContainerPort(2380)
+			metricsPort := corev1ac.ContainerPort().WithContainerPort(2381)
+			dataMount := corev1ac.VolumeMount().WithMountPath("/var/lib/etcd")
+			certMount := corev1ac.VolumeMount().WithMountPath("/etc/etcd")
+
+			args := reconciler.buildEtcdArgs(
+				ctx,
+				hcp,
+				cluster,
+				tt.etcdVersionBefore3_7,
+				dataMount,
+				certMount,
+				serverPort,
+				peerPort,
+				metricsPort,
+			)
+
+			if tt.expectSnapshotCount {
+				g.Expect(args).To(ContainElement("--snapshot-count=10000"))
+			} else {
+				g.Expect(args).NotTo(ContainElement(ContainSubstring("snapshot-count")))
+			}
+		})
+	}
 }

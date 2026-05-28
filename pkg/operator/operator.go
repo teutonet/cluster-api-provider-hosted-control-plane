@@ -18,9 +18,11 @@ import (
 	webhookv1alpha1 "github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1/webhook"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/hostedcontrolplane"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/etc"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/emit"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/s3_client"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/volume_stats"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/logging"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -112,7 +114,7 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (retE
 		return err
 	}
 
-	logr.FromContextAsSlogLogger(ctx).InfoContext(ctx, "Starting operator", "version", version)
+	emit.Info(ctx, emit.SinkLogger, nil, "OperatorStarting", "OperatorStart", "Starting operator", "version", version)
 	if err := mgr.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start manager: %w", err)
 	}
@@ -240,6 +242,7 @@ func setupControllers(
 				cluster,
 			)
 		},
+		volume_stats.NewEtcdVolumeStatsProvider(&managementClusterClient),
 		mgr.GetEventRecorder(hostedControlPlaneControllerName),
 		controllerNamespace,
 		reconcileFilter,

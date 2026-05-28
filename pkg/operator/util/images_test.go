@@ -5,6 +5,7 @@ import (
 
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	"k8s.io/utils/ptr"
 )
 
@@ -48,7 +49,7 @@ func TestBuildImageString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			g.Expect(buildImageString(tt.registry, tt.repository, tt.tag)).To(Equal(tt.expected))
 		})
 	}
@@ -147,7 +148,7 @@ func TestResolveImageFromSpec(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			g.Expect(resolveImageFromSpec(tt.imageSpec, tt.defaultRegistry, tt.defaultRepository, tt.defaultTag)).
 				To(Equal(tt.expected))
 		})
@@ -202,7 +203,7 @@ func TestResolveKubernetesComponentImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			g.Expect(ResolveKubernetesComponentImage(tt.imageSpec, tt.component, tt.version)).To(Equal(tt.expected))
 		})
 	}
@@ -242,7 +243,7 @@ func TestResolveETCDImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			g.Expect(ResolveETCDImage(tt.imageSpec, tt.version)).To(Equal(tt.expected))
 		})
 	}
@@ -292,7 +293,7 @@ func TestResolveKonnectivityImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			g.Expect(ResolveKonnectivityImage(tt.imageSpec, tt.component, tt.minorVersion)).To(Equal(tt.expected))
 		})
 	}
@@ -331,7 +332,7 @@ func TestResolveKubeProxyImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			g.Expect(ResolveKubeProxyImage(tt.imageSpec, tt.version)).To(Equal(tt.expected))
 		})
 	}
@@ -376,7 +377,7 @@ func TestResolveCoreDNSImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			g.Expect(ResolveCoreDNSImage(tt.imageSpec)).To(Equal(tt.expected))
 		})
 	}
@@ -421,7 +422,7 @@ func TestResolveAuditWebhookImage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			g.Expect(ResolveNginxImage(tt.imageSpec)).To(Equal(tt.expected))
 		})
 	}

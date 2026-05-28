@@ -8,6 +8,7 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -91,7 +92,7 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := t.Context()
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			kubeClient := fake.NewClientset(slices.Map(tt.existingSecrets,
 				func(s *corev1.Secret, _ int) runtime.Object {
 					return s
@@ -193,7 +194,7 @@ func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := t.Context()
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			secrets := []*corev1.Secret{
 				createCertificateSecret("test-cluster-ca", "default", true),
 			}
@@ -258,7 +259,7 @@ func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
 
 func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 	ctx := t.Context()
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	cluster := &capiv2.Cluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",
@@ -323,7 +324,7 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 
 func TestKubeconfigReconciler_MultiUserScenarios(t *testing.T) {
 	ctx := t.Context()
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	cluster := &capiv2.Cluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-cluster",

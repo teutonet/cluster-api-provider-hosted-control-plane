@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -149,7 +150,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			fakeClient := fake.NewClientset()
 			tt.setupConfigMaps(fakeClient, tt.namespace, g)
 
@@ -187,7 +188,7 @@ func TestCalculateConfigMapChecksum(t *testing.T) {
 }
 
 func TestCalculateConfigMapChecksum_Consistency(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	fakeClient := fake.NewClientset()
 
 	g.Expect(fakeClient.CoreV1().ConfigMaps(namespace).Create(
@@ -226,7 +227,7 @@ func TestCalculateConfigMapChecksum_Consistency(t *testing.T) {
 }
 
 func TestCalculateConfigMapChecksum_Ordering(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	fakeClient := fake.NewClientset()
 
 	configMaps := []*corev1.ConfigMap{
@@ -279,7 +280,7 @@ func TestCalculateConfigMapChecksum_Ordering(t *testing.T) {
 }
 
 func TestCalculateConfigMapChecksum_DataChanges(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	fakeClient := fake.NewClientset()
 
 	g.Expect(fakeClient.CoreV1().ConfigMaps(namespace).Create(
@@ -372,7 +373,7 @@ func TestCalculateChecksum(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			result := calculateChecksum(tt.dataMaps...)
 
 			if tt.expected == "" {
@@ -398,7 +399,7 @@ func TestCalculateChecksum(t *testing.T) {
 }
 
 func TestCalculateChecksum_Ordering(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	map1 := map[string]any{"z": "26", "a": "1", "m": "13"}
 	map2 := map[string]any{"a": "1", "m": "13", "z": "26"}
 
@@ -414,7 +415,7 @@ func TestCalculateChecksum_Ordering(t *testing.T) {
 }
 
 func TestCalculateChecksum_Deterministic(t *testing.T) {
-	g := NewWithT(t)
+	g, _, _ := G(t)
 	dataMap := map[string]any{
 		"key1": "value1",
 		"key2": "value2",

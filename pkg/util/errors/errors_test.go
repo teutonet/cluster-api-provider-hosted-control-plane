@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 )
 
 func TestErrorfIfErr(t *testing.T) {
@@ -60,7 +61,7 @@ func TestErrorfIfErr(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := NewWithT(t)
+			g, _, _ := G(t)
 			err := IfErrErrorf(tt.args.format, tt.args.args...)
 
 			if tt.expectedErr == nil {
