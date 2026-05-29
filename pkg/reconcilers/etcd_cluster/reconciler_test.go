@@ -19,7 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
-	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
 	. "github.com/onsi/gomega"
@@ -39,7 +38,7 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: ptr.To(true),
+							AutoGrow: new(true),
 						},
 					},
 				},
@@ -58,7 +57,7 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: ptr.To(true),
+							AutoGrow: new(true),
 						},
 					},
 				},
@@ -77,8 +76,8 @@ func TestEtcdClusterReconciler_getETCDVolumeSize(t *testing.T) {
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow:   ptr.To(false),
-							VolumeSize: ptr.To(resource.MustParse("25Gi")),
+							AutoGrow:   new(false),
+							VolumeSize: new(resource.MustParse("25Gi")),
 						},
 					},
 				},
@@ -129,7 +128,7 @@ func TestEtcdClusterReconciler_ErrorHandling_InvalidVolumeData(t *testing.T) {
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: ptr.To(true),
+							AutoGrow: new(true),
 						},
 					},
 				},
@@ -147,7 +146,7 @@ func TestEtcdClusterReconciler_ErrorHandling_InvalidVolumeData(t *testing.T) {
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: ptr.To(true),
+							AutoGrow: new(true),
 						},
 					},
 				},
@@ -237,7 +236,7 @@ func TestEtcdClusterReconciler_StateTransitions_AutoGrowDecisionLogic(t *testing
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: ptr.To(true),
+							AutoGrow: new(true),
 						},
 					},
 				},
@@ -434,7 +433,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 			hcp := &v1alpha1.HostedControlPlane{
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
-						ETCD: v1alpha1.ETCDComponent{AutoGrow: ptr.To(true)},
+						ETCD: v1alpha1.ETCDComponent{AutoGrow: new(true)},
 					},
 				},
 				Status: v1alpha1.HostedControlPlaneStatus{
@@ -472,7 +471,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 				Spec: v1alpha1.HostedControlPlaneSpec{
 					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 						ETCD: v1alpha1.ETCDComponent{
-							AutoGrow: ptr.To(false),
+							AutoGrow: new(false),
 						},
 					},
 				},
@@ -509,7 +508,7 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 			Spec: v1alpha1.HostedControlPlaneSpec{
 				HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
 					ETCD: v1alpha1.ETCDComponent{
-						AutoGrow: ptr.To(true),
+						AutoGrow: new(true),
 					},
 				},
 			},
@@ -749,9 +748,9 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 							Schedule: cronAt2AM,
 							Secret: v1alpha1.ETCDBackupSecret{
 								Name:               "etcd-backup-secret",
-								Namespace:          ptr.To("default"),
-								AccessKeyIDKey:     ptr.To("access-key-id"),
-								SecretAccessKeyKey: ptr.To("secret-access-key"),
+								Namespace:          new("default"),
+								AccessKeyIDKey:     new("access-key-id"),
+								SecretAccessKeyKey: new("secret-access-key"),
 							},
 						},
 					},

@@ -66,7 +66,6 @@ func TestExtractPodVolumeUsage(t *testing.T) {
 	t.Run("returns usage for matching pod with PVC volume", func(t *testing.T) {
 		g := NewWithT(t)
 		usage := int64(1073741824) // 1 GiB
-		usedBytes := uint64(usage)
 		summary := kubeletstatsv1alpha1.Summary{
 			Pods: []kubeletstatsv1alpha1.PodStats{
 				{
@@ -81,7 +80,7 @@ func TestExtractPodVolumeUsage(t *testing.T) {
 								Name:      "etcd-data-etcd-0",
 								Namespace: "test-ns",
 							},
-							FsStats: kubeletstatsv1alpha1.FsStats{UsedBytes: &usedBytes},
+							FsStats: kubeletstatsv1alpha1.FsStats{UsedBytes: new(uint64(usage))},
 						},
 					},
 				},
@@ -95,7 +94,6 @@ func TestExtractPodVolumeUsage(t *testing.T) {
 	t.Run("returns usage for matching pod with static volume", func(t *testing.T) {
 		g := NewWithT(t)
 		usage := int64(536870912) // 512 MiB
-		usedBytes := uint64(usage)
 		summary := kubeletstatsv1alpha1.Summary{
 			Pods: []kubeletstatsv1alpha1.PodStats{
 				{
@@ -106,7 +104,7 @@ func TestExtractPodVolumeUsage(t *testing.T) {
 					VolumeStats: []kubeletstatsv1alpha1.VolumeStats{
 						{
 							Name:    "etcd-data",
-							FsStats: kubeletstatsv1alpha1.FsStats{UsedBytes: &usedBytes},
+							FsStats: kubeletstatsv1alpha1.FsStats{UsedBytes: new(uint64(usage))},
 						},
 					},
 				},
@@ -163,7 +161,6 @@ func TestExtractPodVolumeUsage(t *testing.T) {
 
 	t.Run("ignores non-etcd volumes", func(t *testing.T) {
 		g := NewWithT(t)
-		usedBytes := uint64(1073741824)
 		summary := kubeletstatsv1alpha1.Summary{
 			Pods: []kubeletstatsv1alpha1.PodStats{
 				{
@@ -178,7 +175,7 @@ func TestExtractPodVolumeUsage(t *testing.T) {
 								Name:      "etcd-certificates-etcd-0",
 								Namespace: "test-ns",
 							},
-							FsStats: kubeletstatsv1alpha1.FsStats{UsedBytes: &usedBytes},
+							FsStats: kubeletstatsv1alpha1.FsStats{UsedBytes: new(uint64(1073741824))},
 						},
 					},
 				},
@@ -191,7 +188,6 @@ func TestExtractPodVolumeUsage(t *testing.T) {
 
 	t.Run("caps UsedBytes to MaxInt64 when value exceeds", func(t *testing.T) {
 		g := NewWithT(t)
-		usedBytes := uint64(math.MaxInt64) + 1
 		summary := kubeletstatsv1alpha1.Summary{
 			Pods: []kubeletstatsv1alpha1.PodStats{
 				{
@@ -206,7 +202,7 @@ func TestExtractPodVolumeUsage(t *testing.T) {
 								Name:      "etcd-data-etcd-0",
 								Namespace: "test-ns",
 							},
-							FsStats: kubeletstatsv1alpha1.FsStats{UsedBytes: &usedBytes},
+							FsStats: kubeletstatsv1alpha1.FsStats{UsedBytes: new(uint64(math.MaxInt64) + 1)},
 						},
 					},
 				},
@@ -219,7 +215,6 @@ func TestExtractPodVolumeUsage(t *testing.T) {
 
 	t.Run("skips non-matching namespace", func(t *testing.T) {
 		g := NewWithT(t)
-		usedBytes := uint64(1073741824)
 		summary := kubeletstatsv1alpha1.Summary{
 			Pods: []kubeletstatsv1alpha1.PodStats{
 				{
@@ -234,7 +229,7 @@ func TestExtractPodVolumeUsage(t *testing.T) {
 								Name:      "etcd-data-etcd-0",
 								Namespace: "other-ns",
 							},
-							FsStats: kubeletstatsv1alpha1.FsStats{UsedBytes: &usedBytes},
+							FsStats: kubeletstatsv1alpha1.FsStats{UsedBytes: new(uint64(1073741824))},
 						},
 					},
 				},

@@ -44,7 +44,7 @@ func NewKonnectivityReconciler(
 	konnectivityServerAudience string,
 	konnectivityServicePort int32,
 ) KonnectivityReconciler {
-	return &konnectivityReconciler{
+	return &konnectivityReconciler{ //nolint:gosec // service account names, not credentials
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
 			WorkloadClusterClient: managementClusterClient,
 			CiliumClient:          ciliumClient,

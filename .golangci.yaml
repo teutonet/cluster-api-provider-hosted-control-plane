@@ -55,7 +55,6 @@ linters:
     - nolintlint
     - nosprintfhostport
     - perfsprint
-    - prealloc
     - predeclared
     - recvcheck
     - revive

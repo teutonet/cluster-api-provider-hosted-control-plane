@@ -19,7 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
-	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -121,7 +120,7 @@ func withPausedCondition(cluster *capiv2.Cluster, paused bool) *capiv2.Cluster {
 
 func withPaused(cluster *capiv2.Cluster, paused bool) *capiv2.Cluster {
 	newCluster := cluster.DeepCopy()
-	newCluster.Spec.Paused = ptr.To(paused)
+	newCluster.Spec.Paused = new(paused)
 	return newCluster
 }
 
@@ -155,7 +154,7 @@ func withOwnerReference(hcp *v1alpha1.HostedControlPlane, cluster *capiv2.Cluste
 
 func withReplicas(hcp *v1alpha1.HostedControlPlane, replicas int32) *v1alpha1.HostedControlPlane {
 	newHCP := hcp.DeepCopy()
-	newHCP.Spec.Replicas = ptr.To(replicas)
+	newHCP.Spec.Replicas = new(replicas)
 	return newHCP
 }
 
@@ -167,8 +166,7 @@ func withConditions(hcp *v1alpha1.HostedControlPlane, conditions []metav1.Condit
 
 func withDeletion(hcp *v1alpha1.HostedControlPlane, finalizers []string) *v1alpha1.HostedControlPlane {
 	newHCP := hcp.DeepCopy()
-	now := metav1.Now()
-	newHCP.DeletionTimestamp = &now
+	newHCP.DeletionTimestamp = new(metav1.Now())
 	newHCP.Finalizers = finalizers
 	return newHCP
 }
