@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.6.0...v1.6.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* sort oidc providers ([#131](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/131)) ([8f138cd](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/8f138cdcba25cfcfd979fc02e21e9380593be68a))
+
 ## [1.6.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.5.0...v1.6.0) (2026-05-28)
 
 
