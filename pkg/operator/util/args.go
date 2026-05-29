@@ -1,9 +1,10 @@
 package util
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	stdslices "slices"
 
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/emit"
@@ -42,8 +43,8 @@ func argsToSlice(
 			value: value,
 		}
 	})
-	sort.Slice(argsSlice, func(i, j int) bool {
-		return argsSlice[i].key < argsSlice[j].key
+	stdslices.SortFunc(argsSlice, func(left, right arg) int {
+		return cmp.Compare(left.key, right.key)
 	})
 	return slices.FlatMap(argsSlice, func(arg arg, _ int) []string {
 		if joiner == " " {

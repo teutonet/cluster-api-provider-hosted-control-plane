@@ -1,12 +1,13 @@
 package reconcilers
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"net"
 	"regexp"
-	"sort"
+	stdslices "slices"
 	"strconv"
 
 	cilium "github.com/cilium/cilium/pkg/k8s/apis/cilium.io"
@@ -693,8 +694,8 @@ func sortByPort[NPT any](
 	portLabels map[int32][]NPT,
 ) []slices.Entry[int32, []NPT] {
 	portLabelMappings := slices.ToPairs(portLabels)
-	sort.Slice(portLabelMappings, func(i, j int) bool {
-		return portLabelMappings[i].Key < portLabelMappings[j].Key
+	stdslices.SortFunc(portLabelMappings, func(left, right slices.Entry[int32, []NPT]) int {
+		return cmp.Compare(left.Key, right.Key)
 	})
 	return portLabelMappings
 }

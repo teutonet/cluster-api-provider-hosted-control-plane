@@ -11,7 +11,7 @@ import (
 	"net"
 	"net/url"
 	"path"
-	"sort"
+	stdslices "slices"
 	"strconv"
 	"strings"
 
@@ -382,6 +382,9 @@ func (arr *apiServerResourcesReconciler) reconcileAuthenticationConfig(
 					},
 				),
 			}
+			stdslices.SortFunc(authConfig.JWT, func(left, right apiserverv1.JWTAuthenticator) int {
+				return strings.Compare(left.Issuer.URL, right.Issuer.URL)
+			})
 
 			configYAML, err := operatorutil.ToYaml(authConfig)
 			if err != nil {
@@ -1544,7 +1547,9 @@ func (arr *apiServerResourcesReconciler) generateNginxConfig(
 	}
 
 	webhookTargets := slices.Keys(targets)
-	sort.Slice(webhookTargets, func(i, j int) bool { return webhookTargets[i].Url < webhookTargets[j].Url })
+	stdslices.SortFunc(webhookTargets, func(left, right webhookTarget) int {
+		return strings.Compare(left.Url, right.Url)
+	})
 	nginxConfigTemplateData := map[string]any{
 		"serverPort": arr.nginxPort,
 		"targets":    webhookTargets,

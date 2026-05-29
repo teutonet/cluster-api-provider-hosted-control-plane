@@ -215,6 +215,10 @@ linters:
         - pkg: github.com/cilium/cilium/pkg/k8s/client/clientset/versioned/typed/cilium.io/v2
           alias: ciliuminterfacev2
 
+        # Standard Library
+        - pkg: slices
+          alias: stdslices
+
         # Third Party Libraries
         - pkg: github.com/samber/lo
           alias: slices
