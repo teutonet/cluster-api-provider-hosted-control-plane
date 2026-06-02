@@ -23,7 +23,6 @@ import (
 	kubeadmv1beta4 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta4"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/config"
-	kubeletv1beta1 "k8s.io/kubernetes/pkg/kubelet/apis/config/v1beta1"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -183,8 +182,6 @@ func (cr *configReconciler) ReconcileKubeletConfig(
 	return tracing.WithSpan1(ctx, cr.Tracer, "reconcileKubeletConfig",
 		func(ctx context.Context, span trace.Span) error {
 			var kubeletConfiguration kubelettypes.KubeletConfiguration
-
-			kubeletv1beta1.SetDefaults_KubeletConfiguration(&kubeletConfiguration)
 
 			kubeletConfiguration.APIVersion = kubelettypes.SchemeGroupVersion.String()
 			kubeletConfiguration.Kind = "KubeletConfiguration"
