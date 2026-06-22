@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
@@ -182,6 +183,80 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 				},
 			},
 			expectErr: false,
+		},
+		{
+			name: "root CA duration longer than intermediate CA duration - valid",
+			hcp: &v1alpha1.HostedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-hcp", Namespace: "default"},
+				Spec: v1alpha1.HostedControlPlaneSpec{
+					Version: "v1.28.0",
+					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+						Gateway: v1alpha1.GatewayReference{Name: "test-gateway", Namespace: "default"},
+						ETCD:    v1alpha1.ETCDComponent{AutoGrow: ptr.To(true)},
+						Certificates: v1alpha1.CertificatesSpec{
+							RootCACertificateDuration: &metav1.Duration{Duration: 10 * 365 * 24 * time.Hour},
+							CACertificateDuration:     &metav1.Duration{Duration: 5 * 365 * 24 * time.Hour},
+						},
+					},
+				},
+			},
+			expectErr: false,
+		},
+		{
+			name: "root CA duration equal to intermediate CA duration - invalid",
+			hcp: &v1alpha1.HostedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-hcp", Namespace: "default"},
+				Spec: v1alpha1.HostedControlPlaneSpec{
+					Version: "v1.28.0",
+					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+						Gateway: v1alpha1.GatewayReference{Name: "test-gateway", Namespace: "default"},
+						ETCD:    v1alpha1.ETCDComponent{AutoGrow: ptr.To(true)},
+						Certificates: v1alpha1.CertificatesSpec{
+							RootCACertificateDuration: &metav1.Duration{Duration: 5 * 365 * 24 * time.Hour},
+							CACertificateDuration:     &metav1.Duration{Duration: 5 * 365 * 24 * time.Hour},
+						},
+					},
+				},
+			},
+			expectErr: true,
+			errMsg:    "rootCACertificateDuration must be greater than cACertificateDuration",
+		},
+		{
+			name: "root CA duration shorter than intermediate CA duration - invalid",
+			hcp: &v1alpha1.HostedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-hcp", Namespace: "default"},
+				Spec: v1alpha1.HostedControlPlaneSpec{
+					Version: "v1.28.0",
+					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+						Gateway: v1alpha1.GatewayReference{Name: "test-gateway", Namespace: "default"},
+						ETCD:    v1alpha1.ETCDComponent{AutoGrow: ptr.To(true)},
+						Certificates: v1alpha1.CertificatesSpec{
+							RootCACertificateDuration: &metav1.Duration{Duration: 1 * 365 * 24 * time.Hour},
+							CACertificateDuration:     &metav1.Duration{Duration: 5 * 365 * 24 * time.Hour},
+						},
+					},
+				},
+			},
+			expectErr: true,
+			errMsg:    "rootCACertificateDuration must be greater than cACertificateDuration",
+		},
+		{
+			name: "root CA duration set shorter than default intermediate CA duration - invalid",
+			hcp: &v1alpha1.HostedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-hcp", Namespace: "default"},
+				Spec: v1alpha1.HostedControlPlaneSpec{
+					Version: "v1.28.0",
+					HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+						Gateway: v1alpha1.GatewayReference{Name: "test-gateway", Namespace: "default"},
+						ETCD:    v1alpha1.ETCDComponent{AutoGrow: ptr.To(true)},
+						Certificates: v1alpha1.CertificatesSpec{
+							RootCACertificateDuration: &metav1.Duration{Duration: 1 * 365 * 24 * time.Hour},
+						},
+					},
+				},
+			},
+			expectErr: true,
+			errMsg:    "rootCACertificateDuration must be greater than cACertificateDuration",
 		},
 	}
 

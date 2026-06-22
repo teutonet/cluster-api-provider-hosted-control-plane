@@ -13,6 +13,8 @@ const (
 	APIServerDeploymentsFailedReason       = "APIServerDeploymentsFailed"
 	CACertificatesReadyCondition           = "CACertificatesReady"
 	CACertificatesFailedReason             = "CACertificatesFailed"
+	CARotationAnnotationReadyCondition     = "CARotationAnnotationReady"
+	CARotationAnnotationFailedReason       = "CARotationAnnotationFailed"
 	CertificatesReadyCondition             = "CertificatesReady"
 	CertificatesFailedReason               = "CertificatesFailed"
 	KubeconfigReadyCondition               = "KubeconfigReady"

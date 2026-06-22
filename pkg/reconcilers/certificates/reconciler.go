@@ -44,6 +44,7 @@ type CertificateReconciler interface {
 func NewCertificateReconciler(
 	certManagerClient cmclient.Interface,
 	kubernetesServiceIP net.IP,
+	rootCACertificateDuration time.Duration,
 	caCertificateDuration time.Duration,
 	certificateDuration time.Duration,
 	konnectivityServerAudience string,
@@ -51,6 +52,7 @@ func NewCertificateReconciler(
 	return &certificateReconciler{
 		certManagerClient:          certManagerClient,
 		kubernetesServiceIP:        kubernetesServiceIP,
+		rootCACertificateDuration:  rootCACertificateDuration,
 		caCertificateDuration:      caCertificateDuration,
 		certificateDuration:        certificateDuration,
 		certificateRenewBefore:     int32(50),
@@ -62,6 +64,7 @@ func NewCertificateReconciler(
 type certificateReconciler struct {
 	certManagerClient          cmclient.Interface
 	kubernetesServiceIP        net.IP
+	rootCACertificateDuration  time.Duration
 	caCertificateDuration      time.Duration
 	certificateDuration        time.Duration
 	certificateRenewBefore     int32
@@ -92,17 +95,12 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 				name string,
 				commonName string,
 				secretName string,
-				additionalUsages ...certmanagerv1.KeyUsage,
+				duration time.Duration,
 			) certificateSpec {
 				return certificateSpec{
 					kind: name,
-					spec: cr.createCertificateSpec(
-						issuer.Name,
-						commonName,
-						secretName,
-						true,
-						additionalUsages...,
-					),
+					spec: cr.createCertificateSpec(issuer.Name, commonName, secretName, true).
+						WithDuration(metav1.Duration{Duration: duration}),
 					customLabels: map[string]string{
 						names.CertificateKindLabel: string(names.CACertificateKind),
 					},
@@ -131,6 +129,7 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 					names.GetCACertificateName(cluster),
 					"kubernetes",
 					names.GetCASecretName(cluster),
+					cr.rootCACertificateDuration,
 				),
 			)
 			if err != nil {
@@ -164,6 +163,7 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 					names.GetFrontProxyCAName(cluster),
 					"front-proxy-ca",
 					names.GetFrontProxyCASecretName(cluster),
+					cr.caCertificateDuration,
 				),
 			)
 			if err != nil {
@@ -193,6 +193,7 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 					names.GetEtcdCAName(cluster),
 					"etcd-ca",
 					names.GetEtcdCASecretName(cluster),
+					cr.caCertificateDuration,
 				),
 			)
 			if err != nil {

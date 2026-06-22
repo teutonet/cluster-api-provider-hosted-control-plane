@@ -30,6 +30,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/volume_stats"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/infrastructure_cluster"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/kubeconfig"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/node_rotation"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/tlsroutes"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload"
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
@@ -590,7 +591,8 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 			certificateReconciler := certificates.NewCertificateReconciler(
 				r.certManagerClient,
 				kubernetesServiceIP,
-				r.caCertificatesDuration,
+				hostedControlPlane.Spec.Certificates.RootCACertificateDurationOrDefault(),
+				hostedControlPlane.Spec.Certificates.CACertificateDurationOrDefault(),
 				r.certificatesDuration,
 				r.konnectivityServerAudience,
 			)
@@ -640,6 +642,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.client,
 				r.apiServerServicePort,
 			)
+			nodeRotationReconciler := node_rotation.NewNodeRotationReconciler(r.client, r.certManagerClient)
 			workloadClusterReconciler := workload.NewWorkloadClusterReconciler(
 				r.managementClusterClient,
 				func(
@@ -649,7 +652,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 						ctx, managementClusterClient, cluster, r.controllerUsername,
 					)
 				},
-				r.caCertificatesDuration,
+				hostedControlPlane.Spec.Certificates.CACertificateDurationOrDefault(),
 				r.certificatesDuration,
 				serviceDomain,
 				serviceCIDR,
@@ -667,6 +670,12 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					Reconcile:    certificateReconciler.ReconcileCACertificates,
 					Condition:    v1alpha1.CACertificatesReadyCondition,
 					FailedReason: v1alpha1.CACertificatesFailedReason,
+				},
+				{
+					Name:         "CA rotation annotation",
+					Reconcile:    nodeRotationReconciler.ReconcileCARotation,
+					Condition:    v1alpha1.CARotationAnnotationReadyCondition,
+					FailedReason: v1alpha1.CARotationAnnotationFailedReason,
 				},
 				{
 					Name:         "apiserver service",
