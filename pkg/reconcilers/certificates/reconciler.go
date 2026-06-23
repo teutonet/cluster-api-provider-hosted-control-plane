@@ -1,6 +1,7 @@
 package certificates
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -24,12 +25,19 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	"k8s.io/client-go/kubernetes"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 type CertificateReconciler interface {
 	ReconcileCACertificates(
+		ctx context.Context,
+		hostedControlPlane *v1alpha1.HostedControlPlane,
+		cluster *capiv2.Cluster,
+	) (string, error)
+	ReconcileCABundle(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv2.Cluster,
@@ -43,6 +51,7 @@ type CertificateReconciler interface {
 
 func NewCertificateReconciler(
 	certManagerClient cmclient.Interface,
+	kubernetesClient kubernetes.Interface,
 	kubernetesServiceIP net.IP,
 	rootCACertificateDuration time.Duration,
 	caCertificateDuration time.Duration,
@@ -51,6 +60,7 @@ func NewCertificateReconciler(
 ) CertificateReconciler {
 	return &certificateReconciler{
 		certManagerClient:          certManagerClient,
+		kubernetesClient:           kubernetesClient,
 		kubernetesServiceIP:        kubernetesServiceIP,
 		rootCACertificateDuration:  rootCACertificateDuration,
 		caCertificateDuration:      caCertificateDuration,
@@ -63,6 +73,7 @@ func NewCertificateReconciler(
 
 type certificateReconciler struct {
 	certManagerClient          cmclient.Interface
+	kubernetesClient           kubernetes.Interface
 	kubernetesServiceIP        net.IP
 	rootCACertificateDuration  time.Duration
 	caCertificateDuration      time.Duration
@@ -449,6 +460,63 @@ func (cr *certificateReconciler) createCertificateSpecs(
 	})
 
 	return specs
+}
+
+const (
+	caBundleCurrentCertKey = "current.crt"
+	caBundleOldCertKey     = "old.crt"
+)
+
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;patch
+
+func (cr *certificateReconciler) ReconcileCABundle(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv2.Cluster,
+) (string, error) {
+	return tracing.WithSpan(ctx, cr.tracer, "ReconcileCABundle",
+		func(ctx context.Context, _ trace.Span) (string, error) {
+			secretsClient := cr.kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace)
+
+			realCASecret, err := secretsClient.Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return "CA secret not yet available", nil
+			}
+			if err != nil {
+				return "", fmt.Errorf("failed to get CA secret: %w", err)
+			}
+			currentCACert := realCASecret.Data[konstants.CACertName]
+
+			var oldCACert []byte
+			bundleSecret, err := secretsClient.Get(ctx, names.GetCABundleSecretName(cluster), metav1.GetOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				return "", fmt.Errorf("failed to get CA bundle secret: %w", err)
+			}
+			if err == nil {
+				bundleCurrentCert := bundleSecret.Data[caBundleCurrentCertKey]
+				if bytes.Equal(bundleCurrentCert, currentCACert) {
+					return "", nil // no rotation, nothing to do
+				}
+				oldCACert = bundleCurrentCert
+			}
+
+			caBundlePEM := append(append([]byte{}, oldCACert...), currentCACert...)
+
+			bundleSecretAC := corev1ac.Secret(names.GetCABundleSecretName(cluster), hostedControlPlane.Namespace).
+				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
+				WithLabels(names.GetControlPlaneLabels(cluster, "")).
+				WithData(map[string][]byte{
+					caBundleCurrentCertKey: currentCACert,
+					caBundleOldCertKey:     oldCACert,
+					konstants.CACertName:   caBundlePEM,
+				})
+
+			if _, err = secretsClient.Apply(ctx, bundleSecretAC, operatorutil.ApplyOptions); err != nil {
+				return "", fmt.Errorf("failed to apply CA bundle secret: %w", err)
+			}
+			return "", nil
+		},
+	)
 }
 
 func (cr *certificateReconciler) ReconcileCertificates(

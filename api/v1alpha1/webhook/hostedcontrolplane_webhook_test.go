@@ -203,7 +203,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name: "root CA duration equal to intermediate CA duration - invalid",
+			name: "root CA duration equal to intermediate CA duration - valid",
 			hcp: &v1alpha1.HostedControlPlane{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-hcp", Namespace: "default"},
 				Spec: v1alpha1.HostedControlPlaneSpec{
@@ -218,8 +218,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 					},
 				},
 			},
-			expectErr: true,
-			errMsg:    "rootCACertificateDuration must be greater than cACertificateDuration",
+			expectErr: false,
 		},
 		{
 			name: "root CA duration shorter than intermediate CA duration - invalid",
@@ -238,7 +237,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 				},
 			},
 			expectErr: true,
-			errMsg:    "rootCACertificateDuration must be greater than cACertificateDuration",
+			errMsg:    "rootCACertificateDuration must be greater than or equal to cACertificateDuration",
 		},
 		{
 			name: "root CA duration set shorter than default intermediate CA duration - invalid",
@@ -250,13 +249,13 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 						Gateway: v1alpha1.GatewayReference{Name: "test-gateway", Namespace: "default"},
 						ETCD:    v1alpha1.ETCDComponent{AutoGrow: ptr.To(true)},
 						Certificates: v1alpha1.CertificatesSpec{
-							RootCACertificateDuration: &metav1.Duration{Duration: 1 * 365 * 24 * time.Hour},
+							RootCACertificateDuration: &metav1.Duration{Duration: 24 * time.Hour},
 						},
 					},
 				},
 			},
 			expectErr: true,
-			errMsg:    "rootCACertificateDuration must be greater than cACertificateDuration",
+			errMsg:    "rootCACertificateDuration must be greater than or equal to cACertificateDuration",
 		},
 	}
 

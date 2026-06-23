@@ -213,7 +213,7 @@ func (kr *kubeconfigReconciler) generateKubeconfigFromSecret(
 			contextName := fmt.Sprintf("%s@%s", userName, clusterName)
 
 			caSecret, err := kr.ManagementClusterClient.CoreV1().Secrets(cluster.Namespace).
-				Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
+				Get(ctx, names.GetCABundleSecretName(cluster), metav1.GetOptions{})
 			if err != nil {
 				return nil, fmt.Errorf("failed to get CA secret: %w", err)
 			}
@@ -222,7 +222,7 @@ func (kr *kubeconfigReconciler) generateKubeconfigFromSecret(
 				Clusters: map[string]*api.Cluster{
 					clusterName: {
 						Server:                   fmt.Sprintf("https://%s", apiEndpoint.String()),
-						CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
+						CertificateAuthorityData: caSecret.Data[konstants.CACertName],
 					},
 				},
 				Contexts: map[string]*api.Context{

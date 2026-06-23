@@ -13,6 +13,8 @@ const (
 	APIServerDeploymentsFailedReason       = "APIServerDeploymentsFailed"
 	CACertificatesReadyCondition           = "CACertificatesReady"
 	CACertificatesFailedReason             = "CACertificatesFailed"
+	CABundleReadyCondition                 = "CABundleReady"
+	CABundleFailedReason                   = "CABundleFailed"
 	CARotationAnnotationReadyCondition     = "CARotationAnnotationReady"
 	CARotationAnnotationFailedReason       = "CARotationAnnotationFailed"
 	CertificatesReadyCondition             = "CertificatesReady"

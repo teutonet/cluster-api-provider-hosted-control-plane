@@ -18,8 +18,6 @@ const (
 	KubeconfigUsernameLabel = "controlplane.cluster.x-k8s.io/kubeconfig-username"
 
 	CertificateKindLabel = "controlplane.cluster.x-k8s.io/certificate-kind"
-
-	CANotBeforeAnnotation = "controlplane.cluster.x-k8s.io/ca-not-before"
 )
 
 func GetControlPlaneLabels(cluster *capiv2.Cluster, component string) map[string]string {

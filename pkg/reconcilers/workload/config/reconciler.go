@@ -14,7 +14,6 @@ import (
 	errorsUtil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/errors"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
@@ -105,7 +104,7 @@ func (cr *configReconciler) ReconcileClusterInfoConfigMap(
 	return tracing.WithSpan1(ctx, cr.Tracer, "ReconcileClusterInfoConfigMap",
 		func(ctx context.Context, span trace.Span) error {
 			caSecret, err := managementClient.CoreV1().Secrets(cluster.Namespace).
-				Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
+				Get(ctx, names.GetCABundleSecretName(cluster), metav1.GetOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to get CA secret: %w", err)
 			}
@@ -113,7 +112,7 @@ func (cr *configReconciler) ReconcileClusterInfoConfigMap(
 				Clusters: map[string]*api.Cluster{
 					"": {
 						Server:                   fmt.Sprintf("https://%s", cluster.Spec.ControlPlaneEndpoint.String()),
-						CertificateAuthorityData: caSecret.Data[corev1.TLSCertKey],
+						CertificateAuthorityData: caSecret.Data[konstants.CACertName],
 					},
 				},
 			}

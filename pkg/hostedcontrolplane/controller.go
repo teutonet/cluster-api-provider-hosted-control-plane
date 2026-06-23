@@ -590,6 +590,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 
 			certificateReconciler := certificates.NewCertificateReconciler(
 				r.certManagerClient,
+				r.managementClusterClient,
 				kubernetesServiceIP,
 				hostedControlPlane.Spec.Certificates.RootCACertificateDurationOrDefault(),
 				hostedControlPlane.Spec.Certificates.CACertificateDurationOrDefault(),
@@ -672,10 +673,10 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					FailedReason: v1alpha1.CACertificatesFailedReason,
 				},
 				{
-					Name:         "CA rotation annotation",
-					Reconcile:    nodeRotationReconciler.ReconcileCARotation,
-					Condition:    v1alpha1.CARotationAnnotationReadyCondition,
-					FailedReason: v1alpha1.CARotationAnnotationFailedReason,
+					Name:         "CA bundle",
+					Reconcile:    certificateReconciler.ReconcileCABundle,
+					Condition:    v1alpha1.CABundleReadyCondition,
+					FailedReason: v1alpha1.CABundleFailedReason,
 				},
 				{
 					Name:         "apiserver service",
@@ -724,6 +725,12 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					Reconcile:    tlsRoutesReconciler.ReconcileTLSRoutes,
 					Condition:    v1alpha1.APIServerTLSRoutesReadyCondition,
 					FailedReason: v1alpha1.APIServerTLSRoutesFailedReason,
+				},
+				{
+					Name:         "CA rotation annotation",
+					Reconcile:    nodeRotationReconciler.ReconcileCARotation,
+					Condition:    v1alpha1.CARotationAnnotationReadyCondition,
+					FailedReason: v1alpha1.CARotationAnnotationFailedReason,
 				},
 				{
 					Name:         "workload cluster resources",

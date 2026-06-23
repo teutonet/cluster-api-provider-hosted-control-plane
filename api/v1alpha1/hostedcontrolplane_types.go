@@ -5,8 +5,6 @@ Copyright 2022 teuto.net Netzdienste GmbH.
 package v1alpha1
 
 import (
-	"time"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -88,30 +86,14 @@ type HostedControlPlaneInlineSpec struct {
 type CertificatesSpec struct {
 	// RootCACertificateDuration is the validity duration of the Kubernetes root CA certificate,
 	// which signs all intermediate CA certificates (front-proxy, etcd).
-	// Defaults to 87600h (10 years).
+	// Defaults to 48h (2 days).
 	//+kubebuilder:validation:Optional
 	RootCACertificateDuration *metav1.Duration `json:"rootCaCertificateDuration,omitempty"`
 	// CACertificateDuration is the validity duration of intermediate CA certificates
 	// (front-proxy CA, etcd CA). Must be less than RootCACertificateDuration.
-	// Defaults to 43800h (5 years).
+	// Defaults to 48h (2 days).
 	//+kubebuilder:validation:Optional
 	CACertificateDuration *metav1.Duration `json:"caCertificateDuration,omitempty"`
-}
-
-// RootCACertificateDurationOrDefault returns the configured root CA duration, or 10 years if unset.
-func (c *CertificatesSpec) RootCACertificateDurationOrDefault() time.Duration {
-	if c.RootCACertificateDuration != nil {
-		return c.RootCACertificateDuration.Duration
-	}
-	return 87600 * time.Hour
-}
-
-// CACertificateDurationOrDefault returns the configured intermediate CA duration, or 5 years if unset.
-func (c *CertificatesSpec) CACertificateDurationOrDefault() time.Duration {
-	if c.CACertificateDuration != nil {
-		return c.CACertificateDuration.Duration
-	}
-	return 43800 * time.Hour
 }
 
 type GatewayReference struct {

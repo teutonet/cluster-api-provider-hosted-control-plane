@@ -3,16 +3,20 @@ package node_rotation
 import (
 	"context"
 	"fmt"
+	"time"
 
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+const caNotBeforeAnnotation = "controlplane.cluster.x-k8s.io/ca-not-before"
 
 type NodeRotationReconciler interface {
 	ReconcileCARotation(ctx context.Context, hcp *v1alpha1.HostedControlPlane, cluster *capiv2.Cluster) (string, error)
@@ -32,6 +36,7 @@ func NewNodeRotationReconciler(c client.Client, certManagerClient cmclient.Inter
 	}
 }
 
+//+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinedeployments,verbs=get;list;patch;update
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinepools,verbs=get;list;patch;update
 
@@ -42,17 +47,17 @@ func (r *nodeRotationReconciler) ReconcileCARotation(
 ) (string, error) {
 	return tracing.WithSpan(ctx, r.tracer, "ReconcileCARotation",
 		func(ctx context.Context, _ trace.Span) (string, error) {
-			caCertificate, err := r.certManagerClient.CertmanagerV1().
-				Certificates(hostedControlPlane.Namespace).
+			caCert, err := r.certManagerClient.CertmanagerV1().Certificates(hostedControlPlane.Namespace).
 				Get(ctx, names.GetCACertificateName(cluster), metav1.GetOptions{})
-			if err != nil {
+			if err != nil && !apierrors.IsNotFound(err) {
 				return "", fmt.Errorf("failed to get CA certificate: %w", err)
 			}
-
-			if caCertificate.Status.NotBefore == nil {
+			if apierrors.IsNotFound(err) || caCert.Status.NotBefore == nil {
 				return "CA certificate not yet issued", nil
 			}
-			caNotBefore := caCertificate.Status.NotBefore.String()
+
+			rolloutAfter := *caCert.Status.NotBefore
+			notBeforeStr := rolloutAfter.UTC().Format(time.RFC3339)
 
 			machineDeployments := &capiv2.MachineDeploymentList{}
 			if err := r.client.List(ctx, machineDeployments,
@@ -60,6 +65,22 @@ func (r *nodeRotationReconciler) ReconcileCARotation(
 				client.MatchingLabels{capiv2.ClusterNameLabel: cluster.Name},
 			); err != nil {
 				return "", fmt.Errorf("failed to list MachineDeployments: %w", err)
+			}
+
+			for machineDeploymentIndex := range machineDeployments.Items {
+				machineDeployment := &machineDeployments.Items[machineDeploymentIndex]
+				if machineDeployment.Spec.Rollout.After.Equal(&rolloutAfter) {
+					continue
+				}
+				base := machineDeployment.DeepCopy()
+				// CAPI drops all template metadata from the rollout hash, so template annotation
+				// changes never create a new MachineSet. spec.rollout.after is the correct trigger;
+				// it is idempotent since the CA's notBefore is stable for a given certificate generation.
+				machineDeployment.Spec.Rollout.After = rolloutAfter
+				if err := r.client.Patch(ctx, machineDeployment, client.MergeFrom(base)); err != nil {
+					return "", fmt.Errorf("failed to patch MachineDeployment %s/%s: %w",
+						machineDeployment.Namespace, machineDeployment.Name, err)
+				}
 			}
 
 			machinePools := &capiv2.MachinePoolList{}
@@ -70,40 +91,22 @@ func (r *nodeRotationReconciler) ReconcileCARotation(
 				return "", fmt.Errorf("failed to list MachinePools: %w", err)
 			}
 
-			// objectWithTemplateAnnotations pairs a client.Object with a pointer to its
-			// spec.template.metadata.annotations so we can mutate them uniformly.
-			type objectWithTemplateAnnotations struct {
-				obj         client.Object
-				annotations *map[string]string
-			}
-
-			objectsToAnnotate := make([]objectWithTemplateAnnotations, 0,
-				len(machineDeployments.Items)+len(machinePools.Items))
-			for machineDeploymentIndex := range machineDeployments.Items {
-				objectsToAnnotate = append(objectsToAnnotate, objectWithTemplateAnnotations{
-					obj:         &machineDeployments.Items[machineDeploymentIndex],
-					annotations: &machineDeployments.Items[machineDeploymentIndex].Spec.Template.Annotations,
-				})
-			}
 			for machinePoolIndex := range machinePools.Items {
-				objectsToAnnotate = append(objectsToAnnotate, objectWithTemplateAnnotations{
-					obj:         &machinePools.Items[machinePoolIndex],
-					annotations: &machinePools.Items[machinePoolIndex].Spec.Template.Annotations,
-				})
-			}
-
-			for _, objectToAnnotate := range objectsToAnnotate {
-				if (*objectToAnnotate.annotations)[names.CANotBeforeAnnotation] == caNotBefore {
+				machinePool := &machinePools.Items[machinePoolIndex]
+				if machinePool.Spec.Template.Annotations[caNotBeforeAnnotation] == notBeforeStr {
 					continue
 				}
-				base := objectToAnnotate.obj.DeepCopyObject().(client.Object)
-				if *objectToAnnotate.annotations == nil {
-					*objectToAnnotate.annotations = make(map[string]string)
+				base := machinePool.DeepCopy()
+				// MachinePool has no rolloutAfter equivalent. Set the annotation on the template
+				// so infrastructure providers that react to template metadata changes can trigger
+				// their own rollout.
+				if machinePool.Spec.Template.Annotations == nil {
+					machinePool.Spec.Template.Annotations = make(map[string]string)
 				}
-				(*objectToAnnotate.annotations)[names.CANotBeforeAnnotation] = caNotBefore
-				if err := r.client.Patch(ctx, objectToAnnotate.obj, client.MergeFrom(base)); err != nil {
-					return "", fmt.Errorf("failed to patch %s/%s: %w",
-						objectToAnnotate.obj.GetNamespace(), objectToAnnotate.obj.GetName(), err)
+				machinePool.Spec.Template.Annotations[caNotBeforeAnnotation] = notBeforeStr
+				if err := r.client.Patch(ctx, machinePool, client.MergeFrom(base)); err != nil {
+					return "", fmt.Errorf("failed to patch MachinePool %s/%s: %w",
+						machinePool.Namespace, machinePool.Name, err)
 				}
 			}
 
