@@ -82,7 +82,7 @@ type HostedControlPlaneInlineSpec struct {
 
 // CertificatesSpec configures the durations of CA certificates managed by cert-manager.
 // Renewal always occurs at 50% of the configured duration.
-// The root CA must have a longer duration than the intermediate CA.
+// The root CA must have a duration greater than or equal to the intermediate CA.
 type CertificatesSpec struct {
 	// RootCACertificateDuration is the validity duration of the Kubernetes root CA certificate,
 	// which signs all intermediate CA certificates (front-proxy, etcd).
@@ -90,7 +90,7 @@ type CertificatesSpec struct {
 	//+kubebuilder:validation:Optional
 	RootCACertificateDuration *metav1.Duration `json:"rootCaCertificateDuration,omitempty"`
 	// CACertificateDuration is the validity duration of intermediate CA certificates
-	// (front-proxy CA, etcd CA). Must be less than RootCACertificateDuration.
+	// (front-proxy CA, etcd CA). Must be less than or equal to RootCACertificateDuration.
 	// Defaults to 48h (2 days).
 	//+kubebuilder:validation:Optional
 	CACertificateDuration *metav1.Duration `json:"caCertificateDuration,omitempty"`

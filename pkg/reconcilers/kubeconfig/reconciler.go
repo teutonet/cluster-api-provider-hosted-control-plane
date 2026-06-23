@@ -215,7 +215,7 @@ func (kr *kubeconfigReconciler) generateKubeconfigFromSecret(
 			caSecret, err := kr.ManagementClusterClient.CoreV1().Secrets(cluster.Namespace).
 				Get(ctx, names.GetCABundleSecretName(cluster), metav1.GetOptions{})
 			if err != nil {
-				return nil, fmt.Errorf("failed to get CA secret: %w", err)
+				return nil, fmt.Errorf("failed to get CA bundle secret: %w", err)
 			}
 
 			return &api.Config{
