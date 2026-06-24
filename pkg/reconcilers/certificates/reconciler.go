@@ -490,7 +490,7 @@ func (cr *certificateReconciler) ReconcileCABundle(
 				return "CA secret not yet populated", nil
 			}
 
-			var oldCACert []byte
+			oldCACert := []byte{}
 			bundleSecret, err := secretsClient.Get(ctx, names.GetCABundleSecretName(cluster), metav1.GetOptions{})
 			if err != nil && !apierrors.IsNotFound(err) {
 				return "", fmt.Errorf("failed to get CA bundle secret: %w", err)

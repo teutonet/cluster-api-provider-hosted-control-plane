@@ -78,6 +78,7 @@ func TestReconcileCABundle_InitialCreate(t *testing.T) {
 		Get(ctx, names.GetCABundleSecretName(bundleTestCluster), metav1.GetOptions{})
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(bundle.Data[caBundleCurrentCertKey]).To(Equal(cert))
+	g.Expect(bundle.Data[caBundleOldCertKey]).NotTo(BeNil())
 	g.Expect(bundle.Data[caBundleOldCertKey]).To(BeEmpty())
 	g.Expect(bundle.Data[konstants.CACertName]).To(Equal(cert))
 }
