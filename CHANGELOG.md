@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.6.1...v1.7.0) (2026-06-24)
+
+
+### Features
+
+* rotate nodes on CA rotation ([#135](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/135)) ([fd660fe](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/fd660fe95eac55a679750ebc12519ce63f243ffb))
+
+
+### Bug Fixes
+
+* remove SetDefaults_KubeletConfiguration ([#134](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/134)) ([ff56dce](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/ff56dce73c216e4c1e1bc6e022a1aa0a16a4e7c3))
+
 ## [1.6.1](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.6.0...v1.6.1) (2026-05-29)
 
 
