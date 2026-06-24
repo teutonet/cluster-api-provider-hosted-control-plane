@@ -237,7 +237,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 				},
 			},
 			expectErr: true,
-			errMsg:    "rootCACertificateDuration must be greater than or equal to cACertificateDuration",
+			errMsg:    "rootCaCertificateDuration must be greater than or equal to caCertificateDuration",
 		},
 		{
 			name: "root CA duration set shorter than default intermediate CA duration - invalid",
@@ -255,7 +255,7 @@ func TestHostedControlPlaneWebhook_ValidateCreate(t *testing.T) {
 				},
 			},
 			expectErr: true,
-			errMsg:    "rootCACertificateDuration must be greater than or equal to cACertificateDuration",
+			errMsg:    "rootCaCertificateDuration must be greater than or equal to caCertificateDuration",
 		},
 	}
 

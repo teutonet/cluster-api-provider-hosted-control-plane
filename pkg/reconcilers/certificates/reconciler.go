@@ -486,6 +486,9 @@ func (cr *certificateReconciler) ReconcileCABundle(
 				return "", fmt.Errorf("failed to get CA secret: %w", err)
 			}
 			currentCACert := realCASecret.Data[konstants.CACertName]
+			if len(currentCACert) == 0 {
+				return "CA secret not yet populated", nil
+			}
 
 			var oldCACert []byte
 			bundleSecret, err := secretsClient.Get(ctx, names.GetCABundleSecretName(cluster), metav1.GetOptions{})

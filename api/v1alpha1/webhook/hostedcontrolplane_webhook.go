@@ -95,7 +95,7 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 		fieldErrs = append(fieldErrs, field.Invalid(
 			w.specPath.Child("certificates").Child("rootCaCertificateDuration"),
 			newHostedControlPlane.Spec.Certificates.RootCACertificateDuration,
-			"rootCACertificateDuration must be greater than or equal to cACertificateDuration",
+			"rootCaCertificateDuration must be greater than or equal to caCertificateDuration",
 		))
 	}
 
