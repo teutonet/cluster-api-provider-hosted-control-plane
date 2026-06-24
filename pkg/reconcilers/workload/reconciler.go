@@ -19,7 +19,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
-	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/conditions"
 )
@@ -46,7 +45,7 @@ func NewWorkloadClusterReconciler(
 	konnectivityServerAudience string,
 	konnectivityServicePort int32,
 ) WorkloadClusterReconciler {
-	return &workloadClusterReconciler{
+	return &workloadClusterReconciler{ //nolint:gosec // service account names, not credentials
 		managementClusterClient:             managementClusterClient,
 		workloadClusterClientFactory:        workloadClusterClientFactory,
 		caCertificateDuration:               caCertificateDuration,
@@ -267,7 +266,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				}
 			}
 
-			hostedControlPlane.Status.Initialization.ControlPlaneInitialized = ptr.To(true)
+			hostedControlPlane.Status.Initialization.ControlPlaneInitialized = new(true)
 
 			return "", nil
 		},

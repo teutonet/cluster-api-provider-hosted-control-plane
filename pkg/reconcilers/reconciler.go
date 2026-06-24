@@ -42,7 +42,6 @@ import (
 	"k8s.io/kubernetes/pkg/controller/certificates/rootcacertpublisher"
 	"k8s.io/kubernetes/pkg/serviceaccount"
 	serviceaccountAdmission "k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
-	"k8s.io/utils/ptr"
 )
 
 var (
@@ -135,7 +134,7 @@ func reconcileWorkload[RA any, RSA any, R any](
 		if err := client.Delete(
 			ctx,
 			name,
-			metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
+			metav1.DeleteOptions{PropagationPolicy: new(propagationPolicy)},
 		); err != nil && !apierrors.IsNotFound(err) {
 			return nil, false, fmt.Errorf("failed to delete %s %s: %w", kind, name, err)
 		}
@@ -184,7 +183,7 @@ func reconcileWorkload[RA any, RSA any, R any](
 			if err := client.Delete(
 				ctx,
 				name,
-				metav1.DeleteOptions{PropagationPolicy: ptr.To(propagationPolicy)},
+				metav1.DeleteOptions{PropagationPolicy: new(propagationPolicy)},
 			); err != nil {
 				return nil, false, fmt.Errorf(
 					"failed to delete existing %s %s: %w", kind, name, err,
@@ -905,7 +904,7 @@ func reconcileSecret(
 			if err := secretInterface.Delete(
 				ctx,
 				name,
-				metav1.DeleteOptions{PropagationPolicy: ptr.To(metav1.DeletePropagationBackground)},
+				metav1.DeleteOptions{PropagationPolicy: new(metav1.DeletePropagationBackground)},
 			); err != nil {
 				return fmt.Errorf(
 					"failed to delete existing secret %s: %w", name, err,
