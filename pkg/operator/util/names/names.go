@@ -20,6 +20,10 @@ func GetCASecretName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-ca"
 }
 
+func GetCABundleSecretName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-ca-bundle"
+}
+
 func GetCACertificateName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-ca"
 }

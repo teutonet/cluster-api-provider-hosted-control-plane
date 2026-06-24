@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	certmanagerv1ac "github.com/cert-manager/cert-manager/pkg/client/applyconfigurations/certmanager/v1"
@@ -1577,7 +1578,8 @@ func makeCertificateReady(
 						WithType(certmanagerv1.CertificateConditionReady).
 						WithStatus("True").
 						WithReason("Ready"),
-				),
+				).
+				WithNotBefore(metav1.Time{Time: time.Now()}),
 		), certManagerOptions)).Error().To(Succeed())
 
 		g.Expect(secretInterface.Apply(ctx,

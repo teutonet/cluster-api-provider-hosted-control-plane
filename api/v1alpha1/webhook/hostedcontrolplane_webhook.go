@@ -90,6 +90,15 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 		}
 	}
 
+	certs := &newHostedControlPlane.Spec.Certificates
+	if certs.RootCACertificateDurationOrDefault() < certs.CACertificateDurationOrDefault() {
+		fieldErrs = append(fieldErrs, field.Invalid(
+			w.specPath.Child("certificates").Child("rootCaCertificateDuration"),
+			newHostedControlPlane.Spec.Certificates.RootCACertificateDuration,
+			"rootCaCertificateDuration must be greater than or equal to caCertificateDuration",
+		))
+	}
+
 	if len(fieldErrs) > 0 {
 		return warnings, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, fieldErrs)
 	}

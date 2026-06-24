@@ -1,6 +1,8 @@
 package v1alpha1
 
 import (
+	"time"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 )
@@ -90,4 +92,18 @@ func (ebs *ETCDBackupSecret) SecretAccessKeyKeyOrDefault() string {
 		return defaultKey
 	}
 	return ptr.Deref(ebs.SecretAccessKeyKey, defaultKey)
+}
+
+func (c *CertificatesSpec) RootCACertificateDurationOrDefault() time.Duration {
+	if c.RootCACertificateDuration != nil {
+		return c.RootCACertificateDuration.Duration
+	}
+	return 2 * 24 * time.Hour
+}
+
+func (c *CertificatesSpec) CACertificateDurationOrDefault() time.Duration {
+	if c.CACertificateDuration != nil {
+		return c.CACertificateDuration.Duration
+	}
+	return 2 * 24 * time.Hour
 }

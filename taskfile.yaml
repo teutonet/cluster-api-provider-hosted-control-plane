@@ -74,17 +74,16 @@ tasks:
         mapfile -t supportedVersions <<< "$(sed -n -r 's#^\s+cluster.x-k8s.io/(v\S+): \S+#\1#gp' {{ .buildDir }}/crds/controlplane.* | sort -u)"
         declare -a currentVersion
         mapfile -t currentVersion <<< "$({{ .yqCmd }} -r '.["."] | split(".") | "\(.[0])\n\(.[1])"' .github/release-please/manifest.json)"
-        if ! [[ -f metadata.yaml ]]; then
-          cat <<EOF | cut -c 5- > metadata.yaml
+        if ! [[ -f {{ .buildDir }}/metadata.yaml ]]; then
+          cat <<EOF | cut -c 5- > {{ .buildDir }}/metadata.yaml
             apiVersion: clusterctl.cluster.x-k8s.io/v1alpha3
             kind: Metadata
             releaseSeries: []
         EOF
         fi
         for version in "${supportedVersions[@]}"; do
-          MAJOR="${currentVersion[0]}" MINOR="${currentVersion[1]}" VERSION="$version" {{ .yqCmd }} -i '.releaseSeries = (.releaseSeries + [{"major":env(MAJOR),"minor":env(MINOR),"contract":strenv(VERSION)}] | unique | sort_by(.major, .minor) | reverse)' metadata.yaml
+          MAJOR="${currentVersion[0]}" MINOR="${currentVersion[1]}" VERSION="$version" {{ .yqCmd }} -i '.releaseSeries = (.releaseSeries + [{"major":env(MAJOR),"minor":env(MINOR),"contract":strenv(VERSION)}] | unique | sort_by(.major, .minor) | reverse)' {{ .buildDir }}/metadata.yaml
         done
-        mv metadata.yaml {{ .buildDir }}/metadata.yaml
     generates:
       - "{{ .buildDir }}/control-plane-components.yaml"
       - "{{ .buildDir }}/metadata.yaml"

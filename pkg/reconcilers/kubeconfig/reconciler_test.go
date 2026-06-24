@@ -46,6 +46,7 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 			},
 			existingSecrets: []*corev1.Secret{
 				createCertificateSecret("test-cluster-ca", "default", true),
+				createCertificateSecret("test-cluster-ca-bundle", "default", true),
 				createCertificateSecret("test-cluster-admin", "default", false),
 				createCertificateSecret("test-cluster-kube-controller-manager", "default", false),
 				createCertificateSecret("test-cluster-kube-scheduler", "default", false),
@@ -71,6 +72,7 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 			},
 			existingSecrets: []*corev1.Secret{
 				createCertificateSecret("test-cluster-ca", "default", true),
+				createCertificateSecret("test-cluster-ca-bundle", "default", true),
 			},
 			expectedError: true,
 		},
@@ -197,6 +199,7 @@ func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
 			g, _, _ := G(t)
 			secrets := []*corev1.Secret{
 				createCertificateSecret("test-cluster-ca", "default", true),
+				createCertificateSecret("test-cluster-ca-bundle", "default", true),
 			}
 
 			var certSecretName, userName string
@@ -272,8 +275,9 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 	oldCertSecret.Data[corev1.TLSPrivateKeyKey] = []byte("old-key-data")
 
 	caSecret := createCertificateSecret("test-cluster-ca", "default", true)
+	caBundleSecret := createCertificateSecret("test-cluster-ca-bundle", "default", true)
 
-	kubeClient := fake.NewClientset(oldCertSecret, caSecret)
+	kubeClient := fake.NewClientset(oldCertSecret, caSecret, caBundleSecret)
 	managementClusterClient := &alias.ManagementClusterClient{
 		Interface: kubeClient,
 	}
@@ -341,7 +345,10 @@ func TestKubeconfigReconciler_MultiUserScenarios(t *testing.T) {
 		{"scheduler", "test-cluster-scheduler-kubeconfig"},
 	}
 
-	secrets := []*corev1.Secret{createCertificateSecret("test-cluster-ca", "default", true)}
+	secrets := []*corev1.Secret{
+		createCertificateSecret("test-cluster-ca", "default", true),
+		createCertificateSecret("test-cluster-ca-bundle", "default", true),
+	}
 	for _, user := range users {
 		secrets = append(secrets, createCertificateSecret(user.secretName, "default", false))
 	}

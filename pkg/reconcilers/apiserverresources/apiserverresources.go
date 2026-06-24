@@ -44,6 +44,8 @@ import (
 	capisecretutil "sigs.k8s.io/cluster-api/util/secret"
 )
 
+const caBundleCertName = "bundle.crt"
+
 var (
 	errWebhookSecretIsMissingKey     = errors.New("webhook authentication secret is missing key")
 	errRootCAConfigMapMissingCertKey = errors.New(
@@ -838,10 +840,10 @@ func (arr *apiServerResourcesReconciler) createAPIServerCertificatesVolume(
 		WithProjected(corev1ac.ProjectedVolumeSource().
 			WithSources(
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
-					WithName(names.GetCASecretName(cluster)).
+					WithName(names.GetCABundleSecretName(cluster)).
 					WithItems(
 						corev1ac.KeyToPath().
-							WithKey(corev1.TLSCertKey).
+							WithKey(konstants.CACertName).
 							WithPath(konstants.CACertName),
 					),
 				),
@@ -937,6 +939,14 @@ func (arr *apiServerResourcesReconciler) createControllerManagerCertificatesVolu
 		WithName("controller-manager-certificates").
 		WithProjected(corev1ac.ProjectedVolumeSource().
 			WithSources(
+				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
+					WithName(names.GetCABundleSecretName(cluster)).
+					WithItems(
+						corev1ac.KeyToPath().
+							WithKey(konstants.CACertName).
+							WithPath(caBundleCertName),
+					),
+				),
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
 					WithName(names.GetCASecretName(cluster)).
 					WithItems(
@@ -1389,7 +1399,7 @@ func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 		"cluster-signing-key-file":         path.Join(certificatesDir, konstants.CAKeyName),
 		"controllers":                      strings.Join(enabledControllers, ","),
 		"requestheader-client-ca-file":     path.Join(certificatesDir, konstants.FrontProxyCACertName),
-		"root-ca-file":                     path.Join(certificatesDir, konstants.CACertName),
+		"root-ca-file":                     path.Join(certificatesDir, caBundleCertName),
 		"service-account-private-key-file": path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
 		"use-service-account-credentials":  "true",
 	}
