@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.7.0...v1.7.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* **node_rotation:** add watch verb to machinedeployments/machinepools RBAC ([#137](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/137)) ([2640e9c](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/2640e9c63f0a864c239c7079bd83c7a90a1446b1))
+
 ## [1.7.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.6.1...v1.7.0) (2026-06-24)
 
 
