@@ -37,8 +37,8 @@ func NewNodeRotationReconciler(c client.Client, certManagerClient cmclient.Inter
 }
 
 //+kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get
-//+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinedeployments,verbs=get;list;patch;update
-//+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinepools,verbs=get;list;patch;update
+//+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinedeployments,verbs=get;list;watch;patch;update
+//+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinepools,verbs=get;list;watch;patch;update
 
 func (r *nodeRotationReconciler) ReconcileCARotation(
 	ctx context.Context,
