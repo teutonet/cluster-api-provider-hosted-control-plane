@@ -794,6 +794,9 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
+			verifyResources: func(ctx context.Context, g Gomega) {
+				g.Expect(*hcp.Status.Initialization.ControlPlaneInitialized).To(BeTrue())
+			},
 		},
 		{
 			name: "Make Api Server TLS Route Ready",

@@ -266,8 +266,6 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				}
 			}
 
-			hostedControlPlane.Status.Initialization.ControlPlaneInitialized = new(true)
-
 			return "", nil
 		},
 	)

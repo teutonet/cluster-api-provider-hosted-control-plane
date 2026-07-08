@@ -714,8 +714,28 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					FailedReason: v1alpha1.EtcdClusterFailedReason,
 				},
 				{
-					Name:         "apiserver deployments",
-					Reconcile:    apiServerResourcesReconciler.ReconcileApiServerDeployments,
+					Name: "apiserver deployments",
+					Reconcile: func(
+						ctx context.Context,
+						hostedControlPlane *v1alpha1.HostedControlPlane,
+						cluster *capiv2.Cluster,
+					) (string, error) {
+						notReady, err := apiServerResourcesReconciler.ReconcileApiServerDeployments(
+							ctx,
+							hostedControlPlane,
+							cluster,
+						)
+						if err != nil {
+							return "", fmt.Errorf("reconcile api server deployments: %w", err)
+						}
+						if notReady != "" {
+							return notReady, nil
+						}
+
+						hostedControlPlane.Status.Initialization.ControlPlaneInitialized = new(true)
+
+						return "", nil
+					},
 					Condition:    v1alpha1.APIServerDeploymentsReadyCondition,
 					FailedReason: v1alpha1.APIServerDeploymentsFailedReason,
 				},
