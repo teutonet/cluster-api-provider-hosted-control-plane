@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	certmanagerfake "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned/fake"
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
@@ -63,7 +64,7 @@ func createTestReconcilerWithFilter(client client.Client, reconcileFilter string
 	return NewHostedControlPlaneReconciler(
 		client,
 		&alias.ManagementClusterClient{Interface: fake.NewClientset()},
-		nil,
+		&certmanagerfake.Clientset{},
 		nil,
 		func(ctx context.Context) (ciliumclient.Interface, error) {
 			return nil, nil
@@ -174,6 +175,12 @@ func withDeletion(hcp *v1alpha1.HostedControlPlane, finalizers []string) *v1alph
 func withGeneration(hcp *v1alpha1.HostedControlPlane, generation int64) *v1alpha1.HostedControlPlane {
 	newHCP := hcp.DeepCopy()
 	newHCP.Generation = generation
+	return newHCP
+}
+
+func withFinalizer(hcp *v1alpha1.HostedControlPlane) *v1alpha1.HostedControlPlane {
+	newHCP := hcp.DeepCopy()
+	newHCP.Finalizers = []string{"hcp.controlplane.cluster.x-k8s.io"}
 	return newHCP
 }
 
@@ -501,7 +508,7 @@ func TestHostedControlPlaneReconciler_ObservedGeneration(t *testing.T) {
 	}{
 		{
 			name: "normal reconciliation should set observedGeneration",
-			hostedControlPlane: withGeneration(
+			hostedControlPlane: withFinalizer(withGeneration(
 				withConditions(
 					withReplicas(
 						withOwnerReference(
@@ -517,7 +524,7 @@ func TestHostedControlPlaneReconciler_ObservedGeneration(t *testing.T) {
 					}},
 				),
 				2,
-			),
+			)),
 			cluster: withEndpoint(
 				createTestClusterWithPausedCondition("test-cluster", "default", false),
 				createTestHostedControlPlane("test-hcp", "default"),

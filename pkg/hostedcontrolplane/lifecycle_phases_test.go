@@ -296,15 +296,16 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			},
 		},
 		{
-			name: "Verify ExternalManagedControlPlane Status",
-			verifyResources: func(ctx context.Context, g Gomega) {
-				g.Expect(hcp.Status.ExternalManagedControlPlane).To(PointTo(BeTrue()))
-			},
-		},
-		{
 			name: "Add Finalizer",
 			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(hcp.Finalizers).To(ContainElement("hcp.controlplane.cluster.x-k8s.io"))
+			},
+			expectNoGenerationBump: true,
+		},
+		{
+			name: "Verify ExternalManagedControlPlane Status",
+			verifyResources: func(ctx context.Context, g Gomega) {
+				g.Expect(hcp.Status.ExternalManagedControlPlane).To(PointTo(BeTrue()))
 			},
 		},
 		{
@@ -1472,8 +1473,8 @@ func simulateK8sAPI(ctx context.Context, kubernetesClient kubernetes.Interface, 
 	}
 }
 
-func verifyConditions(after map[bool][]types2.GomegaMatcher, hcp *v1alpha1.HostedControlPlane, g Gomega) {
-	for status, matchers := range after {
+func verifyConditions(conditionMatchers map[bool][]types2.GomegaMatcher, hcp *v1alpha1.HostedControlPlane, g Gomega) {
+	for status, matchers := range conditionMatchers {
 		conditionStatus := slices.Ternary(status, metav1.ConditionTrue, metav1.ConditionFalse)
 		partitionedConditions := slices.GroupBy(hcp.Status.Conditions,
 			func(condition metav1.Condition) bool {

@@ -73,8 +73,8 @@ func NewApiServerResourcesReconciler(
 	managementClusterClient *alias.ManagementClusterClient,
 	ciliumClient ciliumclient.Interface,
 	worldComponent string,
-	serviceCIDR string,
-	podCIDR string,
+	serviceCIDR net.IPNet,
+	podCIDR net.IPNet,
 	apiServerComponentLabel string,
 	apiServerServicePort int32,
 	apiServerServiceLegacyPortName string,
@@ -128,8 +128,8 @@ func NewApiServerResourcesReconciler(
 type apiServerResourcesReconciler struct {
 	reconcilers.ManagementResourceReconciler
 	worldComponent                      string
-	serviceCIDR                         string
-	podCIDR                             string
+	serviceCIDR                         net.IPNet
+	podCIDR                             net.IPNet
 	apiServerServicePort                int32
 	apiServerServiceLegacyPortName      string
 	etcdComponentLabel                  string
@@ -1029,7 +1029,7 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 		"service-account-jwks-uri":           jwksURI,
 		"service-account-key-file":           path.Join(certificatesDir, konstants.ServiceAccountPublicKeyName),
 		"service-account-signing-key-file":   path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
-		"service-cluster-ip-range":           arr.serviceCIDR,
+		"service-cluster-ip-range":           arr.serviceCIDR.String(),
 		"tls-cert-file":                      path.Join(certificatesDir, konstants.APIServerCertName),
 		"tls-private-key-file":               path.Join(certificatesDir, konstants.APIServerKeyName),
 		"etcd-servers": fmt.Sprintf("https://%s",
@@ -1387,7 +1387,7 @@ func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 	enabledControllers := []string{"*", kubenames.BootstrapSignerController, kubenames.TokenCleanerController}
 	leaderElect := hostedControlPlane.Spec.Deployment.ControllerManager.ReplicaCount(1) > 1
 	args := map[string]string{
-		"cluster-cidr":                     arr.podCIDR,
+		"cluster-cidr":                     arr.podCIDR.String(),
 		"authentication-kubeconfig":        kubeconfigPath,
 		"authorization-kubeconfig":         kubeconfigPath,
 		"kubeconfig":                       kubeconfigPath,

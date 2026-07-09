@@ -3,6 +3,7 @@ package kubeproxy
 import (
 	"context"
 	"fmt"
+	"net"
 	"path"
 
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
@@ -46,7 +47,7 @@ type KubeProxyReconciler interface {
 func NewKubeProxyReconciler(
 	managementClusterClient *alias.WorkloadClusterClient,
 	ciliumClient ciliumclient.Interface,
-	podCIDR string,
+	podCIDR net.IPNet,
 ) KubeProxyReconciler {
 	return &kubeProxyReconciler{
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
@@ -69,7 +70,7 @@ func NewKubeProxyReconciler(
 
 type kubeProxyReconciler struct {
 	reconcilers.WorkloadResourceReconciler
-	podCIDR                  string
+	podCIDR                  net.IPNet
 	kubeProxyNamespace       string
 	kubeProxyServiceAccount  string
 	kubeProxyConfigMapName   string
@@ -279,7 +280,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(
 				ClientConnection: componentbaseconfigalpha1.ClientConnectionConfiguration{
 					Kubeconfig: path.Join(kr.kubeProxyConfigMountPath, kubeconfigFileName),
 				},
-				ClusterCIDR:        kr.podCIDR,
+				ClusterCIDR:        kr.podCIDR.String(),
 				MetricsBindAddress: "0.0.0.0:10249",
 				NodePortAddresses:  []string{"primary"},
 			}

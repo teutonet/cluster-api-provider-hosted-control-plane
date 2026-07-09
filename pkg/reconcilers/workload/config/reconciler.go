@@ -47,8 +47,8 @@ func NewConfigReconciler(
 	caCertificateDuration time.Duration,
 	certificateDuration time.Duration,
 	serviceDomain string,
-	serviceCIDR string,
-	podCIDR string,
+	serviceCIDR net.IPNet,
+	podCIDR net.IPNet,
 	dnsIP net.IP,
 	kubeadmConfigConfigMapName string,
 	kubeadmConfigConfigMapNamespace string,
@@ -82,8 +82,8 @@ type configReconciler struct {
 	caCertificateDuration           time.Duration
 	certificateDuration             time.Duration
 	serviceDomain                   string
-	serviceCIDR                     string
-	podCIDR                         string
+	serviceCIDR                     net.IPNet
+	podCIDR                         net.IPNet
 	dnsIP                           net.IP
 	kubeadmConfigConfigMapName      string
 	kubeadmConfigConfigMapNamespace string
@@ -148,8 +148,8 @@ func (cr *configReconciler) ReconcileKubeadmConfig(
 			conf := initConfiguration.ClusterConfiguration
 			conf.Networking = kubeadm.Networking{
 				DNSDomain:     cr.serviceDomain,
-				PodSubnet:     cr.podCIDR,
-				ServiceSubnet: cr.serviceCIDR,
+				PodSubnet:     cr.podCIDR.String(),
+				ServiceSubnet: cr.serviceCIDR.String(),
 			}
 			conf.CACertificateValidityPeriod = &metav1.Duration{Duration: cr.caCertificateDuration}
 			conf.CertificateValidityPeriod = &metav1.Duration{Duration: cr.certificateDuration}

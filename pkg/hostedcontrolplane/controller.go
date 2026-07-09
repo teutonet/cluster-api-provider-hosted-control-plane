@@ -373,13 +373,6 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 				return reconcile.Result{}, fmt.Errorf("failed to get HostedControlPlane: %w", err)
 			}
 
-			patchHelper, err := patch.NewHelper(hostedControlPlane, r.client)
-			if err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to create patch helper for HostedControlPlane: %w", err)
-			}
-
-			hostedControlPlane.Status.ExternalManagedControlPlane = new(true)
-
 			ctx = recorder.IntoContext(ctx, recorder.New(r.recorder, hostedControlPlane))
 
 			cluster, err := util.GetOwnerCluster(ctx, r.client, hostedControlPlane.ObjectMeta)
@@ -421,12 +414,32 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 			}
 
 			isPaused, requeue, err := paused.EnsurePausedCondition(ctx, r.client, cluster, hostedControlPlane)
-			if err != nil || isPaused || requeue {
-				if err != nil {
-					return ctrl.Result{}, fmt.Errorf("failed to verify paused condition: %w", err)
-				}
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to verify paused condition: %w", err)
+			} else if isPaused || requeue {
 				return ctrl.Result{RequeueAfter: 10 * time.Second}, retErr
 			}
+
+			if hostedControlPlane.DeletionTimestamp.IsZero() {
+				if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.client,
+					hostedControlPlane, r.finalizer,
+				); err != nil {
+					return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to ensure finalizer: %w", err)
+				} else if finalizerAdded {
+					emit.Info(ctx, emit.SinkSpanEvent, hostedControlPlane,
+						"FinalizerMissing", "FinalizerAdded",
+						"Added missing finalizer",
+					)
+					return ctrl.Result{}, nil
+				}
+			}
+
+			patchHelper, err := patch.NewHelper(hostedControlPlane, r.client)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to create patch helper for HostedControlPlane: %w", err)
+			}
+
+			hostedControlPlane.Status.ExternalManagedControlPlane = new(true)
 
 			defer func() {
 				hostedControlPlane.Status.ObservedGeneration = hostedControlPlane.Generation
@@ -436,10 +449,10 @@ func (r *hostedControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.R
 			}()
 
 			if !hostedControlPlane.DeletionTimestamp.IsZero() {
-				return r.reconcileDelete(ctx, patchHelper, hostedControlPlane)
+				return r.reconcileDelete(ctx, hostedControlPlane)
 			}
 
-			return r.reconcileNormal(ctx, patchHelper, hostedControlPlane, cluster)
+			return r.reconcileNormal(ctx, hostedControlPlane, cluster)
 		},
 	)
 }
@@ -498,17 +511,11 @@ func (r *hostedControlPlaneReconciler) patch(
 //nolint:funlen // this function is not really complex
 func (r *hostedControlPlaneReconciler) reconcileNormal(
 	ctx context.Context,
-	_ *patch.Helper,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 ) (ctrl.Result, error) {
 	return tracing.WithSpan(ctx, r.tracer, "ReconcileNormal",
 		func(ctx context.Context, span trace.Span) (ctrl.Result, error) {
-			if finalizerAdded, err := finalizers.EnsureFinalizer(ctx, r.client,
-				hostedControlPlane, r.finalizer,
-			); err != nil || finalizerAdded {
-				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to ensure finalizer: %w", err)
-			}
 			span.SetAttributes(
 				attribute.String("hostedcontrolplane.version", hostedControlPlane.Spec.Version),
 				attribute.Int("hostedcontrolplane.replicas", int(hostedControlPlane.Spec.ReplicasOrDefault())),
@@ -516,60 +523,89 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 
 			type Phase struct {
 				Reconcile    func(context.Context, *v1alpha1.HostedControlPlane, *capiv2.Cluster) (string, error)
-				Condition    capiv2.ConditionType
+				Condition    string
 				FailedReason string
 				Name         string
 			}
 
 			serviceDomain := "cluster.local"
-			serviceCIDR := "10.96.0.0/12"
-			podCIDR := "10.0.0.0/16"
+			serviceCIDR := net.IPNet{
+				IP:   net.IPv4(10, 96, 0, 0),
+				Mask: net.CIDRMask(12, 32),
+			}
+			podCIDR := net.IPNet{
+				IP:   net.IPv4(10, 0, 0, 0),
+				Mask: net.CIDRMask(16, 32),
+			}
 
 			if clusterSpecServiceDomain := cluster.Spec.ClusterNetwork.ServiceDomain; clusterSpecServiceDomain != "" {
 				serviceDomain = clusterSpecServiceDomain
 			}
 
-			if clusterServiceCIDR := cluster.Spec.ClusterNetwork.Services.String(); clusterServiceCIDR != "" {
-				serviceCIDR = clusterServiceCIDR
+			if clusterNetwork := cluster.Spec.ClusterNetwork.Services.String(); clusterNetwork != "" {
+				if _, clusterServiceCIDR, err := net.ParseCIDR(clusterNetwork); err != nil {
+					conditions.Set(hostedControlPlane, metav1.Condition{
+						Type:    v1alpha1.WorkloadClusterResourcesReadyCondition,
+						Status:  metav1.ConditionFalse,
+						Reason:  v1alpha1.WorkloadClusterResourcesFailedReason,
+						Message: fmt.Sprintf("Failed to parse Service CIDR %q: %v", clusterNetwork, err),
+					})
+					return ctrl.Result{}, errorsUtil.IfErrErrorf(
+						"failed to parse Service CIDR %q: %w",
+						clusterNetwork,
+						err,
+					)
+				} else {
+					serviceCIDR = *clusterServiceCIDR
+				}
 			}
 
-			if clusterPodCIDR := cluster.Spec.ClusterNetwork.Pods.String(); clusterPodCIDR != "" {
-				podCIDR = clusterPodCIDR
+			if clusterPodNetwork := cluster.Spec.ClusterNetwork.Pods.String(); clusterPodNetwork != "" {
+				if _, clusterPodCIDR, err := net.ParseCIDR(clusterPodNetwork); err != nil {
+					conditions.Set(hostedControlPlane, metav1.Condition{
+						Type:    v1alpha1.WorkloadClusterResourcesReadyCondition,
+						Status:  metav1.ConditionFalse,
+						Reason:  v1alpha1.WorkloadClusterResourcesFailedReason,
+						Message: fmt.Sprintf("Failed to parse Pod CIDR %q: %v", clusterPodNetwork, err),
+					})
+					return ctrl.Result{}, errorsUtil.IfErrErrorf(
+						"failed to parse Pod CIDR %q: %w",
+						clusterPodNetwork,
+						err,
+					)
+				} else {
+					podCIDR = *clusterPodCIDR
+				}
 			}
 
-			var dnsIP net.IP
-			var kubernetesServiceIP net.IP
-			if _, serviceNet, err := net.ParseCIDR(strings.Split(serviceCIDR, ",")[0]); err != nil {
+			dnsIP, err := utilNet.GetIndexedIP(&serviceCIDR, 10)
+			if err != nil {
 				conditions.Set(hostedControlPlane, metav1.Condition{
 					Type:    v1alpha1.WorkloadClusterResourcesReadyCondition,
 					Status:  metav1.ConditionFalse,
 					Reason:  v1alpha1.WorkloadClusterResourcesFailedReason,
-					Message: fmt.Sprintf("Failed to parse Service CIDR %q: %v", serviceCIDR, err),
+					Message: fmt.Sprintf("Failed to calculate DNS IP from Service CIDR %q: %v", serviceCIDR, err),
 				})
-				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to parse Service CIDR %q: %w", serviceCIDR, err)
-			} else {
-				dnsIP, err = utilNet.GetIndexedIP(serviceNet, 10)
-				if err != nil {
-					conditions.Set(hostedControlPlane, metav1.Condition{
-						Type:    v1alpha1.WorkloadClusterResourcesReadyCondition,
-						Status:  metav1.ConditionFalse,
-						Reason:  v1alpha1.WorkloadClusterResourcesFailedReason,
-						Message: fmt.Sprintf("Failed to calculate DNS IP from Service CIDR %q: %v", serviceCIDR, err),
-					})
-					return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to calculate DNS IP from Service CIDR %q: %w",
-						serviceCIDR, err)
-				}
-				kubernetesServiceIP, err = utilNet.GetIndexedIP(serviceNet, 1)
-				if err != nil {
-					conditions.Set(hostedControlPlane, metav1.Condition{
-						Type:    v1alpha1.WorkloadClusterResourcesReadyCondition,
-						Status:  metav1.ConditionFalse,
-						Reason:  v1alpha1.WorkloadClusterResourcesFailedReason,
-						Message: fmt.Sprintf("Failed to calculate Kubernetes Service IP from Service CIDR %q: %v", serviceCIDR, err),
-					})
-					return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to calculate Kubernetes Service IP from Service CIDR %q: %w",
-						serviceCIDR, err)
-				}
+				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to calculate DNS IP from Service CIDR %q: %w",
+					serviceCIDR, err)
+			}
+			kubernetesServiceIP, err := utilNet.GetIndexedIP(&serviceCIDR, 1)
+			if err != nil {
+				conditions.Set(hostedControlPlane, metav1.Condition{
+					Type:   v1alpha1.WorkloadClusterResourcesReadyCondition,
+					Status: metav1.ConditionFalse,
+					Reason: v1alpha1.WorkloadClusterResourcesFailedReason,
+					Message: fmt.Sprintf(
+						"Failed to calculate Kubernetes Service IP from Service CIDR %q: %v",
+						serviceCIDR,
+						err,
+					),
+				})
+				return ctrl.Result{}, errorsUtil.IfErrErrorf(
+					"failed to calculate Kubernetes Service IP from Service CIDR %q: %w",
+					serviceCIDR,
+					err,
+				)
 			}
 
 			var ciliumClient ciliumclient.Interface
@@ -771,7 +807,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				); {
 				case err != nil:
 					conditions.Set(hostedControlPlane, metav1.Condition{
-						Type:    string(phase.Condition),
+						Type:    phase.Condition,
 						Status:  metav1.ConditionFalse,
 						Reason:  phase.FailedReason,
 						Message: fmt.Sprintf("Reconciling phase %s failed: %v", phase.Name, err),
@@ -779,7 +815,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					return reconcile.Result{}, err
 				case notReadyReason != "":
 					conditions.Set(hostedControlPlane, metav1.Condition{
-						Type:    string(phase.Condition),
+						Type:    phase.Condition,
 						Status:  metav1.ConditionFalse,
 						Reason:  notReadyReason,
 						Message: fmt.Sprintf("phase %s not ready", phase.Name),
@@ -787,7 +823,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 				default:
 					conditions.Set(hostedControlPlane, metav1.Condition{
-						Type:    string(phase.Condition),
+						Type:    phase.Condition,
 						Status:  metav1.ConditionTrue,
 						Reason:  "ReconcileSucceeded",
 						Message: fmt.Sprintf("Management phase %s reconciled successfully", phase.Name),
@@ -804,7 +840,6 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 
 func (r *hostedControlPlaneReconciler) reconcileDelete(
 	ctx context.Context,
-	_ *patch.Helper,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 ) (ctrl.Result, error) {
 	return tracing.WithSpan(ctx, r.tracer, "ReconcileDelete",
