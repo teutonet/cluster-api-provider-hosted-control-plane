@@ -37,8 +37,8 @@ func NewWorkloadClusterReconciler(
 	caCertificateDuration time.Duration,
 	certificateDuration time.Duration,
 	serviceDomain string,
-	serviceCIDR string,
-	podCIDR string,
+	serviceCIDR net.IPNet,
+	podCIDR net.IPNet,
 	dnsIP net.IP,
 	konnectivityNamespace string,
 	konnectivityServiceAccount string,
@@ -75,8 +75,8 @@ type workloadClusterReconciler struct {
 	caCertificateDuration               time.Duration
 	certificateDuration                 time.Duration
 	serviceDomain                       string
-	serviceCIDR                         string
-	podCIDR                             string
+	serviceCIDR                         net.IPNet
+	podCIDR                             net.IPNet
 	dnsIP                               net.IP
 	konnectivityNamespace               string
 	konnectivityServiceAccount          string
@@ -103,7 +103,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 		func(ctx context.Context, span trace.Span) (string, error) {
 			type WorkloadPhase struct {
 				Reconcile    func(context.Context, *capiv2.Cluster) (string, error)
-				Condition    capiv2.ConditionType
+				Condition    string
 				FailedReason string
 				Name         string
 			}
@@ -242,7 +242,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 					}); {
 				case err != nil:
 					conditions.Set(hostedControlPlane, metav1.Condition{
-						Type:    string(phase.Condition),
+						Type:    phase.Condition,
 						Status:  metav1.ConditionFalse,
 						Reason:  phase.FailedReason,
 						Message: fmt.Sprintf("Reconciling workload phase %s failed: %v", phase.Name, err),
@@ -250,7 +250,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 					return "", err
 				case notReadyReason != "":
 					conditions.Set(hostedControlPlane, metav1.Condition{
-						Type:    string(phase.Condition),
+						Type:    phase.Condition,
 						Status:  metav1.ConditionFalse,
 						Reason:  notReadyReason,
 						Message: fmt.Sprintf("Reconciling workload phase %s not ready: %s", phase.Name, notReadyReason),
@@ -258,15 +258,13 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 					return notReadyReason, nil
 				default:
 					conditions.Set(hostedControlPlane, metav1.Condition{
-						Type:    string(phase.Condition),
+						Type:    phase.Condition,
 						Status:  metav1.ConditionTrue,
 						Reason:  "ReconcileSucceeded",
 						Message: fmt.Sprintf("Workload phase %s reconciled successfully", phase.Name),
 					})
 				}
 			}
-
-			hostedControlPlane.Status.Initialization.ControlPlaneInitialized = new(true)
 
 			return "", nil
 		},
