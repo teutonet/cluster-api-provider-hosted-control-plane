@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.7.1...v1.7.2) (2026-07-10)
+
+
+### Bug Fixes
+
+* set hcp initialized earlier ([#139](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/139)) ([55b2514](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/55b25148f08c129c4b9e91c69f6c915bcaec2cd8))
+
 ## [1.7.1](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.7.0...v1.7.1) (2026-07-01)
 
 
