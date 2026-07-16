@@ -60,6 +60,10 @@ func GetFrontProxyCASecretName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-front-proxy-ca"
 }
 
+func GetFrontProxyCABundleSecretName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-front-proxy-ca-bundle"
+}
+
 func GetServiceAccountCertificateName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-service-account"
 }
@@ -138,6 +142,10 @@ func GetEtcdCAName(cluster *capiv2.Cluster) string {
 
 func GetEtcdCASecretName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-etcd-ca"
+}
+
+func GetEtcdCABundleSecretName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-etcd-ca-bundle"
 }
 
 func GetEtcdServerCertificateName(cluster *capiv2.Cluster) string {

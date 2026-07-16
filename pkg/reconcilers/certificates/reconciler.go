@@ -37,7 +37,7 @@ type CertificateReconciler interface {
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv2.Cluster,
 	) (string, error)
-	ReconcileCABundle(
+	ReconcileCABundles(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv2.Cluster,
@@ -469,16 +469,63 @@ const (
 
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;patch
 
-func (cr *certificateReconciler) ReconcileCABundle(
+func (cr *certificateReconciler) ReconcileCABundles(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
 ) (string, error) {
-	return tracing.WithSpan(ctx, cr.tracer, "ReconcileCABundle",
+	return tracing.WithSpan(ctx, cr.tracer, "ReconcileCABundles",
 		func(ctx context.Context, _ trace.Span) (string, error) {
+			bundles := []struct {
+				kind             string
+				caSecretName     string
+				bundleSecretName string
+			}{
+				{"CA", names.GetCASecretName(cluster), names.GetCABundleSecretName(cluster)},
+				{"etcd CA", names.GetEtcdCASecretName(cluster), names.GetEtcdCABundleSecretName(cluster)},
+				{
+					"front-proxy CA",
+					names.GetFrontProxyCASecretName(cluster),
+					names.GetFrontProxyCABundleSecretName(cluster),
+				},
+			}
+
+			var notReadyReasons []string
+			for _, bundle := range bundles {
+				notReady, err := cr.reconcileCABundle(ctx, hostedControlPlane, cluster,
+					bundle.caSecretName,
+					bundle.bundleSecretName,
+				)
+				if err != nil {
+					return "", fmt.Errorf("failed to reconcile %s bundle: %w", bundle.kind, err)
+				}
+				if notReady != "" {
+					notReadyReasons = append(notReadyReasons, notReady)
+				}
+			}
+
+			return strings.Join(notReadyReasons, ","), nil
+		},
+	)
+}
+
+func (cr *certificateReconciler) reconcileCABundle(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv2.Cluster,
+	caSecretName string,
+	caBundleSecretName string,
+) (string, error) {
+	return tracing.WithSpan(ctx, cr.tracer, "ReconcileCABundle",
+		func(ctx context.Context, span trace.Span) (string, error) {
+			span.SetAttributes(
+				attribute.String("caBundle.caSecretName", caSecretName),
+				attribute.String("caBundle.bundleSecretName", caBundleSecretName),
+			)
+
 			secretsClient := cr.kubernetesClient.CoreV1().Secrets(hostedControlPlane.Namespace)
 
-			realCASecret, err := secretsClient.Get(ctx, names.GetCASecretName(cluster), metav1.GetOptions{})
+			realCASecret, err := secretsClient.Get(ctx, caSecretName, metav1.GetOptions{})
 			if apierrors.IsNotFound(err) {
 				return "CA secret not yet available", nil
 			}
@@ -491,7 +538,7 @@ func (cr *certificateReconciler) ReconcileCABundle(
 			}
 
 			oldCACert := []byte{}
-			bundleSecret, err := secretsClient.Get(ctx, names.GetCABundleSecretName(cluster), metav1.GetOptions{})
+			bundleSecret, err := secretsClient.Get(ctx, caBundleSecretName, metav1.GetOptions{})
 			if err != nil && !apierrors.IsNotFound(err) {
 				return "", fmt.Errorf("failed to get CA bundle secret: %w", err)
 			}
@@ -505,7 +552,7 @@ func (cr *certificateReconciler) ReconcileCABundle(
 
 			caBundlePEM := append(append([]byte{}, oldCACert...), currentCACert...)
 
-			bundleSecretAC := corev1ac.Secret(names.GetCABundleSecretName(cluster), hostedControlPlane.Namespace).
+			bundleSecretAC := corev1ac.Secret(caBundleSecretName, hostedControlPlane.Namespace).
 				WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
 				WithLabels(names.GetControlPlaneLabels(cluster, "")).
 				WithData(map[string][]byte{
