@@ -4,6 +4,7 @@ package etc
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	env "github.com/caarlos0/env/v6"
 )
@@ -28,6 +29,17 @@ type Config struct {
 	// ReconcileFilter, when non-empty, limits reconciliation to HostedControlPlanes whose name or
 	// owner Cluster name matches. Supports bare name or "namespace/name" format. Debugging aid only.
 	ReconcileFilter string `env:"HCP_RECONCILE_FILTER"`
+
+	// CACertificateDuration overrides the duration of CA certificates
+	// (cluster CA, etcd CA, front-proxy CA) created via cert-manager.
+	// Default 48h matches the original behavior. Industry-standard
+	// alternative: 87600h (10 years), matching kubeadm/RKE2/EKS defaults.
+	CACertificateDuration time.Duration `env:"CA_CERTIFICATE_DURATION" envDefault:"48h"`
+	// CertificateDuration overrides the duration of leaf certificates
+	// (apiserver, etcd peer/server, controller-manager kubeconfig, etc.).
+	// Default 24h matches the original behavior. Industry-standard
+	// alternative: 8760h (1 year), matching kubeadm/RKE2/EKS defaults.
+	CertificateDuration time.Duration `env:"CERTIFICATE_DURATION" envDefault:"24h"`
 }
 
 func GetOperatorConfig() (Config, error) {
