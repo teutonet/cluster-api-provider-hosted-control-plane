@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.7.2...v1.8.0) (2026-07-21)
+
+
+### Features
+
+* add various docs about working together ([#142](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/142)) ([f5bbe43](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/f5bbe43179a358c19c2f7ee3b737a5272e73987e))
+
 ## [1.7.2](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.7.1...v1.7.2) (2026-07-10)
 
 
