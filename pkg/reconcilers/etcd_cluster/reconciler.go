@@ -714,10 +714,10 @@ func (er *etcdClusterReconciler) createEtcdCertificatesVolume(
 		WithProjected(corev1ac.ProjectedVolumeSource().
 			WithSources(
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
-					WithName(names.GetEtcdCASecretName(cluster)).
+					WithName(names.GetEtcdCABundleSecretName(cluster)).
 					WithItems(
 						corev1ac.KeyToPath().
-							WithKey(corev1.TLSCertKey).
+							WithKey(konstants.CACertName).
 							WithPath(konstants.CACertName),
 					),
 				),

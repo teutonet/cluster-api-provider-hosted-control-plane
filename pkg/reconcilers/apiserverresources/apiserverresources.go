@@ -848,10 +848,10 @@ func (arr *apiServerResourcesReconciler) createAPIServerCertificatesVolume(
 					),
 				),
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
-					WithName(names.GetFrontProxyCASecretName(cluster)).
+					WithName(names.GetFrontProxyCABundleSecretName(cluster)).
 					WithItems(
 						corev1ac.KeyToPath().
-							WithKey(corev1.TLSCertKey).
+							WithKey(konstants.CACertName).
 							WithPath(konstants.FrontProxyCACertName),
 					),
 				),
@@ -900,10 +900,10 @@ func (arr *apiServerResourcesReconciler) createAPIServerCertificatesVolume(
 					),
 				),
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
-					WithName(names.GetEtcdCASecretName(cluster)).
+					WithName(names.GetEtcdCABundleSecretName(cluster)).
 					WithItems(
 						corev1ac.KeyToPath().
-							WithKey(corev1.TLSCertKey).
+							WithKey(konstants.CACertName).
 							WithPath(konstants.EtcdCACertName),
 					),
 				),
@@ -959,10 +959,10 @@ func (arr *apiServerResourcesReconciler) createControllerManagerCertificatesVolu
 					),
 				),
 				corev1ac.VolumeProjection().WithSecret(corev1ac.SecretProjection().
-					WithName(names.GetFrontProxyCASecretName(cluster)).
+					WithName(names.GetFrontProxyCABundleSecretName(cluster)).
 					WithItems(
 						corev1ac.KeyToPath().
-							WithKey(corev1.TLSCertKey).
+							WithKey(konstants.CACertName).
 							WithPath(konstants.FrontProxyCACertName),
 					),
 				),

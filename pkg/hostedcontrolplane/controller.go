@@ -708,8 +708,8 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					FailedReason: v1alpha1.CACertificatesFailedReason,
 				},
 				{
-					Name:         "CA bundle",
-					Reconcile:    certificateReconciler.ReconcileCABundle,
+					Name:         "CA bundles",
+					Reconcile:    certificateReconciler.ReconcileCABundles,
 					Condition:    v1alpha1.CABundleReadyCondition,
 					FailedReason: v1alpha1.CABundleFailedReason,
 				},

@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -300,14 +301,14 @@ func getETCDConnectionTLS(
 	return tracing.WithSpan3(ctx, tracer, "GetETCDConnectionTLS",
 		func(ctx context.Context, span trace.Span) (*x509.CertPool, tls.Certificate, error) {
 			secrets := managementClusterClient.CoreV1().Secrets(hostedControlPlane.Namespace)
-			etcdCASecret, err := secrets.
-				Get(ctx, names.GetEtcdCASecretName(cluster), metav1.GetOptions{})
+			etcdCABundleSecret, err := secrets.
+				Get(ctx, names.GetEtcdCABundleSecretName(cluster), metav1.GetOptions{})
 			if err != nil {
-				return nil, tls.Certificate{}, fmt.Errorf("failed to get etcd CA secret: %w", err)
+				return nil, tls.Certificate{}, fmt.Errorf("failed to get etcd CA bundle secret: %w", err)
 			}
 
 			caPool := x509.NewCertPool()
-			if !caPool.AppendCertsFromPEM(etcdCASecret.Data[corev1.TLSCertKey]) {
+			if !caPool.AppendCertsFromPEM(etcdCABundleSecret.Data[konstants.CACertName]) {
 				return nil, tls.Certificate{}, errETCDCAFailedToAppend
 			}
 
