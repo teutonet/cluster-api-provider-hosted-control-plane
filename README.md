@@ -299,12 +299,12 @@ spec:
 
 Each provider supports:
 
-| Field                 | Required | Description                                                           |
-| --------------------- | -------- | --------------------------------------------------------------------- |
-| `audiences`           | Yes      | Accepted `aud` claim values (at least one must match)                 |
-| `claimMappings`       | Yes      | CEL expressions mapping token claims to `username` and `groups`       |
-| `certificateAuthority`| No       | PEM-encoded CA bundle for verifying the provider's TLS certificate    |
-| `claimValidationRules`| No       | CEL expressions that must evaluate to `true` for the token to be valid|
+| Field                  | Required | Description                                                            |
+| ---------------------- | -------- | ---------------------------------------------------------------------- |
+| `audiences`            | Yes      | Accepted `aud` claim values (at least one must match)                  |
+| `claimMappings`        | Yes      | CEL expressions mapping token claims to `username` and `groups`        |
+| `certificateAuthority` | No       | PEM-encoded CA bundle for verifying the provider's TLS certificate     |
+| `claimValidationRules` | No       | CEL expressions that must evaluate to `true` for the token to be valid |
 
 ## 🎛️ Configuration
 
@@ -396,6 +396,10 @@ for details on:
 
 - **GitHub Issues**: [Report bugs or request features](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues)
 - **Discussions**: [Community discussions and Q&A](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/discussions)
+
+## 📫 Contact
+
+[kubernetes@teuto.net](mailto:kubernetes@teuto.net)
 
 ## 📄 License
 
