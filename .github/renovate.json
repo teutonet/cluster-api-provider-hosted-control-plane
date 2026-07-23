@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/.*/"
+      ],
+      "matchStrings": [
+        "\"?(?<currentValue>[^\\s\"]+)\"?\\s*//\\s*renovate:\\s*datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( registryUrl=(?<registryUrl>\\S+))?( extractVersion=(?<extractVersion>\\S+))?( versioning=(?<versioning>\\S+))?"
+      ]
+    }
+  ]
+}
