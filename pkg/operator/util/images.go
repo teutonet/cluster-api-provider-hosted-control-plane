@@ -7,6 +7,10 @@ import (
 	"k8s.io/utils/ptr"
 )
 
+const (
+	maxKonnectivityMinor = 36 // renovate: datasource=docker depName=kas-network-proxy/konnectivity-server registryUrl=registry.k8s.io extractVersion=^v0\.(?<version>\d+)\.0$
+)
+
 func buildImageString(registry, repository, tag string) string {
 	if registry == "" {
 		return fmt.Sprintf("%s:%s", repository, tag)
@@ -39,9 +43,7 @@ func ResolveKonnectivityImage(imageSpec *v1alpha1.ImageSpec, component string, m
 		imageSpec,
 		"registry.k8s.io",
 		fmt.Sprintf("kas-network-proxy/%s", component),
-		// there is no image for 35 and above
-		// TODO: update when new image is available
-		fmt.Sprintf("v0.%d.0", min(minorVersion, 34)),
+		fmt.Sprintf("v0.%d.0", min(minorVersion, uint64(maxKonnectivityMinor))),
 	)
 }
 
