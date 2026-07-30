@@ -288,6 +288,13 @@ func TestResolveKonnectivityImage(t *testing.T) {
 			minorVersion: 28,
 			expected:     "registry.k8s.io/kas-network-proxy/proxy-agent:v0.29.0-custom",
 		},
+		{
+			name:         "minor version above max is clamped",
+			imageSpec:    nil,
+			component:    "proxy-server",
+			minorVersion: 40,
+			expected:     "registry.k8s.io/kas-network-proxy/proxy-server:v0.36.0",
+		},
 	}
 
 	for _, tt := range tests {
