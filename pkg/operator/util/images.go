@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	maxKonnectivityMinor = 36 // renovate: datasource=docker depName=kas-network-proxy/konnectivity-server registryUrl=registry.k8s.io extractVersion=^v0\.(?<version>\d+)\.0$
+	maxKonnectivityMinor = 36 // renovate: datasource=docker depName=kas-network-proxy/proxy-server registryUrl=registry.k8s.io extractVersion=^v0\.(?<version>\d+)\.0$
 )
 
 func buildImageString(registry, repository, tag string) string {
