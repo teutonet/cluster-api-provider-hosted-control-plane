@@ -6,7 +6,6 @@ import (
 
 	. "github.com/onsi/gomega"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
-	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,16 +39,18 @@ type caBundleFixture struct {
 	bundleSecretName string
 }
 
+// caBundleFixtures mirrors the production caDefinitions instead of hardcoding its own CA list, so it
+// can't drift from what ReconcileCABundles actually reconciles.
 func caBundleFixtures() []caBundleFixture {
-	return []caBundleFixture{
-		{"CA", names.GetCASecretName(bundleTestCluster), names.GetCABundleSecretName(bundleTestCluster)},
-		{"etcd CA", names.GetEtcdCASecretName(bundleTestCluster), names.GetEtcdCABundleSecretName(bundleTestCluster)},
-		{
-			"front-proxy CA",
-			names.GetFrontProxyCASecretName(bundleTestCluster),
-			names.GetFrontProxyCABundleSecretName(bundleTestCluster),
-		},
+	fixtures := make([]caBundleFixture, len(caDefinitions))
+	for i, def := range caDefinitions {
+		fixtures[i] = caBundleFixture{
+			def.kind,
+			def.secretName(bundleTestCluster),
+			def.bundleSecretName(bundleTestCluster),
+		}
 	}
+	return fixtures
 }
 
 func newBundleReconciler(kubeClient *fake.Clientset) *certificateReconciler {
