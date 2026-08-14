@@ -31,9 +31,9 @@ require (
 	go4.org v0.0.0-20260112195520-a5071408f32f
 	golang.org/x/text v0.40.0
 	google.golang.org/grpc v1.82.1
-	k8s.io/api v0.36.2
+	k8s.io/api v0.36.3
 	k8s.io/apiextensions-apiserver v0.36.2
-	k8s.io/apimachinery v0.36.2
+	k8s.io/apimachinery v0.36.3
 	k8s.io/apiserver v0.36.2
 	k8s.io/client-go v0.36.2
 	k8s.io/cluster-bootstrap v0.36.2
@@ -200,7 +200,7 @@ require (
 )
 
 replace (
-	k8s.io/api => k8s.io/api v0.36.2
+	k8s.io/api => k8s.io/api v0.36.3
 	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.36.2
 	k8s.io/apimachinery => k8s.io/apimachinery v0.36.2
 	k8s.io/apiserver => k8s.io/apiserver v0.36.2
