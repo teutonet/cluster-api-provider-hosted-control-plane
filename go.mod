@@ -11,7 +11,7 @@ require (
 	github.com/aws/smithy-go/tracing/smithyoteltracing v1.0.20
 	github.com/blang/semver/v4 v4.0.0
 	github.com/caarlos0/env/v6 v6.10.1
-	github.com/cert-manager/cert-manager v1.21.0
+	github.com/cert-manager/cert-manager v1.21.1
 	github.com/cilium/cilium v1.19.5
 	github.com/coredns/corefile-migration v1.0.33
 	github.com/go-logr/logr v1.4.3
