@@ -91,6 +91,54 @@ type certificateSpec struct {
 	customLabels map[string]string
 }
 
+// caDefinition is the single source of truth for a control plane CA: its certificate/secret/bundle
+// naming, the issuer it produces, and the (already-existing) issuer it's signed by. ReconcileCACertificates
+// and ReconcileCABundles both iterate this same list so a newly added CA can't be forgotten in one of
+// them.
+type caDefinition struct {
+	kind             string
+	commonName       string
+	certificateName  func(cluster *capiv2.Cluster) string
+	secretName       func(cluster *capiv2.Cluster) string
+	bundleSecretName func(cluster *capiv2.Cluster) string
+	issuerName       func(cluster *capiv2.Cluster) string
+	parentIssuerName func(cluster *capiv2.Cluster) string
+	duration         func(cr *certificateReconciler) time.Duration
+}
+
+var caDefinitions = []caDefinition{
+	{
+		kind:             "kubernetes CA",
+		commonName:       "kubernetes",
+		certificateName:  names.GetCACertificateName,
+		secretName:       names.GetCASecretName,
+		bundleSecretName: names.GetCABundleSecretName,
+		issuerName:       names.GetCAIssuerName,
+		parentIssuerName: names.GetRootIssuerName,
+		duration:         func(cr *certificateReconciler) time.Duration { return cr.rootCACertificateDuration },
+	},
+	{
+		kind:             "etcd CA",
+		commonName:       "etcd-ca",
+		certificateName:  names.GetEtcdCAName,
+		secretName:       names.GetEtcdCASecretName,
+		bundleSecretName: names.GetEtcdCABundleSecretName,
+		issuerName:       names.GetEtcdCAName,
+		parentIssuerName: names.GetCAIssuerName,
+		duration:         func(cr *certificateReconciler) time.Duration { return cr.caCertificateDuration },
+	},
+	{
+		kind:             "front-proxy CA",
+		commonName:       "front-proxy-ca",
+		certificateName:  names.GetFrontProxyCAName,
+		secretName:       names.GetFrontProxyCASecretName,
+		bundleSecretName: names.GetFrontProxyCABundleSecretName,
+		issuerName:       names.GetFrontProxyCAName,
+		parentIssuerName: names.GetCAIssuerName,
+		duration:         func(cr *certificateReconciler) time.Duration { return cr.caCertificateDuration },
+	},
+}
+
 //+kubebuilder:rbac:groups=cert-manager.io,resources=issuers,verbs=create;update;patch
 
 func (cr *certificateReconciler) ReconcileCACertificates(
@@ -101,29 +149,8 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 	return tracing.WithSpan(ctx, cr.tracer, "ReconcileCACertificates",
 		func(ctx context.Context, span trace.Span) (string, error) {
 			issuerClient := cr.certManagerClient.CertmanagerV1().Issuers(hostedControlPlane.Namespace)
-			createCertificateSpec := func(
-				issuer *certmanagerv1.Issuer,
-				name string,
-				commonName string,
-				secretName string,
-				duration time.Duration,
-			) certificateSpec {
-				return certificateSpec{
-					kind: name,
-					spec: cr.createCertificateSpec(issuer.Name, commonName, secretName, true).
-						WithDuration(metav1.Duration{Duration: duration}),
-					customLabels: map[string]string{
-						names.CertificateKindLabel: string(names.CACertificateKind),
-					},
-				}
-			}
 
-			rootIssuerAC := cr.createIssuer(
-				hostedControlPlane,
-				cluster,
-				names.GetRootIssuerName(cluster),
-				"",
-			)
+			rootIssuerAC := cr.createIssuer(hostedControlPlane, cluster, names.GetRootIssuerName(cluster), "")
 
 			rootIssuer, err := issuerClient.Apply(ctx, rootIssuerAC, operatorutil.ApplyOptions)
 			if err != nil {
@@ -133,103 +160,62 @@ func (cr *certificateReconciler) ReconcileCACertificates(
 				return "root issuer not ready", nil
 			}
 
-			kubernetesCACertificate, ready, err := cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
-				names.GetCACertificateName(cluster),
-				createCertificateSpec(
-					rootIssuer,
-					names.GetCACertificateName(cluster),
-					"kubernetes",
-					names.GetCASecretName(cluster),
-					cr.rootCACertificateDuration,
-				),
-			)
-			if err != nil {
-				return "", fmt.Errorf("failed to reconcile CA certificate: %w", err)
-			}
-			if !ready {
-				return "kubernetes CA certificate not ready", nil
-			}
-
-			kubernetesCAIssuerAC := cr.createIssuer(
-				hostedControlPlane,
-				cluster,
-				names.GetCAIssuerName(cluster),
-				kubernetesCACertificate.Spec.SecretName,
-			)
-
-			kubernetesCAIssuer, err := issuerClient.Apply(ctx, kubernetesCAIssuerAC, operatorutil.ApplyOptions)
-			if err != nil {
-				return "", fmt.Errorf("failed to patch CA issuer: %w", err)
-			}
-			if !cr.isIssuerReady(kubernetesCAIssuer) {
-				return "kubernetes CA issuer not ready", nil
-			}
-
 			var notReadyReasons []string
-
-			frontProxyCACertificate, ready, err := cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
-				names.GetFrontProxyCAName(cluster),
-				createCertificateSpec(
-					kubernetesCAIssuer,
-					names.GetFrontProxyCAName(cluster),
-					"front-proxy-ca",
-					names.GetFrontProxyCASecretName(cluster),
-					cr.caCertificateDuration,
-				),
-			)
-			if err != nil {
-				return "", fmt.Errorf("failed to reconcile front-proxy CA certificate: %w", err)
-			}
-			if !ready {
-				notReadyReasons = append(notReadyReasons, "front-proxy CA certificate not ready")
-			} else {
-				frontProxyCAIssuerAC := cr.createIssuer(
-					hostedControlPlane,
-					cluster,
-					names.GetFrontProxyCAName(cluster),
-					frontProxyCACertificate.Spec.SecretName,
-				)
-
-				if frontProxyCAIssuer, err := issuerClient.Apply(ctx, frontProxyCAIssuerAC, operatorutil.ApplyOptions); err != nil {
-					return "", fmt.Errorf("failed to patch front-proxy CA issuer: %w", err)
-				} else if !cr.isIssuerReady(frontProxyCAIssuer) {
-					notReadyReasons = append(notReadyReasons, "front-proxy CA issuer not ready")
+			for _, def := range caDefinitions {
+				notReady, err := cr.reconcileCA(ctx, hostedControlPlane, cluster, def)
+				if err != nil {
+					return "", err
 				}
-			}
-
-			etcdCACertificate, ready, err := cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
-				names.GetEtcdCAName(cluster),
-				createCertificateSpec(
-					kubernetesCAIssuer,
-					names.GetEtcdCAName(cluster),
-					"etcd-ca",
-					names.GetEtcdCASecretName(cluster),
-					cr.caCertificateDuration,
-				),
-			)
-			if err != nil {
-				return "", fmt.Errorf("failed to reconcile etcd CA certificate: %w", err)
-			}
-			if !ready {
-				notReadyReasons = append(notReadyReasons, "etcd CA certificate not ready")
-			} else {
-				etcdCAIssuerAC := cr.createIssuer(
-					hostedControlPlane,
-					cluster,
-					names.GetEtcdCAName(cluster),
-					etcdCACertificate.Spec.SecretName,
-				)
-
-				if etcdCAIssuer, err := issuerClient.Apply(ctx, etcdCAIssuerAC, operatorutil.ApplyOptions); err != nil {
-					return "", fmt.Errorf("failed to patch etcd CA issuer: %w", err)
-				} else if !cr.isIssuerReady(etcdCAIssuer) {
-					notReadyReasons = append(notReadyReasons, "etcd CA issuer not ready")
+				if notReady != "" {
+					notReadyReasons = append(notReadyReasons, notReady)
 				}
 			}
 
 			return strings.Join(notReadyReasons, ","), nil
 		},
 	)
+}
+
+// reconcileCA reconciles a CA certificate issued by def's parent issuer, then reconciles the issuer it
+// in turn produces so certificates one level below can be signed by it. The parent issuer doesn't need
+// to be ready yet: cert-manager leaves the certificate Pending until it is, which reconcileCertificate
+// reports as not-ready like any other certificate.
+func (cr *certificateReconciler) reconcileCA(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv2.Cluster,
+	def caDefinition,
+) (string, error) {
+	certificate, ready, err := cr.reconcileCertificate(ctx, hostedControlPlane, cluster,
+		def.certificateName(cluster),
+		certificateSpec{
+			kind: def.kind,
+			spec: cr.createCertificateSpec(def.parentIssuerName(cluster), def.commonName, def.secretName(cluster), true).
+				WithDuration(metav1.Duration{Duration: def.duration(cr)}),
+			customLabels: map[string]string{
+				names.CertificateKindLabel: string(names.CACertificateKind),
+			},
+		},
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to reconcile %s certificate: %w", def.kind, err)
+	}
+	if !ready {
+		return fmt.Sprintf("%s certificate not ready", def.kind), nil
+	}
+
+	issuerAC := cr.createIssuer(hostedControlPlane, cluster, def.issuerName(cluster), certificate.Spec.SecretName)
+
+	issuer, err := cr.certManagerClient.CertmanagerV1().Issuers(hostedControlPlane.Namespace).
+		Apply(ctx, issuerAC, operatorutil.ApplyOptions)
+	if err != nil {
+		return "", fmt.Errorf("failed to patch %s issuer: %w", def.kind, err)
+	}
+	if !cr.isIssuerReady(issuer) {
+		return fmt.Sprintf("%s issuer not ready", def.kind), nil
+	}
+
+	return "", nil
 }
 
 func (cr *certificateReconciler) createIssuer(
@@ -476,28 +462,14 @@ func (cr *certificateReconciler) ReconcileCABundles(
 ) (string, error) {
 	return tracing.WithSpan(ctx, cr.tracer, "ReconcileCABundles",
 		func(ctx context.Context, _ trace.Span) (string, error) {
-			bundles := []struct {
-				kind             string
-				caSecretName     string
-				bundleSecretName string
-			}{
-				{"CA", names.GetCASecretName(cluster), names.GetCABundleSecretName(cluster)},
-				{"etcd CA", names.GetEtcdCASecretName(cluster), names.GetEtcdCABundleSecretName(cluster)},
-				{
-					"front-proxy CA",
-					names.GetFrontProxyCASecretName(cluster),
-					names.GetFrontProxyCABundleSecretName(cluster),
-				},
-			}
-
 			var notReadyReasons []string
-			for _, bundle := range bundles {
+			for _, def := range caDefinitions {
 				notReady, err := cr.reconcileCABundle(ctx, hostedControlPlane, cluster,
-					bundle.caSecretName,
-					bundle.bundleSecretName,
+					def.secretName(cluster),
+					def.bundleSecretName(cluster),
 				)
 				if err != nil {
-					return "", fmt.Errorf("failed to reconcile %s bundle: %w", bundle.kind, err)
+					return "", fmt.Errorf("failed to reconcile %s bundle: %w", def.kind, err)
 				}
 				if notReady != "" {
 					notReadyReasons = append(notReadyReasons, notReady)

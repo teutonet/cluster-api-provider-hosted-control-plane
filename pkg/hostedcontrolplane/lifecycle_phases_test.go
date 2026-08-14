@@ -337,7 +337,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				false: {
 					NewConditionVerification(
 						v1alpha1.CACertificatesReadyCondition,
-						Equal("KubernetesCaCertificateNotReady"),
+						ContainSubstring("KubernetesCaCertificateNotReady"),
 					),
 				},
 			},
@@ -348,7 +348,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				false: {
 					NewConditionVerification(
 						v1alpha1.CACertificatesReadyCondition,
-						Not(Equal("KubernetesCaCertificateNotReady")),
+						Not(ContainSubstring("KubernetesCaCertificateNotReady")),
 					),
 				},
 			},
@@ -359,7 +359,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				false: {
 					NewConditionVerification(
 						v1alpha1.CACertificatesReadyCondition,
-						Equal("KubernetesCaIssuerNotReady"),
+						ContainSubstring("KubernetesCaIssuerNotReady"),
 					),
 				},
 			},
@@ -368,7 +368,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				false: {
 					NewConditionVerification(
 						v1alpha1.CACertificatesReadyCondition,
-						Not(Equal("KubernetesCaIssuerNotReady")),
+						Not(ContainSubstring("KubernetesCaIssuerNotReady")),
 					),
 				},
 			},
