@@ -14,7 +14,7 @@ require (
 	github.com/cert-manager/cert-manager v1.21.0
 	github.com/cilium/cilium v1.19.5
 	github.com/coredns/corefile-migration v1.0.33
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/onsi/gomega v1.42.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/lo v1.53.0
