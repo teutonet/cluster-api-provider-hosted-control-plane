@@ -59,7 +59,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
 
@@ -193,7 +193,7 @@ func (r *hostedControlPlaneReconciler) SetupWithManager(
 			Owns(&appsv1.StatefulSet{}).
 			Owns(&appsv1.Deployment{}).
 			Owns(&policyv1.PodDisruptionBudget{}).
-			Owns(&gwv1alpha2.TLSRoute{}).
+			Owns(&gwv1.TLSRoute{}).
 			Watches(&corev1.Secret{},
 				handler.EnqueueRequestsFromMapFunc(r.secretToHostedControlPlane),
 				builder.WithPredicates(
@@ -726,28 +726,34 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					FailedReason: v1alpha1.SyncControlPlaneEndpointFailedReason,
 				},
 				{
+					Name:         "tlsroutes",
+					Reconcile:    tlsRoutesReconciler.ReconcileTLSRoutes,
+					Condition:    v1alpha1.APIServerTLSRoutesReadyCondition,
+					FailedReason: v1alpha1.APIServerTLSRoutesFailedReason,
+				},
+				{
 					Name:         "certificates",
 					Reconcile:    certificateReconciler.ReconcileCertificates,
 					Condition:    v1alpha1.CertificatesReadyCondition,
 					FailedReason: v1alpha1.CertificatesFailedReason,
 				},
 				{
-					Name: "kubeconfig",
+					Name:         "etcd cluster",
+					Reconcile:    etcdClusterReconciler.ReconcileEtcdCluster,
+					Condition:    v1alpha1.EtcdClusterReadyCondition,
+					FailedReason: v1alpha1.EtcdClusterFailedReason,
+				},
+				{
+					Name: "internal kubeconfig",
 					Reconcile: func(
 						ctx context.Context,
 						_ *v1alpha1.HostedControlPlane,
 						cluster *capiv2.Cluster,
 					) (string, error) {
-						return "", kubeconfigReconciler.ReconcileKubeconfigs(ctx, cluster)
+						return "", kubeconfigReconciler.ReconcileInternalKubeconfigs(ctx, cluster)
 					},
-					Condition:    v1alpha1.KubeconfigReadyCondition,
-					FailedReason: v1alpha1.KubeconfigFailedReason,
-				},
-				{
-					Name:         "etcd cluster",
-					Reconcile:    etcdClusterReconciler.ReconcileEtcdCluster,
-					Condition:    v1alpha1.EtcdClusterReadyCondition,
-					FailedReason: v1alpha1.EtcdClusterFailedReason,
+					Condition:    v1alpha1.InternalKubeconfigReadyCondition,
+					FailedReason: v1alpha1.InternalKubeconfigFailedReason,
 				},
 				{
 					Name: "apiserver deployments",
@@ -776,14 +782,30 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					FailedReason: v1alpha1.APIServerDeploymentsFailedReason,
 				},
 				{
-					Name:         "tlsroutes",
-					Reconcile:    tlsRoutesReconciler.ReconcileTLSRoutes,
-					Condition:    v1alpha1.APIServerTLSRoutesReadyCondition,
-					FailedReason: v1alpha1.APIServerTLSRoutesFailedReason,
+					Name: "admin kubeconfig",
+					Reconcile: func(
+						ctx context.Context,
+						_ *v1alpha1.HostedControlPlane,
+						cluster *capiv2.Cluster,
+					) (string, error) {
+						if err := kubeconfigReconciler.ReconcileAdminKubeconfig(ctx, cluster); err != nil {
+							return "", fmt.Errorf("reconcile api server deployments: %w", err)
+						}
+						hostedControlPlane.Status.Ready = true
+						return "", nil
+					},
+					Condition:    v1alpha1.AdminKubeconfigReadyCondition,
+					FailedReason: v1alpha1.AdminKubeconfigFailedReason,
 				},
 				{
-					Name:         "CA rotation annotation",
-					Reconcile:    nodeRotationReconciler.ReconcileCARotation,
+					Name: "CA rotation annotation",
+					Reconcile: func(
+						ctx context.Context,
+						hcp *v1alpha1.HostedControlPlane,
+						cluster *capiv2.Cluster,
+					) (string, error) {
+						return "", nodeRotationReconciler.ReconcileCARotation(ctx, hcp, cluster)
+					},
 					Condition:    v1alpha1.CARotationAnnotationReadyCondition,
 					FailedReason: v1alpha1.CARotationAnnotationFailedReason,
 				},

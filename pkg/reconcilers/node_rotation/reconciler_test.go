@@ -1,6 +1,7 @@
 package node_rotation
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -84,9 +85,8 @@ func TestReconcileCARotation_SetsMachineDeploymentRolloutAfter(t *testing.T) {
 	cl := fakeClient.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(md).Build()
 	r := &nodeRotationReconciler{client: cl, certManagerClient: cmClient, tracer: "test"}
 
-	notReady, err := r.ReconcileCARotation(ctx, testHCP, testCluster)
+	err := r.ReconcileCARotation(ctx, testHCP, testCluster)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(notReady).To(BeEmpty())
 
 	updated := &capiv2.MachineDeployment{}
 	g.Expect(cl.Get(ctx, types.NamespacedName{Name: "md-1", Namespace: testCluster.Namespace}, updated)).To(Succeed())
@@ -102,9 +102,8 @@ func TestReconcileCARotation_AnnotatesMachinePoolTemplate(t *testing.T) {
 	cl := fakeClient.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(mp).Build()
 	r := &nodeRotationReconciler{client: cl, certManagerClient: cmClient, tracer: "test"}
 
-	notReady, err := r.ReconcileCARotation(ctx, testHCP, testCluster)
+	err := r.ReconcileCARotation(ctx, testHCP, testCluster)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(notReady).To(BeEmpty())
 
 	updated := &capiv2.MachinePool{}
 	g.Expect(cl.Get(ctx, types.NamespacedName{Name: "mp-1", Namespace: testCluster.Namespace}, updated)).To(Succeed())
@@ -121,14 +120,14 @@ func TestReconcileCARotation_SkipsAlreadySetRolloutAfter(t *testing.T) {
 		WithObjects(machineDeployment("md-1")).Build()
 	r := &nodeRotationReconciler{client: cl, certManagerClient: cmClient, tracer: "test"}
 
-	_, err := r.ReconcileCARotation(ctx, testHCP, testCluster)
+	err := r.ReconcileCARotation(ctx, testHCP, testCluster)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	annotated := &capiv2.MachineDeployment{}
 	g.Expect(cl.Get(ctx, types.NamespacedName{Name: "md-1", Namespace: testCluster.Namespace}, annotated)).To(Succeed())
 
 	rvBefore := annotated.ResourceVersion
-	_, err = r.ReconcileCARotation(ctx, testHCP, testCluster)
+	err = r.ReconcileCARotation(ctx, testHCP, testCluster)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	after := &capiv2.MachineDeployment{}
@@ -149,11 +148,11 @@ func TestReconcileCARotation_UpdatesRolloutAfterOnCAChange(t *testing.T) {
 		certManagerClient: cmfake.NewClientset(caCertificate(notBeforeV1)),
 		tracer:            "test",
 	}
-	_, err := r.ReconcileCARotation(ctx, testHCP, testCluster)
+	err := r.ReconcileCARotation(ctx, testHCP, testCluster)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	r.certManagerClient = cmfake.NewClientset(caCertificate(notBeforeV2))
-	_, err = r.ReconcileCARotation(ctx, testHCP, testCluster)
+	err = r.ReconcileCARotation(ctx, testHCP, testCluster)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	updated := &capiv2.MachineDeployment{}
@@ -169,9 +168,8 @@ func TestReconcileCARotation_NothingToAnnotate(t *testing.T) {
 	cl := fakeClient.NewClientBuilder().WithScheme(testScheme(t)).Build()
 	r := &nodeRotationReconciler{client: cl, certManagerClient: cmClient, tracer: "test"}
 
-	notReady, err := r.ReconcileCARotation(ctx, testHCP, testCluster)
+	err := r.ReconcileCARotation(ctx, testHCP, testCluster)
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(notReady).To(BeEmpty())
 }
 
 func TestReconcileCARotation_MissingCACert_NotReady(t *testing.T) {
@@ -179,9 +177,8 @@ func TestReconcileCARotation_MissingCACert_NotReady(t *testing.T) {
 	cl := fakeClient.NewClientBuilder().WithScheme(testScheme(t)).Build()
 	r := &nodeRotationReconciler{client: cl, certManagerClient: cmfake.NewClientset(), tracer: "test"}
 
-	notReady, err := r.ReconcileCARotation(ctx, testHCP, testCluster)
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(notReady).NotTo(BeEmpty())
+	err := r.ReconcileCARotation(ctx, testHCP, testCluster)
+	g.Expect(errors.Is(err, errCACertificateMissing)).To(BeTrue())
 }
 
 func TestReconcileCARotation_CACertNotYetIssued_NotReady(t *testing.T) {
@@ -196,9 +193,8 @@ func TestReconcileCARotation_CACertNotYetIssued_NotReady(t *testing.T) {
 	cl := fakeClient.NewClientBuilder().WithScheme(testScheme(t)).Build()
 	r := &nodeRotationReconciler{client: cl, certManagerClient: cmfake.NewClientset(cert), tracer: "test"}
 
-	notReady, err := r.ReconcileCARotation(ctx, testHCP, testCluster)
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(notReady).NotTo(BeEmpty())
+	err := r.ReconcileCARotation(ctx, testHCP, testCluster)
+	g.Expect(errors.Is(err, errCACertificateMissing)).To(BeTrue())
 }
 
 func TestReconcileCARotation_IgnoresOtherClusters(t *testing.T) {
@@ -212,7 +208,7 @@ func TestReconcileCARotation_IgnoresOtherClusters(t *testing.T) {
 	cl := fakeClient.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(otherMD).Build()
 	r := &nodeRotationReconciler{client: cl, certManagerClient: cmClient, tracer: "test"}
 
-	_, err := r.ReconcileCARotation(ctx, testHCP, testCluster)
+	err := r.ReconcileCARotation(ctx, testHCP, testCluster)
 	g.Expect(err).NotTo(HaveOccurred())
 
 	unchanged := &capiv2.MachineDeployment{}
