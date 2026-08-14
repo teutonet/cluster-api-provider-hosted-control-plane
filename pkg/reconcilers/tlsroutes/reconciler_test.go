@@ -13,7 +13,6 @@ import (
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 	v2 "sigs.k8s.io/gateway-api/applyconfiguration/apis/v1"
 	"sigs.k8s.io/gateway-api/pkg/client/clientset/versioned/fake"
 )
@@ -107,15 +106,15 @@ func TestTLSRoutesReconciler_TrafficRouting(t *testing.T) {
 				},
 			},
 			existingTLSRoutes: []runtime.Object{
-				&gwv1alpha2.TLSRoute{
+				&gwv1.TLSRoute{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-cluster-api",
 						Namespace: "default",
 					},
-					Spec: gwv1alpha2.TLSRouteSpec{
-						Hostnames: []gwv1alpha2.Hostname{"old.api.example.com"},
+					Spec: gwv1.TLSRouteSpec{
+						Hostnames: []gwv1.Hostname{"old.api.example.com"},
 					},
-					Status: gwv1alpha2.TLSRouteStatus{
+					Status: gwv1.TLSRouteStatus{
 						RouteStatus: gwv1.RouteStatus{
 							Parents: []gwv1.RouteParentStatus{
 								{
