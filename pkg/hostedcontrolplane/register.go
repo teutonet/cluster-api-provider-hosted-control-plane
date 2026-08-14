@@ -14,7 +14,6 @@ import (
 	"sigs.k8s.io/cluster-api/api/controlplane/kubeadm/v1beta2"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 )
 
 func NewScheme() (*runtime.Scheme, error) {
@@ -29,7 +28,6 @@ func NewScheme() (*runtime.Scheme, error) {
 		ciliumv2.AddToScheme,
 		corev1.AddToScheme,
 		gwv1.Install,
-		gwv1alpha2.Install,
 		networkingv1.AddToScheme,
 		policyv1.AddToScheme,
 		v1beta2.AddToScheme,

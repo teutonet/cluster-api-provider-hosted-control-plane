@@ -13,9 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
-	gwv1alpha2 "sigs.k8s.io/gateway-api/apis/v1alpha2"
 	gwv1ac "sigs.k8s.io/gateway-api/applyconfiguration/apis/v1"
-	"sigs.k8s.io/gateway-api/applyconfiguration/apis/v1alpha2"
 	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
 
@@ -86,8 +84,6 @@ func (trr *tlsRoutesReconciler) ReconcileTLSRoutes(
 				return "konnectivity TLS route not ready", nil
 			}
 
-			hostedControlPlane.Status.Ready = true
-
 			return "", nil
 		},
 	)
@@ -99,17 +95,17 @@ func (trr *tlsRoutesReconciler) createTLSRoute(
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	host string,
 	port int32,
-) *v1alpha2.TLSRouteApplyConfiguration {
-	return v1alpha2.TLSRoute(name, cluster.Namespace).
+) *gwv1ac.TLSRouteApplyConfiguration {
+	return gwv1ac.TLSRoute(name, cluster.Namespace).
 		WithLabels(names.GetControlPlaneLabels(cluster, "")).
 		WithOwnerReferences(operatorutil.GetOwnerReferenceApplyConfiguration(hostedControlPlane)).
-		WithSpec(v1alpha2.TLSRouteSpec().
-			WithHostnames(gwv1alpha2.Hostname(host)).
+		WithSpec(gwv1ac.TLSRouteSpec().
+			WithHostnames(gwv1.Hostname(host)).
 			WithParentRefs(gwv1ac.ParentReference().
 				WithName(gwv1.ObjectName(hostedControlPlane.Spec.Gateway.Name)).
 				WithNamespace(gwv1.Namespace(hostedControlPlane.Spec.Gateway.Namespace)),
 			).
-			WithRules(v1alpha2.TLSRouteRule().
+			WithRules(gwv1ac.TLSRouteRule().
 				WithBackendRefs(gwv1ac.BackendRef().
 					WithName(gwv1.ObjectName(names.GetServiceName(cluster))).
 					WithPort(port).
@@ -121,11 +117,11 @@ func (trr *tlsRoutesReconciler) createTLSRoute(
 
 func (trr *tlsRoutesReconciler) applyAndCheckTLSRoute(
 	ctx context.Context,
-	tlsRoute *v1alpha2.TLSRouteApplyConfiguration,
+	tlsRoute *gwv1ac.TLSRouteApplyConfiguration,
 ) (bool, error) {
 	return tracing.WithSpan(ctx, trr.tracer, "ApplyAndCheckTLSRoute",
 		func(ctx context.Context, span trace.Span) (bool, error) {
-			appliedTLSRoute, err := trr.gatewayClient.GatewayV1alpha2().TLSRoutes(*tlsRoute.Namespace).
+			appliedTLSRoute, err := trr.gatewayClient.GatewayV1().TLSRoutes(*tlsRoute.Namespace).
 				Apply(ctx, tlsRoute, operatorutil.ApplyOptions)
 			if err != nil {
 				return false, errorsUtil.IfErrErrorf("failed to apply %s TLSRoute: %w", *tlsRoute.Name, err)

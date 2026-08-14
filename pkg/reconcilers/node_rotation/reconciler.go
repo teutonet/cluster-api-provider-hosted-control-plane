@@ -2,6 +2,7 @@ package node_rotation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,8 +19,10 @@ import (
 
 const caNotBeforeAnnotation = "controlplane.cluster.x-k8s.io/ca-not-before"
 
+var errCACertificateMissing = errors.New("CA Certificate missing")
+
 type NodeRotationReconciler interface {
-	ReconcileCARotation(ctx context.Context, hcp *v1alpha1.HostedControlPlane, cluster *capiv2.Cluster) (string, error)
+	ReconcileCARotation(ctx context.Context, hcp *v1alpha1.HostedControlPlane, cluster *capiv2.Cluster) error
 }
 
 type nodeRotationReconciler struct {
@@ -44,16 +47,16 @@ func (r *nodeRotationReconciler) ReconcileCARotation(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
-) (string, error) {
-	return tracing.WithSpan(ctx, r.tracer, "ReconcileCARotation",
-		func(ctx context.Context, _ trace.Span) (string, error) {
+) error {
+	return tracing.WithSpan1(ctx, r.tracer, "ReconcileCARotation",
+		func(ctx context.Context, _ trace.Span) error {
 			caCert, err := r.certManagerClient.CertmanagerV1().Certificates(hostedControlPlane.Namespace).
 				Get(ctx, names.GetCACertificateName(cluster), metav1.GetOptions{})
 			if err != nil && !apierrors.IsNotFound(err) {
-				return "", fmt.Errorf("failed to get CA certificate: %w", err)
+				return fmt.Errorf("failed to get CA certificate: %w", err)
 			}
 			if apierrors.IsNotFound(err) || caCert.Status.NotBefore == nil {
-				return "CA certificate not yet issued", nil
+				return errCACertificateMissing
 			}
 
 			rolloutAfter := *caCert.Status.NotBefore
@@ -64,7 +67,7 @@ func (r *nodeRotationReconciler) ReconcileCARotation(
 				client.InNamespace(cluster.Namespace),
 				client.MatchingLabels{capiv2.ClusterNameLabel: cluster.Name},
 			); err != nil {
-				return "", fmt.Errorf("failed to list MachineDeployments: %w", err)
+				return fmt.Errorf("failed to list MachineDeployments: %w", err)
 			}
 
 			for machineDeploymentIndex := range machineDeployments.Items {
@@ -78,7 +81,7 @@ func (r *nodeRotationReconciler) ReconcileCARotation(
 				// it is idempotent since the CA's notBefore is stable for a given certificate generation.
 				machineDeployment.Spec.Rollout.After = rolloutAfter
 				if err := r.client.Patch(ctx, machineDeployment, client.MergeFrom(base)); err != nil {
-					return "", fmt.Errorf("failed to patch MachineDeployment %s/%s: %w",
+					return fmt.Errorf("failed to patch MachineDeployment %s/%s: %w",
 						machineDeployment.Namespace, machineDeployment.Name, err)
 				}
 			}
@@ -88,7 +91,7 @@ func (r *nodeRotationReconciler) ReconcileCARotation(
 				client.InNamespace(cluster.Namespace),
 				client.MatchingLabels{capiv2.ClusterNameLabel: cluster.Name},
 			); err != nil {
-				return "", fmt.Errorf("failed to list MachinePools: %w", err)
+				return fmt.Errorf("failed to list MachinePools: %w", err)
 			}
 
 			for machinePoolIndex := range machinePools.Items {
@@ -105,12 +108,12 @@ func (r *nodeRotationReconciler) ReconcileCARotation(
 				}
 				machinePool.Spec.Template.Annotations[caNotBeforeAnnotation] = notBeforeStr
 				if err := r.client.Patch(ctx, machinePool, client.MergeFrom(base)); err != nil {
-					return "", fmt.Errorf("failed to patch MachinePool %s/%s: %w",
+					return fmt.Errorf("failed to patch MachinePool %s/%s: %w",
 						machinePool.Namespace, machinePool.Name, err)
 				}
 			}
 
-			return "", nil
+			return nil
 		},
 	)
 }

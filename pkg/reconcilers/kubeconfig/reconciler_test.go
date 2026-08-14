@@ -134,7 +134,7 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 				g.Expect(kubeconfig.AuthInfos["admin"].ClientKeyData).ToNot(BeEmpty())
 			} else {
 				// When expectedError is true, either the cert secret or CA secret is missing
-				err := reconciler.ReconcileKubeconfigs(ctx, tt.cluster)
+				err := reconciler.ReconcileInternalKubeconfigs(ctx, tt.cluster)
 				g.Expect(err).To(HaveOccurred())
 			}
 		})

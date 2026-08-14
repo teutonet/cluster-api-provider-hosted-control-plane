@@ -1270,6 +1270,9 @@ func convertToContainerApplyConfiguration(
 			WithSecurityContext(corev1ac.SecurityContext().
 				WithPrivileged(options.Root).
 				WithAllowPrivilegeEscalation(options.Root).
+				WithSeccompProfile(corev1ac.SeccompProfile().
+					WithType(corev1.SeccompProfileTypeRuntimeDefault),
+				).
 				WithReadOnlyRootFilesystem(!options.ReadWriteRootFilesystem).
 				WithRunAsUser(user).
 				WithRunAsGroup(user).

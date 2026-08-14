@@ -52,7 +52,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 	v1 "sigs.k8s.io/gateway-api/applyconfiguration/apis/v1"
-	"sigs.k8s.io/gateway-api/applyconfiguration/apis/v1alpha2"
 	gwfake "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned/fake"
 )
 
@@ -504,6 +503,47 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "Make Api Server TLS Route Ready",
+			verifyConditionsBefore: map[bool][]types2.GomegaMatcher{
+				false: {
+					NewConditionVerification(
+						v1alpha1.APIServerTLSRoutesReadyCondition,
+						Equal("ApiServerTlsRouteNotReady"),
+					),
+				},
+			},
+			simulateExternalSystems: makeTLSRouteReady(gatewayInterface, hcp, cluster.Name),
+			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
+				false: {
+					NewConditionVerification(
+						v1alpha1.APIServerTLSRoutesReadyCondition,
+						Not(Equal("ApiServerTlsRouteNotReady")),
+					),
+				},
+			},
+		},
+		{
+			name: "Make Konnectivity TLS Route Ready",
+			verifyConditionsBefore: map[bool][]types2.GomegaMatcher{
+				false: {
+					NewConditionVerification(
+						v1alpha1.APIServerTLSRoutesReadyCondition,
+						Equal("KonnectivityTlsRouteNotReady"),
+					),
+				},
+			},
+			simulateExternalSystems: makeTLSRouteReady(
+				gatewayInterface, hcp, fmt.Sprintf("%s-konnectivity", cluster.Name),
+			),
+			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
+				true: {
+					NewConditionVerification(
+						v1alpha1.APIServerTLSRoutesReadyCondition,
+					),
+				},
+			},
+		},
 	}...)
 
 	phases = append(
@@ -568,36 +608,6 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 						v1alpha1.CertificatesReadyCondition,
 					),
 				},
-			},
-		},
-		{
-			name: "Verify Kubeconfigs Were Created",
-			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
-				true: {
-					NewConditionVerification(
-						v1alpha1.KubeconfigReadyCondition,
-					),
-				},
-			},
-			verifyResources: func(ctx context.Context, g Gomega) {
-				secretInterface := managementClusterClient.CoreV1().Secrets(hcp.Namespace)
-				for _, name := range []string{
-					"admin",
-					"kube-controller-manager",
-					"kube-scheduler",
-					"konnectivity-client",
-					"control-plane-controller",
-				} {
-					kubeconfigName := fmt.Sprintf("%s-%s-kubeconfig", cluster.Name, name)
-					if name == "admin" {
-						kubeconfigName = fmt.Sprintf("%s-kubeconfig", cluster.Name)
-					}
-					g.Expect(secretInterface.Get(
-						ctx,
-						kubeconfigName,
-						metav1.GetOptions{},
-					)).Error().To(Succeed())
-				}
 			},
 		},
 		{
@@ -705,6 +715,40 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			},
 		},
 		{
+			name: "Verify Internal Kubeconfigs Were Created",
+			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
+				true: {
+					NewConditionVerification(
+						v1alpha1.InternalKubeconfigReadyCondition,
+					),
+				},
+			},
+			verifyResources: func(ctx context.Context, g Gomega) {
+				secretInterface := managementClusterClient.CoreV1().Secrets(hcp.Namespace)
+				for _, name := range []string{
+					"kube-controller-manager",
+					"kube-scheduler",
+					"konnectivity-client",
+					"control-plane-controller",
+				} {
+					kubeconfigName := fmt.Sprintf("%s-%s-kubeconfig", cluster.Name, name)
+					g.Expect(secretInterface.Get(
+						ctx,
+						kubeconfigName,
+						metav1.GetOptions{},
+					)).Error().To(Succeed())
+				}
+
+				// the admin kubeconfig is only reconciled once the apiserver is ready
+				_, err := secretInterface.Get(
+					ctx,
+					fmt.Sprintf("%s-kubeconfig", cluster.Name),
+					metav1.GetOptions{},
+				)
+				g.Expect(err).To(MatchError(apierrors.IsNotFound, "IsNotFound"))
+			},
+		},
+		{
 			name: "Verify konnectivity Config",
 			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(managementClusterClient.CoreV1().ConfigMaps(hcp.Namespace).Get(
@@ -793,51 +837,20 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					NewConditionVerification(
 						v1alpha1.APIServerDeploymentsReadyCondition,
 					),
+					NewConditionVerification(
+						v1alpha1.AdminKubeconfigReadyCondition,
+					),
 				},
 			},
 			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(*hcp.Status.Initialization.ControlPlaneInitialized).To(BeTrue())
-			},
-		},
-		{
-			name: "Make Api Server TLS Route Ready",
-			verifyConditionsBefore: map[bool][]types2.GomegaMatcher{
-				false: {
-					NewConditionVerification(
-						v1alpha1.APIServerTLSRoutesReadyCondition,
-						Equal("ApiServerTlsRouteNotReady"),
-					),
-				},
-			},
-			simulateExternalSystems: makeTLSRouteReady(gatewayInterface, hcp, cluster.Name),
-			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
-				false: {
-					NewConditionVerification(
-						v1alpha1.APIServerTLSRoutesReadyCondition,
-						Not(Equal("ApiServerTlsRouteNotReady")),
-					),
-				},
-			},
-		},
-		{
-			name: "Make Konnectivity TLS Route Ready",
-			verifyConditionsBefore: map[bool][]types2.GomegaMatcher{
-				false: {
-					NewConditionVerification(
-						v1alpha1.APIServerTLSRoutesReadyCondition,
-						Equal("KonnectivityTlsRouteNotReady"),
-					),
-				},
-			},
-			simulateExternalSystems: makeTLSRouteReady(
-				gatewayInterface, hcp, fmt.Sprintf("%s-konnectivity", cluster.Name),
-			),
-			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
-				true: {
-					NewConditionVerification(
-						v1alpha1.APIServerTLSRoutesReadyCondition,
-					),
-				},
+
+				// the apiserver is now ready, so the admin kubeconfig must have been reconciled
+				g.Expect(managementClusterClient.CoreV1().Secrets(hcp.Namespace).Get(
+					ctx,
+					fmt.Sprintf("%s-kubeconfig", cluster.Name),
+					metav1.GetOptions{},
+				)).Error().To(Succeed())
 			},
 		},
 		{
@@ -1393,7 +1406,8 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		v1alpha1.CACertificatesReadyCondition,
 		v1alpha1.CertificatesReadyCondition,
 		v1alpha1.APIServerServiceReadyCondition,
-		v1alpha1.KubeconfigReadyCondition,
+		v1alpha1.InternalKubeconfigReadyCondition,
+		v1alpha1.AdminKubeconfigReadyCondition,
 		v1alpha1.EtcdClusterReadyCondition,
 	}
 
@@ -1503,15 +1517,15 @@ func makeTLSRouteReady(
 	name string,
 ) func(ctx context.Context, g Gomega) {
 	return func(ctx context.Context, g Gomega) {
-		tlsRouteInterface := gatewayInterface.GatewayV1alpha2().TLSRoutes(hcp.Namespace)
+		tlsRouteInterface := gatewayInterface.GatewayV1().TLSRoutes(hcp.Namespace)
 		tlsRoute, err := tlsRouteInterface.Get(ctx, name, metav1.GetOptions{})
 		g.Expect(err).To(Succeed())
 
-		tlsRouteApplyConfiguration, err := v1alpha2.ExtractTLSRoute(tlsRoute, gatewayFieldManager)
+		tlsRouteApplyConfiguration, err := v1.ExtractTLSRoute(tlsRoute, gatewayFieldManager)
 		g.Expect(err).To(Succeed())
 		g.Expect(tlsRouteInterface.ApplyStatus(ctx,
 			tlsRouteApplyConfiguration.WithStatus(
-				v1alpha2.TLSRouteStatus().
+				v1.TLSRouteStatus().
 					WithParents(
 						v1.RouteParentStatus().
 							WithParentRef(
