@@ -52,8 +52,12 @@ github.com/aws/aws-sdk-go-v2/service/sts v1.44.0 h1:bLZ0PolJ8J+HkJHztcXORUpHXBye
 github.com/aws/aws-sdk-go-v2/service/sts v1.44.0/go.mod h1:9gdl4RrflIdpDb2TlXshWgR1F9TeCkvqDx77Vpr4Z/Q=
 github.com/aws/smithy-go v1.27.3 h1:F3Zb497UhhskkfpJmfkXswyo+t0sh9OTBnIHjogWbVY=
 github.com/aws/smithy-go v1.27.3/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqxX9i1Fc=
+github.com/aws/smithy-go v1.27.8 h1:FR0dxZfIlV7Z8eh2iHfIofdunw382XsDV3Mxt9nUvRY=
+github.com/aws/smithy-go v1.27.8/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqxX9i1Fc=
 github.com/aws/smithy-go/tracing/smithyoteltracing v1.0.20 h1:fN6XCsUzhH/pxRuWq6nOV/qpCD3pzqqt6Z3ugbiqwcA=
 github.com/aws/smithy-go/tracing/smithyoteltracing v1.0.20/go.mod h1:iF777PbYVtgzwL7jZkxZHzsgHkIAZ1h/L53NSKVnTK0=
+github.com/aws/smithy-go/tracing/smithyoteltracing v1.0.25 h1:TRCX+fT1tH7/ug4+qh9jp6J6K93Ujcbkfe8Z9u7nbrU=
+github.com/aws/smithy-go/tracing/smithyoteltracing v1.0.25/go.mod h1:rLiZHV1JW4wVSKEmb2/wsg1jWjay6Nm71oPcAHAAGkE=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/blang/semver/v4 v4.0.0 h1:1PFHFE6yCCTv8C1TeyNNarDzntLi7wMI5i/pzqYIsAM=
