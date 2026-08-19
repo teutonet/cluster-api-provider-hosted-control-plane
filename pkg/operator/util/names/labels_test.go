@@ -167,7 +167,7 @@ func TestGetKubeconfigLabel(t *testing.T) {
 	result := GetKubeconfigLabel()
 
 	g.Expect(result).To(HaveLen(1))
-	g.Expect(result).To(HaveKeyWithValue(KubeconfigLabel, "true"))
+	g.Expect(result).To(HaveKeyWithValue(KubeconfigLabel, KubeconfigLabelValue))
 }
 
 func TestGetKubeconfigUserLabel(t *testing.T) {
@@ -218,7 +218,7 @@ func TestGetKubeconfigLabels(t *testing.T) {
 			name:     "basic username",
 			username: "ci-user",
 			expected: map[string]string{
-				KubeconfigLabel:         "true",
+				KubeconfigLabel:         KubeconfigLabelValue,
 				KubeconfigUsernameLabel: "ci-user",
 			},
 		},
@@ -226,7 +226,7 @@ func TestGetKubeconfigLabels(t *testing.T) {
 			name:     "monitoring user",
 			username: "monitoring",
 			expected: map[string]string{
-				KubeconfigLabel:         "true",
+				KubeconfigLabel:         KubeconfigLabelValue,
 				KubeconfigUsernameLabel: "monitoring",
 			},
 		},
@@ -234,7 +234,7 @@ func TestGetKubeconfigLabels(t *testing.T) {
 			name:     "username with special characters",
 			username: "backup-agent-v2",
 			expected: map[string]string{
-				KubeconfigLabel:         "true",
+				KubeconfigLabel:         KubeconfigLabelValue,
 				KubeconfigUsernameLabel: "backup-agent-v2",
 			},
 		},

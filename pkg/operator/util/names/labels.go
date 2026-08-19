@@ -18,11 +18,13 @@ const (
 	KubeconfigUsernameLabel = "controlplane.cluster.x-k8s.io/kubeconfig-username"
 
 	CertificateKindLabel = "controlplane.cluster.x-k8s.io/certificate-kind"
+
+	KubeconfigLabelValue = "true"
 )
 
 func GetControlPlaneLabels(cluster *capiv2.Cluster, component string) map[string]string {
 	labels := map[string]string{
-		"cluster.x-k8s.io/cluster-name": cluster.Name,
+		capiv2.ClusterNameLabel: cluster.Name,
 	}
 	if component != "" {
 		labels["app.kubernetes.io/component"] = component
@@ -44,7 +46,7 @@ func GetKubeconfigUserLabel(username string) map[string]string {
 
 func GetKubeconfigLabel() map[string]string {
 	return map[string]string{
-		KubeconfigLabel: "true",
+		KubeconfigLabel: KubeconfigLabelValue,
 	}
 }
 

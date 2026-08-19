@@ -23,6 +23,11 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 )
 
+const (
+	localhostHost = "localhost"
+	adminUsername = "admin"
+)
+
 type KubeconfigReconciler interface {
 	ReconcileInternalKubeconfigs(
 		ctx context.Context,
@@ -77,7 +82,7 @@ func (kr *kubeconfigReconciler) ReconcileInternalKubeconfigs(
 				attribute.String("controller.kubeconfig.name", kr.controllerUsername),
 			)
 			localEndpoint := capiv2.APIEndpoint{
-				Host: "localhost",
+				Host: localhostHost,
 				Port: 6443,
 			}
 			clusterInternalServiceEndpoint := capiv2.APIEndpoint{
@@ -132,7 +137,7 @@ func (kr *kubeconfigReconciler) reconcileKubeconfigs(
 
 func CreateAdminKubeconfigConfig(cluster *capiv2.Cluster) map[string]KubeconfigConfig {
 	return map[string]KubeconfigConfig{
-		"admin": {
+		adminUsername: {
 			SecretName:        fmt.Sprintf("%s-kubeconfig", cluster.Name),
 			CertificateName:   names.GetAdminKubeconfigCertificateName(cluster),
 			ApiServerEndpoint: cluster.Spec.ControlPlaneEndpoint,

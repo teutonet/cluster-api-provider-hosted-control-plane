@@ -248,10 +248,11 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(
 ) error {
 	return tracing.WithSpan1(ctx, kr.Tracer, "ReconcileKubeProxyConfigMap",
 		func(ctx context.Context, span trace.Span) error {
+			const defaultContextName = "default"
 			kubeconfigFileName := "kubeconfig.conf"
 			kubeconfig := &api.Config{
 				Clusters: map[string]*api.Cluster{
-					"default": {
+					defaultContextName: {
 						Server: fmt.Sprintf("https://%s", cluster.Spec.ControlPlaneEndpoint.String()),
 						CertificateAuthority: path.Join(
 							serviceaccountAdmission.DefaultAPITokenMountPath,
@@ -260,14 +261,14 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(
 					},
 				},
 				Contexts: map[string]*api.Context{
-					"default": {
-						Cluster:  "default",
-						AuthInfo: "default",
+					defaultContextName: {
+						Cluster:  defaultContextName,
+						AuthInfo: defaultContextName,
 					},
 				},
-				CurrentContext: "default",
+				CurrentContext: defaultContextName,
 				AuthInfos: map[string]*api.AuthInfo{
-					"default": {
+					defaultContextName: {
 						TokenFile: path.Join(
 							serviceaccountAdmission.DefaultAPITokenMountPath,
 							corev1.ServiceAccountTokenKey,

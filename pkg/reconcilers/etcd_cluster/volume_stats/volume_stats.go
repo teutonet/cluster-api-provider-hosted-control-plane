@@ -145,9 +145,11 @@ func (p *kubeletEtcdVolumeStatsProvider) extractPodVolumeUsage(
 	return 0
 }
 
+const etcdDataVolumeName = "etcd-data"
+
 func isEtcdDataVolume(volStats *kubeletstatsv1alpha1.VolumeStats) bool {
 	if volStats.PVCRef != nil {
-		return strings.HasPrefix(volStats.PVCRef.Name, "etcd-data-")
+		return strings.HasPrefix(volStats.PVCRef.Name, etcdDataVolumeName+"-")
 	}
-	return volStats.Name == "etcd-data"
+	return volStats.Name == etcdDataVolumeName
 }

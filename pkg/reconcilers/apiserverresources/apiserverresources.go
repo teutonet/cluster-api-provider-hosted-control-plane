@@ -46,6 +46,8 @@ import (
 
 const caBundleCertName = "bundle.crt"
 
+const kubeconfigFlag = "kubeconfig"
+
 var (
 	errWebhookSecretIsMissingKey     = errors.New("webhook authentication secret is missing key")
 	errRootCAConfigMapMissingCertKey = errors.New(
@@ -1006,10 +1008,10 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 		),
 		"external-hostname":           cluster.Spec.ControlPlaneEndpoint.Host,
 		"advertise-address":           hostedControlPlane.Status.LegacyIP,
-		"allow-privileged":            "true",
+		"allow-privileged":            strconv.FormatBool(true),
 		"authorization-mode":          konstants.ModeNode + "," + konstants.ModeRBAC,
 		"client-ca-file":              path.Join(certificatesDir, konstants.CACertName),
-		"enable-bootstrap-token-auth": "true",
+		"enable-bootstrap-token-auth": strconv.FormatBool(true),
 		"egress-selector-config-file": path.Join(
 			egressSelectorConfigDir,
 			arr.egressSelectorConfigurationFileName,
@@ -1179,11 +1181,11 @@ func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 		"authentication-audience": arr.konnectivityServerAudience,
 		"cluster-cert":            path.Join(*konnectivityCertificatesVolumeMount.MountPath, corev1.TLSCertKey),
 		"cluster-key":             path.Join(*konnectivityCertificatesVolumeMount.MountPath, corev1.TLSPrivateKeyKey),
-		"kubeconfig": path.Join(
+		kubeconfigFlag: path.Join(
 			*konnectivityKubeconfigVolumeMount.MountPath,
 			arr.konnectivityKubeconfigFileName,
 		),
-		"enable-lease-controller": "true",
+		"enable-lease-controller": strconv.FormatBool(true),
 		"admin-port":              strconv.Itoa(int(*adminPort.ContainerPort)),
 		"agent-port":              strconv.Itoa(int(*konnectivityPort.ContainerPort)),
 		"health-port":             strconv.Itoa(int(*healthPort.ContainerPort)),
@@ -1358,7 +1360,7 @@ func (arr *apiServerResourcesReconciler) buildSchedulerArgs(
 	args := map[string]string{
 		"authentication-kubeconfig": kubeconfigPath,
 		"authorization-kubeconfig":  kubeconfigPath,
-		"kubeconfig":                kubeconfigPath,
+		kubeconfigFlag:              kubeconfigPath,
 		"bind-address":              "0.0.0.0",
 		"leader-elect":              strconv.FormatBool(leaderElect),
 	}
@@ -1390,7 +1392,7 @@ func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 		"cluster-cidr":                     arr.podCIDR.String(),
 		"authentication-kubeconfig":        kubeconfigPath,
 		"authorization-kubeconfig":         kubeconfigPath,
-		"kubeconfig":                       kubeconfigPath,
+		kubeconfigFlag:                     kubeconfigPath,
 		"bind-address":                     "0.0.0.0",
 		"leader-elect":                     strconv.FormatBool(leaderElect),
 		"cluster-name":                     cluster.Name,
@@ -1401,7 +1403,7 @@ func (arr *apiServerResourcesReconciler) buildControllerManagerArgs(
 		"requestheader-client-ca-file":     path.Join(certificatesDir, konstants.FrontProxyCACertName),
 		"root-ca-file":                     path.Join(certificatesDir, caBundleCertName),
 		"service-account-private-key-file": path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
-		"use-service-account-credentials":  "true",
+		"use-service-account-credentials":  strconv.FormatBool(true),
 	}
 
 	return operatorutil.ArgsToSlice(
