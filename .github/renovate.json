@@ -1,5 +1,16 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "packageRules": [
+    {
+      "matchDatasources": [
+        "go"
+      ],
+      "matchPackageNames": [
+        "k8s.io/**"
+      ],
+      "groupName": "k8s.io Kubernetes modules"
+    }
+  ],
   "customManagers": [
     {
       "customType": "regex",

@@ -343,6 +343,7 @@ linters:
           - importas
           - gosec
           - wrapcheck
+          - goconst
         path: *testFiles
       # Append should be able to assign to a different var/slice.
       #- linters:

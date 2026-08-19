@@ -62,6 +62,44 @@ This project uses [Task](https://taskfile.dev) as the build system. Key commands
 - **Import Aliases**: Strict import alias rules enforced (see `.golangci.yaml` importas section)
 - **Generated Code**: Controller-gen for CRDs, conversion-gen for API conversions
 
+## Dependency Management
+
+- `k8s.io/kubernetes`'s own `go.mod` requires all of its staging modules (`k8s.io/api`, `k8s.io/apiserver`,
+  `k8s.io/client-go`, `k8s.io/component-helpers`, `k8s.io/cri-client`, ...) at version `v0.0.0`, and replaces them
+  with `=> ./staging/src/k8s.io/...` local paths. Go ignores `replace` directives from a dependency's `go.mod` when
+  that dependency is imported by another module, so consumers of `k8s.io/kubernetes` see plain `v0.0.0` requirements
+  with no real module version behind them. If nothing else in the module graph provides a real version for one of
+  these paths, resolving a package that imports `k8s.io/kubernetes` fails with `reading .../go.mod at revision
+  v0.0.0: unknown revision v0.0.0` (reproduced in a minimal module that only imports
+  `k8s.io/kubernetes/pkg/features`).
+- Only pin k8s.io staging modules this repo actually imports (check with `go list -deps ./... | grep k8s.io`). Don't
+  add entries for staging modules this repo doesn't import (`k8s.io/cloud-provider`, `k8s.io/kube-scheduler`,
+  `k8s.io/mount-utils`, etc., per the copy-pasted lists in upstream examples) — `go mod tidy` never needs them and
+  they're dead weight.
+- Of the ones we do need, some are imported directly by our code (`k8s.io/api`, `k8s.io/client-go`, etc.) and are
+  pinned with a plain top-level `require`, same as any other dependency. The rest (`k8s.io/cli-runtime`,
+  `k8s.io/component-helpers`, `k8s.io/controller-manager`, `k8s.io/cri-api`, `k8s.io/cri-client`) are only pulled in
+  transitively through `k8s.io/kubernetes`, and exist in `go.mod` purely as a workaround for the `v0.0.0` problem
+  above, not because our code needs a say in their version — those get a `replace => vX` instead of a plain
+  `require`, to make that distinction visible: `require` = "we import this", `replace` = "pinned only to patch
+  upstream's broken self-reference". Leaving these 5 as plain `require` without an explicit version is not an
+  option: nothing else in the graph provides a real version for `component-helpers` or `cri-client`, so `go mod
+  tidy` hits the exact `unknown revision v0.0.0` error again (reproduced by deleting their `require` lines).
+  `replace`'s hard MVS override for these 5 buys little in practice since Renovate (`.github/renovate.json`) has no
+  grouping rule for k8s.io/* and will bump them one at a time regardless — any resulting incompatibility (e.g.
+  `k8s.io/cri-client@v0.35.0` no longer implementing `k8s.io/cri-api@v0.36.2`'s interfaces, a real compile failure
+  hit while testing this) is a hard compile error CI catches either way. The split is mainly for `go.mod`
+  readability: it marks which modules are "we use this API" vs "upstream's own module graph needs this pinned".
+- `sigs.k8s.io/cluster-api` has a similar split: since v1.14.0 its API types live in `sigs.k8s.io/cluster-api/api`,
+  referenced via a local `replace sigs.k8s.io/cluster-api/api => ./api` in cluster-api's own `go.mod` that likewise
+  doesn't propagate downstream. Fix here is a plain `require sigs.k8s.io/cluster-api/api <matching-version>` — it's
+  a plain `require` because it's imported directly (`capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"`, used across
+  most of `pkg/`), same as the direct k8s.io modules above. No `replace` needed either way here since it's a single
+  module, not several siblings that can drift apart from each other and need a visual "pinned for a different
+  reason" marker.
+- When bumping `k8s.io/kubernetes` (or `sigs.k8s.io/cluster-api`), update the version of every `require`/`replace`
+  line for its staging/split modules to match, and re-run `go mod tidy`.
+
 ## Testing
 
 - Test files follow `*_test.go` convention
