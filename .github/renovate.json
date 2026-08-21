@@ -20,6 +20,17 @@
       "matchStrings": [
         "\"?(?<currentValue>[^\\s\"]+)\"?\\s*//\\s*renovate:\\s*datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( registryUrl=(?<registryUrl>\\S+))?( extractVersion=(?<extractVersion>\\S+))?( versioning=(?<versioning>\\S+))?"
       ]
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^taskfile\\.yaml$/"
+      ],
+      "matchStrings": [
+        "(?<depName>[\\w-]+):\\s+url: (?<packageName>\\S+?)(?:/cmd/[\\w-]+)?\\s+version: (?<currentValue>\\S+)"
+      ],
+      "datasourceTemplate": "go",
+      "extractVersionTemplate": "^v(?<version>.*)$"
     }
   ]
 }
