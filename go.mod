@@ -31,16 +31,16 @@ require (
 	go4.org v0.0.0-20260112195520-a5071408f32f
 	golang.org/x/text v0.41.0
 	google.golang.org/grpc v1.83.1
-	k8s.io/api v0.36.3
-	k8s.io/apiextensions-apiserver v0.36.3
-	k8s.io/apimachinery v0.36.3
-	k8s.io/apiserver v0.36.3
-	k8s.io/client-go v0.36.3
-	k8s.io/cluster-bootstrap v0.36.3
-	k8s.io/component-base v0.36.3
-	k8s.io/kube-proxy v0.36.3
-	k8s.io/kubelet v0.36.3
-	k8s.io/kubernetes v1.36.3
+	k8s.io/api v0.36.4
+	k8s.io/apiextensions-apiserver v0.36.4
+	k8s.io/apimachinery v0.36.4
+	k8s.io/apiserver v0.36.4
+	k8s.io/client-go v0.36.4
+	k8s.io/cluster-bootstrap v0.36.4
+	k8s.io/component-base v0.36.4
+	k8s.io/kube-proxy v0.36.4
+	k8s.io/kubelet v0.36.4
+	k8s.io/kubernetes v1.36.4
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
 	sigs.k8s.io/cluster-api v1.14.0
 	sigs.k8s.io/cluster-api/api v1.14.0
@@ -183,11 +183,11 @@ require (
 	k8s.io/cli-runtime v0.36.3 // indirect
 	k8s.io/component-helpers v0.36.3 // indirect
 	k8s.io/controller-manager v0.36.3 // indirect
-	k8s.io/cri-api v0.36.3 // indirect
+	k8s.io/cri-api v0.36.4 // indirect
 	k8s.io/cri-client v0.36.3 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
-	k8s.io/streaming v0.36.3 // indirect
+	k8s.io/streaming v0.36.4 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.36.0 // indirect
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/kustomize/api v0.21.1 // indirect
@@ -198,9 +198,9 @@ require (
 )
 
 replace (
-	k8s.io/cli-runtime => k8s.io/cli-runtime v0.36.3
-	k8s.io/component-helpers => k8s.io/component-helpers v0.36.3
-	k8s.io/controller-manager => k8s.io/controller-manager v0.36.3
-	k8s.io/cri-api => k8s.io/cri-api v0.36.3
-	k8s.io/cri-client => k8s.io/cri-client v0.36.3
+	k8s.io/cli-runtime => k8s.io/cli-runtime v0.36.4
+	k8s.io/component-helpers => k8s.io/component-helpers v0.36.4
+	k8s.io/controller-manager => k8s.io/controller-manager v0.36.4
+	k8s.io/cri-api => k8s.io/cri-api v0.36.4
+	k8s.io/cri-client => k8s.io/cri-client v0.36.4
 )
