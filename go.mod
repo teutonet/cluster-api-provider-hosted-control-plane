@@ -13,7 +13,7 @@ require (
 	github.com/caarlos0/env/v6 v6.10.1
 	github.com/cert-manager/cert-manager v1.21.1
 	github.com/cilium/cilium v1.20.1
-	github.com/coredns/corefile-migration v1.0.34
+	github.com/coredns/corefile-migration v1.0.35
 	github.com/go-logr/logr v1.4.4
 	github.com/onsi/gomega v1.42.1
 	github.com/robfig/cron/v3 v3.0.1
