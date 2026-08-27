@@ -42,7 +42,7 @@ vars:
       # not the good yq, but the good one has no "just run" option
       yq:
         url: github.com/mikefarah/yq/v4
-        version: 4.53.4
+        version: 4.53.6
   controllerGenCmd: 'go run {{ (index .tools "controller-gen").url }}@v{{ (index .tools "controller-gen").version }}'
   conversionGenCmd: 'go run {{ (index .tools "conversion-gen").url }}@v{{ (index .tools "conversion-gen").version }}'
   golangciLintCmd: 'go run {{ (index .tools "golangci-lint").url }}@v{{ (index .tools "golangci-lint").version }}'
