@@ -42,7 +42,7 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.sha }}
 
-      - uses: arduino/setup-task@v2
+      - uses: arduino/setup-task@v3
         with:
           version: 3.x
 
