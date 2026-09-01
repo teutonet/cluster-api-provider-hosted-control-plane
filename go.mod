@@ -15,7 +15,7 @@ require (
 	github.com/cilium/cilium v1.20.1
 	github.com/coredns/corefile-migration v1.0.35
 	github.com/go-logr/logr v1.4.4
-	github.com/onsi/gomega v1.42.1
+	github.com/onsi/gomega v1.43.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/lo v1.53.0
 	go.etcd.io/etcd/api/v3 v3.7.1
