@@ -8,7 +8,9 @@ import (
 )
 
 const (
-	maxKonnectivityMinor = 36 // renovate: datasource=docker depName=kas-network-proxy/proxy-server registryUrl=registry.k8s.io extractVersion=^v0\.(?<version>\d+)\.0$
+	maxKonnectivityMinor = 36        // renovate: datasource=docker depName=kas-network-proxy/proxy-server registryUrl=registry.k8s.io extractVersion=^v0\.(?<version>\d+)\.0$
+	coreDNSTag           = "v1.12.0" // renovate: datasource=docker depName=coredns/coredns registryUrl=registry.k8s.io extractVersion=^(?<version>v\d+\.\d+\.\d+)$
+	nginxTag             = "1.29.1"  // renovate: datasource=docker depName=nginx registryUrl=docker.io extractVersion=^(?<version>\d+\.\d+\.\d+)$
 )
 
 func buildImageString(registry, repository, tag string) string {
@@ -52,9 +54,9 @@ func ResolveKubeProxyImage(imageSpec *v1alpha1.ImageSpec, version string) string
 }
 
 func ResolveCoreDNSImage(imageSpec *v1alpha1.ImageSpec) string {
-	return resolveImageFromSpec(imageSpec, "registry.k8s.io", "coredns/coredns", "v1.12.0")
+	return resolveImageFromSpec(imageSpec, "registry.k8s.io", "coredns/coredns", coreDNSTag)
 }
 
 func ResolveNginxImage(imageSpec *v1alpha1.ImageSpec) string {
-	return resolveImageFromSpec(imageSpec, "docker.io", "nginx", "1.29.1")
+	return resolveImageFromSpec(imageSpec, "docker.io", "nginx", nginxTag)
 }
