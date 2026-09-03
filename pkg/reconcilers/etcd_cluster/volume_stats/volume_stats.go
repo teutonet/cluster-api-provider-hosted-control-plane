@@ -137,7 +137,6 @@ func (p *kubeletEtcdVolumeStatsProvider) extractPodVolumeUsage(
 			if !isEtcdDataVolume(volStats) || volStats.UsedBytes == nil {
 				continue
 			}
-			//nolint:gosec // capped at MaxInt64
 			return int64(min(*volStats.UsedBytes, uint64(math.MaxInt64)))
 		}
 	}
