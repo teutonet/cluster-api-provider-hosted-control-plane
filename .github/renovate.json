@@ -14,6 +14,24 @@
         "k8s.io/**"
       ],
       "groupName": "k8s.io Kubernetes modules"
+    },
+    {
+      "matchDatasources": [
+        "go"
+      ],
+      "matchPackageNames": [
+        "github.com/aws/**"
+      ],
+      "groupName": "AWS modules"
+    },
+    {
+      "matchDatasources": [
+        "go"
+      ],
+      "matchPackageNames": [
+        "go.opentelemetry.io/**"
+      ],
+      "groupName": "OpenTelemetry modules"
     }
   ],
   "customManagers": [
