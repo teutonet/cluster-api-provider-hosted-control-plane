@@ -20,7 +20,7 @@ vars:
     map:
       controller-gen:
         url: sigs.k8s.io/controller-tools/cmd/controller-gen
-        version: 0.21.0
+        version: 0.22.0
       conversion-gen:
         url: k8s.io/code-generator/cmd/conversion-gen
         version: 0.36.3
