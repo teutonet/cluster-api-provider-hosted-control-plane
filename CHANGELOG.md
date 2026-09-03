@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.7.2...v1.8.0) (2026-09-03)
+
+
+### Features
+
+* add various docs about working together ([#142](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/142)) ([f5bbe43](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/f5bbe43179a358c19c2f7ee3b737a5272e73987e))
+* track coredns and nginx image versions via renovate ([#193](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/193)) ([96f2f99](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/96f2f99a07de90c516098d83031444bb3942aff4))
+
+
+### Bug Fixes
+
+* correct renovate depName for konnectivity image ([#146](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/146)) ([d8c2037](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/d8c2037269ef31b96a6838d72132191747c75b6c))
+* run go mod tidy after renovate updates go.mod ([#157](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/157)) ([50884a9](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/50884a97032f69b2dc4f0167341fdfc4ef6e0d41))
+
 ## [1.7.2](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.7.1...v1.7.2) (2026-07-10)
 
 
