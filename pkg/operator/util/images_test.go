@@ -344,7 +344,6 @@ func TestResolveKubeProxyImage(t *testing.T) {
 	}
 }
 
-//nolint:dupl // Similar to TestResolveAuditWebhookImage
 func TestResolveCoreDNSImage(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -389,7 +388,6 @@ func TestResolveCoreDNSImage(t *testing.T) {
 	}
 }
 
-//nolint:dupl // Similar to TestResolveCoreDNSImage
 func TestResolveAuditWebhookImage(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -399,14 +397,14 @@ func TestResolveAuditWebhookImage(t *testing.T) {
 		{
 			name:      "default audit webhook image",
 			imageSpec: nil,
-			expected:  "docker.io/nginx:1.29.1",
+			expected:  "docker.io/nginx:" + nginxTag,
 		},
 		{
 			name: "custom registry for audit webhook",
 			imageSpec: &v1alpha1.ImageSpec{
 				Registry: new("my-registry.com"),
 			},
-			expected: "my-registry.com/nginx:1.29.1",
+			expected: "my-registry.com/nginx:" + nginxTag,
 		},
 		{
 			name: "custom tag for audit webhook",
