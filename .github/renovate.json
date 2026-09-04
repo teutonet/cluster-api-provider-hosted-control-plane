@@ -11,7 +11,8 @@
         "go"
       ],
       "matchPackageNames": [
-        "k8s.io/**"
+        "k8s.io/**",
+        "sigs.k8s.io/controller-runtime"
       ],
       "groupName": "k8s.io Kubernetes modules"
     },
