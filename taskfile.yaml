@@ -38,7 +38,7 @@ vars:
         version: 5.8.1
       grype:
         url: github.com/anchore/grype/cmd/grype
-        version: 0.117.0
+        version: 0.118.0
       # not the good yq, but the good one has no "just run" option
       yq:
         url: github.com/mikefarah/yq/v4
