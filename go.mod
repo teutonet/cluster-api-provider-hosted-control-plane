@@ -45,7 +45,7 @@ require (
 	sigs.k8s.io/cluster-api v1.14.0
 	sigs.k8s.io/cluster-api/api v1.14.0
 	sigs.k8s.io/controller-runtime v0.24.1
-	sigs.k8s.io/gateway-api v1.6.1
+	sigs.k8s.io/gateway-api v1.6.2
 )
 
 require (
