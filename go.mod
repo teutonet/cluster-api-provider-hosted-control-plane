@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.108.0
 	github.com/aws/smithy-go/tracing/smithyoteltracing v1.0.29
 	github.com/blang/semver/v4 v4.0.0
+	github.com/caarlos0/env/v11 v11.4.1
 	github.com/caarlos0/env/v6 v6.10.1
 	github.com/cert-manager/cert-manager v1.21.1
 	github.com/cilium/cilium v1.20.1
