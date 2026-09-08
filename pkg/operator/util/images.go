@@ -10,7 +10,7 @@ import (
 const (
 	maxKonnectivityMinor = 36        // renovate: datasource=docker depName=kas-network-proxy/proxy-server registryUrl=registry.k8s.io extractVersion=^v0\.(?<version>\d+)\.0$
 	coreDNSTag           = "v1.12.0" // renovate: datasource=docker depName=coredns/coredns registryUrl=registry.k8s.io extractVersion=^(?<version>v\d+\.\d+\.\d+)$
-	nginxTag             = "1.29.1"  // renovate: datasource=docker depName=nginx registryUrl=docker.io extractVersion=^(?<version>\d+\.\d+\.\d+)$
+	nginxTag             = "1.31.5"  // renovate: datasource=docker depName=nginx registryUrl=docker.io extractVersion=^(?<version>\d+\.\d+\.\d+)$
 )
 
 func buildImageString(registry, repository, tag string) string {
