@@ -29,7 +29,7 @@ vars:
         version: 2.13.2
       gofumpt:
         url: mvdan.cc/gofumpt
-        version: 0.11.0
+        version: 0.12.0
       golines:
         url: github.com/segmentio/golines
         version: 0.13.0
