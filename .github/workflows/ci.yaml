@@ -27,6 +27,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -39,6 +40,8 @@ jobs:
       - uses: arduino/setup-task@v2
         with:
           version: 3.x
+
+      - uses: sigstore/cosign-installer@v3
 
       - name: Check for uncommitted changes
         run: task check-diff
@@ -53,4 +56,8 @@ jobs:
         if: github.event_name == 'push'
         run: |
           echo ${{ github.token }} | buildah login --username ${{ github.repository_owner }} --password-stdin ghcr.io
-          buildah manifest push --all ${IMAGE}
+          buildah manifest push --all --digestfile /tmp/digest ${IMAGE}
+
+      - name: Sign image
+        if: github.event_name == 'push'
+        run: cosign sign --yes ${IMAGE%%:*}@$(cat /tmp/digest)
