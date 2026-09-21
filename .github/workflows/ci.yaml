@@ -61,3 +61,7 @@ jobs:
       - name: Sign image
         if: github.event_name == 'push'
         run: cosign sign --yes ${IMAGE%%:*}@$(cat /tmp/digest)
+
+      - name: Generate and publish SBOM
+        if: github.event_name == 'push'
+        run: task sbom

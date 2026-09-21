@@ -39,6 +39,12 @@ vars:
       grype:
         url: github.com/anchore/grype/cmd/grype
         version: 0.118.0
+      syft:
+        url: github.com/anchore/syft/cmd/syft
+        version: 1.52.0
+      oras:
+        url: oras.land/oras/cmd/oras
+        version: 1.3.4
       # not the good yq, but the good one has no "just run" option
       yq:
         url: github.com/mikefarah/yq/v4
@@ -50,6 +56,8 @@ vars:
   golinesCmd: 'go run {{ (index .tools "golines").url }}@v{{ (index .tools "golines").version }}'
   kustomizeCmd: 'go run {{ (index .tools "kustomize").url }}@v{{ (index .tools "kustomize").version }}'
   grypeCmd: 'go run {{ (index .tools "grype").url }}@v{{ (index .tools "grype").version }}'
+  syftCmd: 'go run {{ (index .tools "syft").url }}@v{{ (index .tools "syft").version }}'
+  orasCmd: 'go run {{ (index .tools "oras").url }}@v{{ (index .tools "oras").version }}'
   yqCmd: 'go run {{ (index .tools "yq").url }}@v{{ (index .tools "yq").version }}'
   buildDir: build
   artifactsDir: _artifacts
@@ -222,6 +230,76 @@ tasks:
         task: image
         vars:
           arch: "{{ .arch }}"
+  sbom:
+    label: sbom
+    deps:
+      - artifacts-dir
+    vars:
+      sbomDir: "{{ .artifactsDir }}/sbom"
+    sources:
+      - cmd/sbom-images/*.go
+      - pkg/operator/util/images.go
+      - pkg/operator/util/version.go
+    cmds:
+      - mkdir -p {{ .sbomDir }}
+      - "{{ .syftCmd }} {{ .IMAGE }} --platform linux/amd64 -o spdx-json={{ .sbomDir }}/controller-manager.spdx.json"
+      - |
+        go run ./cmd/sbom-images > {{ .sbomDir }}/bundled-images.json
+        jq -c '.[]' {{ .sbomDir }}/bundled-images.json | while read -r component; do
+          name=$(jq -r '.name' <<<"${component}")
+          image=$(jq -r '.image' <<<"${component}")
+          out="{{ .sbomDir }}/${name}.spdx.json"
+          if [[ "$(jq -r '.fetchAttestation' <<<"${component}")" == "true" ]]; then
+            # oras, unlike podman/buildah/syft, doesn't expand Docker Hub's implicit
+            # "library/" namespace for official images, so it has to be spelled out.
+            if [[ "${image}" == docker.io/* && "${image#docker.io/}" != */* ]]; then
+              image="docker.io/library/${image#docker.io/}"
+            fi
+            # upstream already publishes an SBOM as an old buildx-style attestation
+            # manifest baked into the image's manifest list, not an OCI 1.1 referrer,
+            # so it has to be located by walking the manifest list ourselves.
+            repo="${image%:*}"
+            amdDigest="$({{ .orasCmd }} resolve --platform linux/amd64 "${image}")"
+            amdDigest="${amdDigest#*@}"
+            {{ .orasCmd }} manifest fetch "${image}" |
+              jq -r '.manifests[] | select(.platform.architecture == "unknown") | .digest' |
+              while read -r attestationDigest; do
+                layerDigest=$(
+                  {{ .orasCmd }} manifest fetch "${repo}@${attestationDigest}" |
+                    jq -r '.layers[]
+                      | select(.annotations["in-toto.io/predicate-type"] == "https://spdx.dev/Document")
+                      | .digest'
+                )
+                [[ -z "${layerDigest}" ]] && continue
+                {{ .orasCmd }} blob fetch "${repo}@${layerDigest}" --output {{ .sbomDir }}/attestation.json
+                subjectDigest="sha256:$(jq -r '.subject[0].digest.sha256' {{ .sbomDir }}/attestation.json)"
+                if [[ "${subjectDigest}" == "${amdDigest}" ]]; then
+                  jq '.predicate' {{ .sbomDir }}/attestation.json > "${out}"
+                  break
+                fi
+              done
+            rm -f {{ .sbomDir }}/attestation.json
+          else
+            {{ .syftCmd }} "${image}" --platform linux/amd64 -o "spdx-json=${out}"
+          fi
+        done
+      - |
+        jq -s '
+          (.[0]) as $base |
+          ($base.packages + ([.[1:][] | .packages] | add // [])) as $packages |
+          ($base.files + ([.[1:][] | .files] | add // [])) as $files |
+          ($base.relationships + ([.[1:][] | .relationships] | add // [])) as $relationships |
+          $base
+          | .packages = ($packages | unique_by(.SPDXID))
+          | .files = ($files | unique_by(.SPDXID))
+          | .relationships = ($relationships | unique)
+        ' {{ .sbomDir }}/controller-manager.spdx.json {{ .sbomDir }}/nginx.spdx.json \
+          {{ .sbomDir }}/coredns.spdx.json {{ .sbomDir }}/konnectivity-server.spdx.json \
+          {{ .sbomDir }}/konnectivity-agent.spdx.json {{ .sbomDir }}/etcd.spdx.json \
+          > {{ .sbomDir }}/merged.spdx.json
+      - "{{ .orasCmd }} attach --artifact-type application/spdx+json {{ .IMAGE }} {{ .sbomDir }}/merged.spdx.json:application/spdx+json"
+    generates:
+      - "{{ .sbomDir }}/merged.spdx.json"
   get-version:
     cmd: echo {{ .version }}
   dev:
