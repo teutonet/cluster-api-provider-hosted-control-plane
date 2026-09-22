@@ -37,6 +37,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -50,6 +51,8 @@ jobs:
         with:
           go-version-file: ./go.mod
 
+      - uses: sigstore/cosign-installer@v3
+
       - name: Download last metadata
         run: |
           mkdir -p build
@@ -61,7 +64,10 @@ jobs:
         run: |
           echo ${{ github.token }} | buildah login --username ${{ github.repository_owner }} --password-stdin ghcr.io
 
-      - run: buildah manifest push --all ${IMAGE}
+      - run: buildah manifest push --all --digestfile /tmp/digest ${IMAGE}
+
+      - name: Sign image
+        run: cosign sign --yes ${IMAGE%%:*}@$(cat /tmp/digest)
 
       - name: Upload manifests
         uses: actions/upload-release-asset@v1
