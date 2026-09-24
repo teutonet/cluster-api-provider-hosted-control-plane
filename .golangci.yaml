@@ -223,7 +223,7 @@ linters:
           alias: slices
         - pkg: github.com/blang/semver/v4
           alias: semver
-        - pkg: github.com/caarlos0/env/v6
+        - pkg: github.com/caarlos0/env/v11
           alias: env
         - pkg: go.etcd.io/etcd/client/v3
           alias: clientv3
