@@ -67,7 +67,9 @@ jobs:
       - run: buildah manifest push --all --digestfile /tmp/digest ${IMAGE}
 
       - name: Sign image
-        run: cosign sign --yes ${IMAGE%%:*}@$(cat /tmp/digest)
+        run: |
+          echo ${{ github.token }} | cosign login --username ${{ github.repository_owner }} --password-stdin ghcr.io
+          cosign sign --yes ${IMAGE%%:*}@$(cat /tmp/digest)
 
       - name: Upload manifests
         uses: actions/upload-release-asset@v1
