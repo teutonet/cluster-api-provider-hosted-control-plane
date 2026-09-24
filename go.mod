@@ -12,7 +12,7 @@ require (
 	github.com/blang/semver/v4 v4.0.0
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/cert-manager/cert-manager v1.21.2
-	github.com/cilium/cilium v1.20.1
+	github.com/cilium/cilium v1.20.2
 	github.com/coredns/corefile-migration v1.0.35
 	github.com/go-logr/logr v1.4.4
 	github.com/onsi/gomega v1.43.1
@@ -73,7 +73,7 @@ require (
 	github.com/cilium/ebpf v0.22.0 // indirect
 	github.com/cilium/hive v1.0.4 // indirect
 	github.com/cilium/lumberjack/v2 v2.4.2 // indirect
-	github.com/cilium/statedb v0.8.3 // indirect
+	github.com/cilium/statedb v0.8.4 // indirect
 	github.com/cilium/stream v0.0.1 // indirect
 	github.com/coredns/caddy v1.1.4 // indirect
 	github.com/coreos/go-semver v0.3.1 // indirect
@@ -179,7 +179,7 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	k8s.io/cli-runtime v0.36.3 // indirect
+	k8s.io/cli-runtime v0.36.4 // indirect
 	k8s.io/component-helpers v0.36.3 // indirect
 	k8s.io/controller-manager v0.36.3 // indirect
 	k8s.io/cri-api v0.37.1 // indirect
