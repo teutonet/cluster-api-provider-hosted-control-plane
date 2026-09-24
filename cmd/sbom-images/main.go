@@ -6,8 +6,6 @@ import (
 	"math"
 	"os"
 
-	"go.etcd.io/etcd/api/v3/version"
-
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 )
 
@@ -32,7 +30,7 @@ func bundledImages() []bundledImage {
 			Name:  "konnectivity-agent",
 			Image: operatorutil.ResolveKonnectivityImage(nil, "proxy-agent", math.MaxUint64),
 		},
-		{Name: "etcd", Image: operatorutil.ResolveETCDImage(nil, version.Version)},
+		{Name: "etcd", Image: operatorutil.ResolveETCDImage(nil)},
 	}
 }
 
