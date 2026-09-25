@@ -4,10 +4,25 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
+	"runtime"
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+// kubeadmKubeletBuildContext resolves the Containerfile fixture relative to
+// this source file, not the calling test binary's working directory — the
+// working directory is the *caller's* package dir under `go test`, which
+// differs from this package's own dir whenever a test outside
+// test/k8scompat calls KubeadmKubeletContainer.
+func kubeadmKubeletBuildContext() string {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("runtime.Caller(0) failed to report this file's own path")
+	}
+	return filepath.Join(filepath.Dir(thisFile), "testdata", "kubeadm-kubelet")
+}
 
 // KubeadmKubeletContainer builds (once per version; the container engine's
 // own build cache dedupes repeat calls) the fetch image containing the real
@@ -22,7 +37,7 @@ func KubeadmKubeletContainer(
 ) (testcontainers.Container, error) {
 	buildArgValue := version
 	dockerfile := testcontainers.WithDockerfile(testcontainers.FromDockerfile{
-		Context:    "testdata/kubeadm-kubelet",
+		Context:    kubeadmKubeletBuildContext(),
 		Dockerfile: "Containerfile",
 		BuildArgs:  map[string]*string{"K8S_VERSION": &buildArgValue},
 	})

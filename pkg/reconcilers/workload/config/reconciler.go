@@ -134,6 +134,28 @@ func (cr *configReconciler) ReconcileClusterInfoConfigMap(
 	)
 }
 
+func (cr *configReconciler) buildClusterConfiguration(
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv2.Cluster,
+) (kubeadm.ClusterConfiguration, error) {
+	initConfiguration, err := config.DefaultedStaticInitConfiguration()
+	if err != nil {
+		return kubeadm.ClusterConfiguration{}, fmt.Errorf("failed to get defaulted static init configuration: %w", err)
+	}
+	conf := initConfiguration.ClusterConfiguration
+	conf.Networking = kubeadm.Networking{
+		DNSDomain:     cr.serviceDomain,
+		PodSubnet:     cr.podCIDR.String(),
+		ServiceSubnet: cr.serviceCIDR.String(),
+	}
+	conf.CACertificateValidityPeriod = &metav1.Duration{Duration: cr.caCertificateDuration}
+	conf.CertificateValidityPeriod = &metav1.Duration{Duration: cr.certificateDuration}
+	conf.KubernetesVersion = hostedControlPlane.Spec.Version
+	conf.ControlPlaneEndpoint = cluster.Spec.ControlPlaneEndpoint.String()
+	conf.ClusterName = cluster.Name
+	return conf, nil
+}
+
 func (cr *configReconciler) ReconcileKubeadmConfig(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
@@ -141,21 +163,10 @@ func (cr *configReconciler) ReconcileKubeadmConfig(
 ) error {
 	return tracing.WithSpan1(ctx, cr.Tracer, "reconcileKubeadmConfig",
 		func(ctx context.Context, span trace.Span) error {
-			initConfiguration, err := config.DefaultedStaticInitConfiguration()
+			conf, err := cr.buildClusterConfiguration(hostedControlPlane, cluster)
 			if err != nil {
-				return fmt.Errorf("failed to get defaulted static init configuration: %w", err)
+				return err
 			}
-			conf := initConfiguration.ClusterConfiguration
-			conf.Networking = kubeadm.Networking{
-				DNSDomain:     cr.serviceDomain,
-				PodSubnet:     cr.podCIDR.String(),
-				ServiceSubnet: cr.serviceCIDR.String(),
-			}
-			conf.CACertificateValidityPeriod = &metav1.Duration{Duration: cr.caCertificateDuration}
-			conf.CertificateValidityPeriod = &metav1.Duration{Duration: cr.certificateDuration}
-			conf.KubernetesVersion = hostedControlPlane.Spec.Version
-			conf.ControlPlaneEndpoint = cluster.Spec.ControlPlaneEndpoint.String()
-			conf.ClusterName = cluster.Name
 
 			clusterConfiguration, err := config.MarshalKubeadmConfigObject(&conf, kubeadmv1beta4.SchemeGroupVersion)
 			if err != nil {
