@@ -142,6 +142,12 @@ tasks:
     cmd: go test ./{{ .path }}/... -coverprofile {{ .artifactsDir }}/cover.out
     generates:
       - "{{ .artifactsDir }}/cover.out"
+  test-compat:
+    desc: Run cross-Kubernetes-minor config compatibility tests against real kubeadm/kubelet/kube-proxy/kube-apiserver binaries (slow, needs a container engine + network; not part of `test`/`pre-commit`).
+    deps:
+      - generate
+      - format
+    cmd: go test ./... -run 'AcrossSupportedMinors|KubeadmKubeletContainer' -v -timeout 20m
   pre-commit:
     cmds:
       - task: compile

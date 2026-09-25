@@ -48,6 +48,8 @@ jobs:
 
       - run: task test
 
+      - run: task test-compat
+
       - run: task lint
 
       - run: task build
