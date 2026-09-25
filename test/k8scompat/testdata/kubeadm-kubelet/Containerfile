@@ -3,6 +3,6 @@ ARG K8S_VERSION
 ADD https://dl.k8s.io/${K8S_VERSION}/kubernetes-server-linux-amd64.tar.gz /kubernetes-server.tar.gz
 RUN tar -xzf /kubernetes-server.tar.gz -C / kubernetes/server/bin/kubeadm kubernetes/server/bin/kubelet
 
-FROM scratch
+FROM debian:trixie-slim
 COPY --from=fetch /kubernetes/server/bin/kubeadm /kubeadm
 COPY --from=fetch /kubernetes/server/bin/kubelet /kubelet

@@ -187,23 +187,29 @@ func (cr *configReconciler) ReconcileKubeadmConfig(
 	)
 }
 
+func (cr *configReconciler) buildKubeletConfiguration() kubelettypes.KubeletConfiguration {
+	var kubeletConfiguration kubelettypes.KubeletConfiguration
+
+	kubeletConfiguration.APIVersion = kubelettypes.SchemeGroupVersion.String()
+	kubeletConfiguration.Kind = "KubeletConfiguration"
+	kubeletConfiguration.Authentication.X509.ClientCAFile = "/etc/kubernetes/pki/ca.crt"
+	kubeletConfiguration.CgroupDriver = konstants.CgroupDriverSystemd
+	kubeletConfiguration.ClusterDNS = []string{cr.dnsIP.String()}
+	kubeletConfiguration.ClusterDomain = cr.serviceDomain
+	kubeletConfiguration.RotateCertificates = true
+	kubeletConfiguration.StaticPodPath = kubeadmv1beta4.DefaultManifestsDir
+	kubeletConfiguration.Logging.FlushFrequency.SerializeAsString = false
+	kubeletConfiguration.ResolverConfig = nil
+
+	return kubeletConfiguration
+}
+
 func (cr *configReconciler) ReconcileKubeletConfig(
 	ctx context.Context,
 ) error {
 	return tracing.WithSpan1(ctx, cr.Tracer, "reconcileKubeletConfig",
 		func(ctx context.Context, span trace.Span) error {
-			var kubeletConfiguration kubelettypes.KubeletConfiguration
-
-			kubeletConfiguration.APIVersion = kubelettypes.SchemeGroupVersion.String()
-			kubeletConfiguration.Kind = "KubeletConfiguration"
-			kubeletConfiguration.Authentication.X509.ClientCAFile = "/etc/kubernetes/pki/ca.crt"
-			kubeletConfiguration.CgroupDriver = konstants.CgroupDriverSystemd
-			kubeletConfiguration.ClusterDNS = []string{cr.dnsIP.String()}
-			kubeletConfiguration.ClusterDomain = cr.serviceDomain
-			kubeletConfiguration.RotateCertificates = true
-			kubeletConfiguration.StaticPodPath = kubeadmv1beta4.DefaultManifestsDir
-			kubeletConfiguration.Logging.FlushFrequency.SerializeAsString = false
-			kubeletConfiguration.ResolverConfig = nil
+			kubeletConfiguration := cr.buildKubeletConfiguration()
 
 			configYaml, err := operatorutil.ToYaml(&kubeletConfiguration)
 			if err != nil {
