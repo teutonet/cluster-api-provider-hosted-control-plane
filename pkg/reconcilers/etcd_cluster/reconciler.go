@@ -750,7 +750,7 @@ func (er *etcdClusterReconciler) createEtcdCertificatesVolume(
 func isEtcdVersionBefore37(ctx context.Context, imageSpec *v1alpha1.ImageSpec) bool {
 	tag := ptr.Deref(ptr.Deref(imageSpec, v1alpha1.ImageSpec{}).Tag, "")
 	if tag == "" {
-		return semver.MustParse(version.Version).LT(etcdClientVersion37)
+		return semver.MustParse(operatorutil.DefaultETCDVersion()).LT(etcdClientVersion37)
 	}
 
 	parsed, err := semver.ParseTolerant(tag)
@@ -779,7 +779,6 @@ func (er *etcdClusterReconciler) createEtcdContainer(
 		WithName("etcd").
 		WithImage(operatorutil.ResolveETCDImage(
 			hostedControlPlane.Spec.ETCD.Image,
-			version.Version,
 		)).
 		WithImagePullPolicy(hostedControlPlane.Spec.ETCD.ImagePullPolicyOrDefault()).
 		WithCommand("etcd").

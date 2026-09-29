@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
-	"go.etcd.io/etcd/api/v3/version"
 
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
@@ -28,6 +27,6 @@ func TestBundledImages(t *testing.T) {
 			Name:  "konnectivity-agent",
 			Image: operatorutil.ResolveKonnectivityImage(nil, "proxy-agent", math.MaxUint64),
 		},
-		bundledImage{Name: "etcd", Image: operatorutil.ResolveETCDImage(nil, version.Version)},
+		bundledImage{Name: "etcd", Image: operatorutil.ResolveETCDImage(nil)},
 	))
 }
