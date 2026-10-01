@@ -38,7 +38,7 @@ vars:
         version: 5.8.1
       grype:
         url: github.com/anchore/grype/cmd/grype
-        version: 0.118.0
+        version: 0.119.0
       syft:
         url: github.com/anchore/syft/cmd/syft
         version: 1.52.0
