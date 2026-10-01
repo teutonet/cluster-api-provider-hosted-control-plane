@@ -35,7 +35,7 @@ vars:
         version: 0.13.0
       kustomize:
         url: sigs.k8s.io/kustomize/kustomize/v5
-        version: 5.8.1
+        version: 5.8.2
       grype:
         url: github.com/anchore/grype/cmd/grype
         version: 0.118.0
