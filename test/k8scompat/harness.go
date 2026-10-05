@@ -24,12 +24,15 @@ func kubeadmKubeletBuildContext() string {
 	return filepath.Join(filepath.Dir(thisFile), "testdata", "kubeadm-kubelet")
 }
 
-// KubeadmKubeletContainer builds (once per version; the container engine's
-// own build cache dedupes repeat calls) the fetch image containing the real
+// KubeadmKubeletContainer builds the fetch image containing the real
 // kubeadm and kubelet binaries for the given Kubernetes patch version, and
-// starts a container from it. Callers pick what to run inside via
-// testcontainers.WithCmd, and how to wait for it via
-// testcontainers.WithWaitStrategy — this only wires up the build.
+// starts a container from it. The image is tagged deterministically by
+// version and kept after the container stops (KeepImage), so the several
+// compat tests that each call this for the same version reuse one image
+// instead of rebuilding (and re-downloading both binaries) from scratch
+// every time. Callers pick what to run inside via testcontainers.WithCmd,
+// and how to wait for it via testcontainers.WithWaitStrategy — this only
+// wires up the build.
 func KubeadmKubeletContainer(
 	ctx context.Context,
 	version string,
@@ -40,6 +43,9 @@ func KubeadmKubeletContainer(
 		Context:    kubeadmKubeletBuildContext(),
 		Dockerfile: "Containerfile",
 		BuildArgs:  map[string]*string{"K8S_VERSION": &buildArgValue},
+		Repo:       "k8scompat-kubeadm-kubelet",
+		Tag:        version,
+		KeepImage:  true,
 	})
 
 	allOpts := append([]testcontainers.ContainerCustomizer{

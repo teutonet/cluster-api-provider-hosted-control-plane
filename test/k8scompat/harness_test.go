@@ -9,9 +9,7 @@ import (
 )
 
 func TestKubeadmKubeletContainer_KubeadmVersionMatches(t *testing.T) {
-	if testing.Short() {
-		t.Skip("builds and runs real containers, skipped in -short")
-	}
+	RequireEnabled(t)
 	g, ctx, _ := G(t)
 
 	container, err := KubeadmKubeletContainer(

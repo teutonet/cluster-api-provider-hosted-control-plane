@@ -147,7 +147,9 @@ tasks:
     deps:
       - generate
       - format
-    cmd: go test ./... -run 'AcrossSupportedMinors|KubeadmKubeletContainer' -v -timeout 20m
+    env:
+      K8SCOMPAT_TESTS: "1"
+    cmd: go test ./... -run 'AcrossSupportedMinors|KubeadmKubeletContainer|UnknownField' -v -timeout 20m -count=1
   pre-commit:
     cmds:
       - task: compile
