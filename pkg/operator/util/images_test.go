@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"testing"
 
 	. "github.com/onsi/gomega"
@@ -212,22 +213,19 @@ func TestResolveETCDImage(t *testing.T) {
 	tests := []struct {
 		name      string
 		imageSpec *v1alpha1.ImageSpec
-		version   string
 		expected  string
 	}{
 		{
 			name:      "default ETCD image",
 			imageSpec: nil,
-			version:   "3.5.9",
-			expected:  "registry.k8s.io/etcd:3.5.9-0",
+			expected:  fmt.Sprintf("registry.k8s.io/etcd:%s-0", etcdTag),
 		},
 		{
 			name: "custom registry for ETCD",
 			imageSpec: &v1alpha1.ImageSpec{
 				Registry: new("my-registry.com"),
 			},
-			version:  "3.5.9",
-			expected: "my-registry.com/etcd:3.5.9-0",
+			expected: fmt.Sprintf("my-registry.com/etcd:%s-0", etcdTag),
 		},
 		{
 			name: "custom repository and tag",
@@ -235,7 +233,6 @@ func TestResolveETCDImage(t *testing.T) {
 				Repository: new("custom-etcd"),
 				Tag:        new("3.5.10-custom"),
 			},
-			version:  "3.5.9",
 			expected: "registry.k8s.io/custom-etcd:3.5.10-custom",
 		},
 	}
@@ -243,7 +240,7 @@ func TestResolveETCDImage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g, _, _ := G(t)
-			g.Expect(ResolveETCDImage(tt.imageSpec, tt.version)).To(Equal(tt.expected))
+			g.Expect(ResolveETCDImage(tt.imageSpec)).To(Equal(tt.expected))
 		})
 	}
 }
