@@ -41,7 +41,7 @@ vars:
         version: 0.118.0
       syft:
         url: github.com/anchore/syft/cmd/syft
-        version: 1.52.0
+        version: 1.54.1
       oras:
         url: oras.land/oras/cmd/oras
         version: 1.3.4
