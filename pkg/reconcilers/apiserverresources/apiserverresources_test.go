@@ -13,6 +13,7 @@ import (
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
@@ -297,4 +298,42 @@ func TestBuildKonnectivityServerArgs_ServerCount(t *testing.T) {
 			g.Expect(args).To(ContainElement(tt.expected))
 		})
 	}
+}
+
+func TestReconcileApiServerService_KonnectivityServicePublishesNotReadyAddresses(t *testing.T) {
+	g, ctx, _ := G(t)
+
+	namespace := "test-ns"
+	fakeClient := fake.NewClientset()
+	r := &apiServerResourcesReconciler{
+		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
+			ManagementClusterClient: &alias.ManagementClusterClient{Interface: fakeClient},
+		},
+		apiServerServicePort:           443,
+		apiServerServiceLegacyPortName: "legacy-api",
+		konnectivityServicePort:        8132,
+		componentAPIServer:             "api-server",
+		apiContainerPortName:           intstr.FromString("api"),
+		konnectivityContainerPortName:  intstr.FromString("konnectivity"),
+	}
+	hostedControlPlane := &v1alpha1.HostedControlPlane{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "test-hcp", UID: "test-uid"},
+	}
+	cluster := &capiv2.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "test-cluster"},
+	}
+
+	notReadyReason, err := r.ReconcileApiServerService(ctx, hostedControlPlane, cluster)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(notReadyReason).To(Equal("Api Server Service is waiting on its IP"))
+
+	konnectivityService, err := fakeClient.CoreV1().Services(namespace).
+		Get(ctx, names.GetKonnectivityServiceName(cluster), metav1.GetOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(konnectivityService.Spec.ClusterIP).To(Equal(corev1.ClusterIPNone))
+	g.Expect(konnectivityService.Spec.PublishNotReadyAddresses).To(BeTrue())
+	g.Expect(konnectivityService.Spec.Selector).To(Equal(names.GetControlPlaneLabels(cluster, "api-server")))
+	g.Expect(konnectivityService.Spec.Ports).To(ConsistOf(
+		HaveField("Port", int32(8132)),
+	))
 }

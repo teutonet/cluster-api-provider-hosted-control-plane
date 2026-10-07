@@ -61,6 +61,7 @@ func (trr *tlsRoutesReconciler) ReconcileTLSRoutes(
 				cluster,
 				hostedControlPlane,
 				cluster.Spec.ControlPlaneEndpoint.Host,
+				names.GetServiceName(cluster),
 				trr.apiServerServicePort,
 			)
 
@@ -75,6 +76,7 @@ func (trr *tlsRoutesReconciler) ReconcileTLSRoutes(
 				cluster,
 				hostedControlPlane,
 				names.GetKonnectivityServerHost(cluster),
+				names.GetKonnectivityServiceName(cluster),
 				trr.konnectivityServicePort,
 			)
 
@@ -94,6 +96,7 @@ func (trr *tlsRoutesReconciler) createTLSRoute(
 	cluster *capiv2.Cluster,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
 	host string,
+	serviceName string,
 	port int32,
 ) *gwv1ac.TLSRouteApplyConfiguration {
 	return gwv1ac.TLSRoute(name, cluster.Namespace).
@@ -107,7 +110,7 @@ func (trr *tlsRoutesReconciler) createTLSRoute(
 			).
 			WithRules(gwv1ac.TLSRouteRule().
 				WithBackendRefs(gwv1ac.BackendRef().
-					WithName(gwv1.ObjectName(names.GetServiceName(cluster))).
+					WithName(gwv1.ObjectName(serviceName)).
 					WithPort(port).
 					WithWeight(1),
 				),

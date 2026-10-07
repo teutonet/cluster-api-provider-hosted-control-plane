@@ -76,6 +76,13 @@ func GetServiceName(cluster *capiv2.Cluster) string {
 	return "s-" + cluster.Name
 }
 
+// GetKonnectivityServiceName is a headless service publishing not-ready addresses, so agents can already register
+// with konnectivity servers of apiserver pods that are still starting. The gateway routes to it instead of to the
+// api server service, which only publishes ready pods.
+func GetKonnectivityServiceName(cluster *capiv2.Cluster) string {
+	return GetServiceName(cluster) + "-konnectivity"
+}
+
 func GetAdminCertificateName(cluster *capiv2.Cluster) string {
 	return cluster.Name + "-admin"
 }
