@@ -56,13 +56,13 @@ jobs:
         if: github.event_name == 'push'
         run: |
           echo ${{ github.token }} | buildah login --username ${{ github.repository_owner }} --password-stdin ghcr.io
-          buildah manifest push --all --digestfile /tmp/digest ${IMAGE}
+          buildah manifest push --all --digestfile /tmp/digest "${IMAGE}"
 
       - name: Sign image
         if: github.event_name == 'push'
         run: |
           echo ${{ github.token }} | cosign login --username ${{ github.repository_owner }} --password-stdin ghcr.io
-          cosign sign --yes ${IMAGE%%:*}@$(cat /tmp/digest)
+          cosign sign --yes "${IMAGE%%:*}@$(cat /tmp/digest)"
 
       - name: Generate and publish SBOM
         if: github.event_name == 'push'
