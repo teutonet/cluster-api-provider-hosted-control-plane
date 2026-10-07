@@ -265,3 +265,36 @@ func TestReconcileAuthenticationConfig_StableOIDCProviderOrder(t *testing.T) {
 		g.Expect(reconcileAndGetYAML(g)).To(Equal(firstYAML))
 	}
 }
+
+func TestBuildKonnectivityServerArgs_ServerCount(t *testing.T) {
+	tests := []struct {
+		name     string
+		replicas *int32
+		expected string
+	}{
+		{name: "defaults to the default replica count", expected: "--server-count=2"},
+		{name: "follows spec.replicas", replicas: new(int32(3)), expected: "--server-count=3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, ctx, _ := G(t)
+			reconciler := &apiServerResourcesReconciler{}
+			hostedControlPlane := &v1alpha1.HostedControlPlane{}
+			hostedControlPlane.Spec.Replicas = tt.replicas
+
+			args := reconciler.buildKonnectivityServerArgs(
+				ctx,
+				hostedControlPlane,
+				corev1ac.VolumeMount().WithMountPath("/pki"),
+				corev1ac.VolumeMount().WithMountPath("/kube"),
+				corev1ac.VolumeMount().WithMountPath("/uds"),
+				corev1ac.ContainerPort().WithContainerPort(8132),
+				corev1ac.ContainerPort().WithContainerPort(8133),
+				corev1ac.ContainerPort().WithContainerPort(8134),
+			)
+
+			g.Expect(args).To(ContainElement(tt.expected))
+		})
+	}
+}

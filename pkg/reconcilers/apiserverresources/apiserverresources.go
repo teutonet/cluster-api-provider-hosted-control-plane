@@ -1192,6 +1192,8 @@ func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 		"server-port":             "0",
 		"uds-name":                path.Join(*konnectivityUDSVolumeMount.MountPath, arr.konnectivityUDSSocketName),
 		"mode":                    "grpc",
+		// lets agents keep dialing until they reached every server even if their lease informer is stale
+		"server-count": strconv.Itoa(int(hostedControlPlane.Spec.ReplicasOrDefault())),
 	}
 
 	return operatorutil.ArgsToSlice(
