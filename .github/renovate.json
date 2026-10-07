@@ -5,7 +5,14 @@
   ],
   "automerge": true,
   "platformAutomerge": true,
+  "dependencyDashboard": true,
   "packageRules": [
+    {
+      "matchDatasources": [
+        "golang-version"
+      ],
+      "rangeStrategy": "bump"
+    },
     {
       "matchDatasources": [
         "go"
