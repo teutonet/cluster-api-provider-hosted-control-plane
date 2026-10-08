@@ -1012,6 +1012,9 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 		"authorization-mode":          konstants.ModeNode + "," + konstants.ModeRBAC,
 		"client-ca-file":              path.Join(certificatesDir, konstants.CACertName),
 		"enable-bootstrap-token-auth": strconv.FormatBool(true),
+		// all apiservers share one advertise address, so their lease reconciler would empty the kubernetes
+		// endpoints on every graceful shutdown; the "kubernetes service" phase owns them instead
+		"endpoint-reconciler-type": "none",
 		"egress-selector-config-file": path.Join(
 			egressSelectorConfigDir,
 			arr.egressSelectorConfigurationFileName,

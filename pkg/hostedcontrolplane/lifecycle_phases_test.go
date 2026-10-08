@@ -845,7 +845,16 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(*hcp.Status.Initialization.ControlPlaneInitialized).To(BeTrue())
 
-				// the apiserver is now ready, so the admin kubeconfig must have been reconciled
+				// the apiserver is now ready, so its kubernetes endpoints must point at the load balancer
+				slice, err := workloadClusterClient.DiscoveryV1().EndpointSlices(metav1.NamespaceDefault).
+					Get(ctx, "kubernetes", metav1.GetOptions{})
+				g.Expect(err).To(Succeed())
+				g.Expect(slice.Endpoints).To(HaveLen(1))
+				g.Expect(slice.Endpoints[0].Addresses).To(ConsistOf(hcp.Status.LegacyIP))
+				g.Expect(slice.Ports).To(HaveLen(1))
+				g.Expect(slice.Ports[0].Port).To(PointTo(Equal(int32(konstants.KubeAPIServerPort))))
+
+				// and the admin kubeconfig must have been reconciled
 				g.Expect(managementClusterClient.CoreV1().Secrets(hcp.Namespace).Get(
 					ctx,
 					fmt.Sprintf("%s-kubeconfig", cluster.Name),
