@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.8.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.7.2...v1.8.0) (2026-10-09)
+
+
+### Features
+
+* add various docs about working together ([#142](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/142)) ([f5bbe43](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/f5bbe43179a358c19c2f7ee3b737a5272e73987e))
+* **ci:** sign pushed images with cosign keyless signing ([#216](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/216)) ([6630388](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/66303886ff8b6b3fffa68b97dab0d0da28724a04))
+* generate and publish SBOM covering controller-manager and bundled images ([#215](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/215)) ([6178fb3](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/6178fb341e2689b501a72669b4a760b4e454c70b))
+* keep the workload kubernetes endpoints stable during apiserver rollouts ([#255](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/255)) ([f17b074](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/f17b074c956ecdb7daf6220cac6ca57f08a5e9cf))
+* **konnectivity:** shorten the agent gap after apiserver restarts ([#254](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/254)) ([f316f50](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/f316f50803cd47d3df2d230e67759c27256470af))
+* track coredns and nginx image versions via renovate ([#193](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/193)) ([96f2f99](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/96f2f99a07de90c516098d83031444bb3942aff4))
+
+
+### Bug Fixes
+
+* **ci:** authenticate cosign separately from buildah before signing ([#217](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/217)) ([b27b2f2](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/b27b2f25f5fc19e9938b982dc1a7b3a717cd42d9))
+* correct renovate depName for konnectivity image ([#146](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/146)) ([d8c2037](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/d8c2037269ef31b96a6838d72132191747c75b6c))
+* **etcd:** pin image tag independently from client library version ([#230](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/230)) ([e24be0d](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/e24be0d9506d043dc160c920748b8d82df6efb83))
+* run go mod tidy after renovate updates go.mod ([#157](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/157)) ([50884a9](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/50884a97032f69b2dc4f0167341fdfc4ef6e0d41))
+
 ## [1.7.2](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.7.1...v1.7.2) (2026-07-10)
 
 
