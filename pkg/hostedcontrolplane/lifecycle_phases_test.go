@@ -20,6 +20,7 @@ import (
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1/webhook"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/etcd_client"
@@ -320,7 +321,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			simulateExternalSystems: makeIssuerReady(certManagerclient, cluster, "root"),
+			simulateExternalSystems: makeIssuerReady(certManagerclient, cluster, names.GetRootIssuerName(cluster)),
 			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 				false: {
 					NewConditionVerification(
@@ -341,7 +342,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				},
 			},
 			simulateExternalSystems: makeCertificateReady(
-				certManagerclient, managementClusterClient, hcp, cluster, "ca",
+				certManagerclient, managementClusterClient, hcp, cluster, names.GetCACertificateName(cluster),
 			),
 			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 				false: {
@@ -362,7 +363,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			simulateExternalSystems: makeIssuerReady(certManagerclient, cluster, "ca"),
+			simulateExternalSystems: makeIssuerReady(certManagerclient, cluster, names.GetCAIssuerName(cluster)),
 			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 				false: {
 					NewConditionVerification(
@@ -386,8 +387,12 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				},
 			},
 			simulateExternalSystems: func(ctx context.Context, g Gomega) {
-				makeCertificateReady(certManagerclient, managementClusterClient, hcp, cluster, "etcd-ca")(ctx, g)
-				makeCertificateReady(certManagerclient, managementClusterClient, hcp, cluster, "front-proxy-ca")(ctx, g)
+				makeCertificateReady(
+					certManagerclient, managementClusterClient, hcp, cluster, names.GetEtcdCAName(cluster),
+				)(ctx, g)
+				makeCertificateReady(
+					certManagerclient, managementClusterClient, hcp, cluster, names.GetFrontProxyCAName(cluster),
+				)(ctx, g)
 			},
 			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 				false: {
@@ -415,8 +420,8 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				},
 			},
 			simulateExternalSystems: func(ctx context.Context, g Gomega) {
-				makeIssuerReady(certManagerclient, cluster, "etcd-ca")(ctx, g)
-				makeIssuerReady(certManagerclient, cluster, "front-proxy-ca")(ctx, g)
+				makeIssuerReady(certManagerclient, cluster, names.GetEtcdCAName(cluster))(ctx, g)
+				makeIssuerReady(certManagerclient, cluster, names.GetFrontProxyCAName(cluster))(ctx, g)
 			},
 			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 				true: {
@@ -513,7 +518,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 					),
 				},
 			},
-			simulateExternalSystems: makeTLSRouteReady(gatewayInterface, hcp, cluster.Name),
+			simulateExternalSystems: makeTLSRouteReady(gatewayInterface, hcp, names.GetTLSRouteName(cluster)),
 			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 				false: {
 					NewConditionVerification(
@@ -534,7 +539,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				},
 			},
 			simulateExternalSystems: makeTLSRouteReady(
-				gatewayInterface, hcp, fmt.Sprintf("%s-konnectivity", cluster.Name),
+				gatewayInterface, hcp, names.GetKonnectivityTLSRouteName(cluster),
 			),
 			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 				true: {
@@ -546,42 +551,69 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		},
 	}...)
 
+	type certificatePhase struct {
+		name          string
+		certName      string
+		reasonMatcher string
+	}
 	phases = append(
 		phases,
-		slices.MapToSlice(map[string]string{
-			"admin":                    "CertificateAdminNotReady",
-			"controller-manager":       "CertificateControllerManagerNotReady",
-			"scheduler":                "CertificateSchedulerNotReady",
-			"konnectivity-client":      "CertificateKonnectivityClientNotReady",
-			"control-plane-controller": "CertificateControlPlaneControllerNotReady",
-			"apiserver":                "CertificateApiServerNotReady",
-			"apiserver-kubelet-client": "CertificateApiServerKubeletClientNotReady",
-			"front-proxy":              "CertificateFrontProxyNotReady",
-			"service-account":          "CertificateServiceAccountNotReady",
-			"etcd-server":              "CertificateEtcdServerNotReady",
-			"etcd-peer":                "CertificateEtcdPeerNotReady",
-			"etcd-apiserver-client":    "CertificateEtcdApiServerClientNotReady",
-		}, func(
-			name string, reasonMatcher string,
-		) testPhase {
+		slices.Map([]certificatePhase{
+			{"admin", names.GetAdminCertificateName(cluster), "CertificateAdminNotReady"},
+			{
+				"controller-manager",
+				names.GetControllerManagerKubeconfigCertificateName(cluster),
+				"CertificateControllerManagerNotReady",
+			},
+			{
+				"scheduler",
+				names.GetSchedulerKubeconfigCertificateName(cluster),
+				"CertificateSchedulerNotReady",
+			},
+			{
+				"konnectivity-client",
+				names.GetKonnectivityClientKubeconfigCertificateName(cluster),
+				"CertificateKonnectivityClientNotReady",
+			},
+			{
+				"control-plane-controller",
+				names.GetControlPlaneControllerKubeconfigCertificateName(cluster),
+				"CertificateControlPlaneControllerNotReady",
+			},
+			{"apiserver", names.GetAPIServerCertificateName(cluster), "CertificateApiServerNotReady"},
+			{
+				"apiserver-kubelet-client",
+				names.GetAPIServerKubeletClientCertificateName(cluster),
+				"CertificateApiServerKubeletClientNotReady",
+			},
+			{"front-proxy", names.GetFrontProxyCertificateName(cluster), "CertificateFrontProxyNotReady"},
+			{"service-account", names.GetServiceAccountCertificateName(cluster), "CertificateServiceAccountNotReady"},
+			{"etcd-server", names.GetEtcdServerCertificateName(cluster), "CertificateEtcdServerNotReady"},
+			{"etcd-peer", names.GetEtcdPeerCertificateName(cluster), "CertificateEtcdPeerNotReady"},
+			{
+				"etcd-apiserver-client",
+				names.GetEtcdAPIServerClientCertificateName(cluster),
+				"CertificateEtcdApiServerClientNotReady",
+			},
+		}, func(certificate certificatePhase, _ int) testPhase {
 			return testPhase{
-				name: fmt.Sprintf("Make %s Certificate Ready", slices.Capitalize(name)),
+				name: fmt.Sprintf("Make %s Certificate Ready", slices.Capitalize(certificate.name)),
 				verifyConditionsBefore: map[bool][]types2.GomegaMatcher{
 					false: {
 						NewConditionVerification(
 							v1alpha1.CertificatesReadyCondition,
-							ContainSubstring(reasonMatcher),
+							ContainSubstring(certificate.reasonMatcher),
 						),
 					},
 				},
 				simulateExternalSystems: makeCertificateReady(
-					certManagerclient, managementClusterClient, hcp, cluster, name,
+					certManagerclient, managementClusterClient, hcp, cluster, certificate.certName,
 				),
 				verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 					false: {
 						NewConditionVerification(
 							v1alpha1.CertificatesReadyCondition,
-							Not(ContainSubstring(reasonMatcher)),
+							Not(ContainSubstring(certificate.reasonMatcher)),
 						),
 					},
 				},
@@ -600,7 +632,8 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				},
 			},
 			simulateExternalSystems: makeCertificateReady(
-				certManagerclient, managementClusterClient, hcp, cluster, "etcd-controller-client",
+				certManagerclient, managementClusterClient, hcp, cluster,
+				names.GetEtcdControllerClientCertificateName(cluster),
 			),
 			verifyConditionsAfter: map[bool][]types2.GomegaMatcher{
 				true: {
@@ -662,7 +695,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				statefulSetInterface := managementClusterClient.AppsV1().StatefulSets(hcp.Namespace)
 				statefulSet, err := statefulSetInterface.Get(
 					ctx,
-					fmt.Sprintf("%s-etcd", cluster.Name),
+					names.GetEtcdStatefulSetName(cluster),
 					metav1.GetOptions{},
 				)
 				g.Expect(err).To(Succeed())
@@ -684,7 +717,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(hcp.Status.ETCDVolumeSize.Cmp(resource.MustParse("1Gi"))).To(Equal(0))
 				g.Expect(managementClusterClient.NetworkingV1().NetworkPolicies(hcp.Namespace).Get(
-					ctx, fmt.Sprintf("%s-etcd", cluster.Name), metav1.GetOptions{},
+					ctx, names.GetEtcdStatefulSetName(cluster), metav1.GetOptions{},
 				)).Error().To(Succeed())
 			},
 		},
@@ -753,7 +786,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			verifyResources: func(ctx context.Context, g Gomega) {
 				g.Expect(managementClusterClient.CoreV1().ConfigMaps(hcp.Namespace).Get(
 					ctx,
-					fmt.Sprintf("%s-konnectivity", cluster.Name),
+					names.GetKonnectivityConfigMapName(cluster),
 					metav1.GetOptions{},
 				)).Error().To(Succeed())
 			},
@@ -763,7 +796,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			verifyResources: func(ctx context.Context, g Gomega) {
 				_, err := managementClusterClient.CoreV1().Secrets(hcp.Namespace).Get(
 					ctx,
-					fmt.Sprintf("%s-audit", cluster.Name),
+					names.GetAuditWebhookSecretName(cluster),
 					metav1.GetOptions{},
 				)
 				g.Expect(err).To(MatchError(apierrors.IsNotFound, "IsNotFound"))
@@ -1180,7 +1213,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 			verifyResources: func(ctx context.Context, g Gomega) {
 				statefulSet, err := managementClusterClient.AppsV1().StatefulSets(hcp.Namespace).Get(
 					ctx,
-					fmt.Sprintf("%s-etcd", cluster.Name),
+					names.GetEtcdStatefulSetName(cluster),
 					metav1.GetOptions{},
 				)
 				g.Expect(err).To(Succeed())
@@ -1575,12 +1608,11 @@ func makeCertificateReady(
 	managementClusterClient *alias.ManagementClusterClient,
 	hcp *v1alpha1.HostedControlPlane,
 	cluster *capiv2.Cluster,
-	name string,
+	certName string,
 ) func(ctx context.Context, g Gomega) {
 	return func(ctx context.Context, g Gomega) {
 		certificatesInterface := certManagerClient.CertmanagerV1().Certificates(cluster.Namespace)
 		secretInterface := managementClusterClient.CoreV1().Secrets(hcp.Namespace)
-		certName := fmt.Sprintf("%s-%s", cluster.Name, name)
 		cert, err := certificatesInterface.Get(ctx, certName, metav1.GetOptions{})
 		g.Expect(err).To(Succeed())
 		certificateApplyConfiguration, err := certmanagerv1ac.ExtractCertificate(
@@ -1603,9 +1635,9 @@ func makeCertificateReady(
 			corev1ac.Secret(cert.Spec.SecretName, hcp.Namespace).
 				WithData(
 					map[string][]byte{
-						"tls.crt": []byte(fmt.Sprintf("fake-%s-cert", name)),
-						"tls.key": []byte(fmt.Sprintf("fake-%s-key", name)),
-						"ca.crt":  []byte(fmt.Sprintf("fake-%s-cert", name)),
+						"tls.crt": []byte(fmt.Sprintf("fake-%s-cert", certName)),
+						"tls.key": []byte(fmt.Sprintf("fake-%s-key", certName)),
+						"ca.crt":  []byte(fmt.Sprintf("fake-%s-cert", certName)),
 					},
 				),
 			certManagerOptions,
@@ -1627,11 +1659,10 @@ func createInfraClusterCRD(group string, version string, kind string) *apiextens
 func makeIssuerReady(
 	certManagerClient *certmanagerfake.Clientset,
 	cluster *capiv2.Cluster,
-	name string,
+	issuerName string,
 ) func(ctx context.Context, g Gomega) {
 	return func(ctx context.Context, g Gomega) {
 		issuersInterface := certManagerClient.CertmanagerV1().Issuers(cluster.Namespace)
-		issuerName := fmt.Sprintf("%s-%s", cluster.Name, name)
 		issuer, err := issuersInterface.Get(ctx, issuerName, metav1.GetOptions{})
 		g.Expect(err).To(Succeed())
 		issuerApplyConfiguration, err := certmanagerv1ac.ExtractIssuer(issuer, certManagerFieldManager)
