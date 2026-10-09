@@ -352,6 +352,13 @@ func (kr *konnectivityReconciler) buildKonnectivityClientArgs(
 		"proxy-server-port":   strconv.Itoa(int(kr.konnectivityServicePort)),
 		"agent-id":            "$(NODE_NAME)",
 		"count-server-leases": "true",
+		// The agent only dials while it has fewer connections than servers, picking a random server per attempt, so
+		// a short sync interval shortens the window in which a freshly rolled apiserver has no agent. The cap bounds
+		// the backoff after failed connects, and "max" keeps the agent dialing even when its lease informer lags
+		// behind the server count reported by the servers (e.g. right after the whole control plane restarted).
+		"sync-interval":       "250ms",
+		"sync-interval-cap":   "2s",
+		"server-count-source": "max",
 		"service-account-token-path": path.Join(
 			*serviceAccountTokenVolumeMount.MountPath,
 			kr.konnectivityServiceAccountTokenName,

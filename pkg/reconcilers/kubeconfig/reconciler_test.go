@@ -6,6 +6,7 @@ import (
 
 	. "github.com/onsi/gomega"
 	slices "github.com/samber/lo"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
@@ -26,8 +27,7 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 	tests := []struct {
 		name            string
 		cluster         *capiv2.Cluster
-		existingSecrets []*corev1.Secret
-		expectedSecrets []string
+		existingSecrets func(cluster *capiv2.Cluster) []*corev1.Secret
 		expectedError   bool
 	}{
 		{
@@ -44,21 +44,26 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 					},
 				},
 			},
-			existingSecrets: []*corev1.Secret{
-				createCertificateSecret("test-cluster-ca", "default", true),
-				createCertificateSecret("test-cluster-ca-bundle", "default", true),
-				createCertificateSecret("test-cluster-admin", "default", false),
-				createCertificateSecret("test-cluster-kube-controller-manager", "default", false),
-				createCertificateSecret("test-cluster-kube-scheduler", "default", false),
-				createCertificateSecret("test-cluster-konnectivity-client", "default", false),
-				createCertificateSecret("test-cluster-controller", "default", false),
-			},
-			expectedSecrets: []string{
-				"test-cluster-kubeconfig",
-				"test-cluster-kube-controller-manager-kubeconfig-secret",
-				"test-cluster-kube-scheduler-kubeconfig-secret",
-				"test-cluster-konnectivity-client-kubeconfig-secret",
-				"test-cluster-controller-kubeconfig-secret",
+			existingSecrets: func(cluster *capiv2.Cluster) []*corev1.Secret {
+				return []*corev1.Secret{
+					createCertificateSecret(names.GetCASecretName(cluster), "default", true),
+					createCertificateSecret(names.GetCABundleSecretName(cluster), "default", true),
+					createCertificateSecret(names.GetAdminKubeconfigCertificateSecretName(cluster), "default", false),
+					createCertificateSecret(
+						names.GetControllerManagerKubeconfigCertificateSecretName(cluster), "default", false,
+					),
+					createCertificateSecret(
+						names.GetSchedulerKubeconfigCertificateSecretName(cluster),
+						"default",
+						false,
+					),
+					createCertificateSecret(
+						names.GetKonnectivityClientKubeconfigCertificateSecretName(cluster), "default", false,
+					),
+					createCertificateSecret(
+						names.GetControlPlaneControllerKubeconfigCertificateSecretName(cluster), "default", false,
+					),
+				}
 			},
 			expectedError: false,
 		},
@@ -70,9 +75,11 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 					Namespace: "default",
 				},
 			},
-			existingSecrets: []*corev1.Secret{
-				createCertificateSecret("test-cluster-ca", "default", true),
-				createCertificateSecret("test-cluster-ca-bundle", "default", true),
+			existingSecrets: func(cluster *capiv2.Cluster) []*corev1.Secret {
+				return []*corev1.Secret{
+					createCertificateSecret(names.GetCASecretName(cluster), "default", true),
+					createCertificateSecret(names.GetCABundleSecretName(cluster), "default", true),
+				}
 			},
 			expectedError: true,
 		},
@@ -84,8 +91,10 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 					Namespace: "default",
 				},
 			},
-			existingSecrets: []*corev1.Secret{
-				createCertificateSecret("test-cluster-admin", "default", false),
+			existingSecrets: func(cluster *capiv2.Cluster) []*corev1.Secret {
+				return []*corev1.Secret{
+					createCertificateSecret(names.GetAdminKubeconfigCertificateSecretName(cluster), "default", false),
+				}
 			},
 			expectedError: true,
 		},
@@ -95,7 +104,7 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := t.Context()
 			g, _, _ := G(t)
-			kubeClient := fake.NewClientset(slices.Map(tt.existingSecrets,
+			kubeClient := fake.NewClientset(slices.Map(tt.existingSecrets(tt.cluster),
 				func(s *corev1.Secret, _ int) runtime.Object {
 					return s
 				},
@@ -115,7 +124,7 @@ func TestKubeconfigReconciler_ReconcileWorkflow(t *testing.T) {
 			if !tt.expectedError {
 				certSecret, err := kubeClient.CoreV1().
 					Secrets(tt.cluster.Namespace).
-					Get(ctx, "test-cluster-admin", metav1.GetOptions{})
+					Get(ctx, names.GetAdminKubeconfigCertificateSecretName(tt.cluster), metav1.GetOptions{})
 				g.Expect(err).NotTo(HaveOccurred())
 
 				kubeconfig, err := getConcreteReconciler(reconciler).generateKubeconfigFromSecret(
@@ -198,8 +207,8 @@ func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
 			ctx := t.Context()
 			g, _, _ := G(t)
 			secrets := []*corev1.Secret{
-				createCertificateSecret("test-cluster-ca", "default", true),
-				createCertificateSecret("test-cluster-ca-bundle", "default", true),
+				createCertificateSecret(names.GetCASecretName(tt.cluster), "default", true),
+				createCertificateSecret(names.GetCABundleSecretName(tt.cluster), "default", true),
 			}
 
 			var certSecretName, userName string
@@ -207,15 +216,15 @@ func TestKubeconfigReconciler_KubeconfigConnectivity(t *testing.T) {
 
 			switch tt.endpointType {
 			case "external":
-				certSecretName = "test-cluster-admin"
+				certSecretName = names.GetAdminKubeconfigCertificateSecretName(tt.cluster)
 				userName = "admin"
 				endpoint = tt.cluster.Spec.ControlPlaneEndpoint
 			case "internal":
-				certSecretName = "test-cluster-kube-controller-manager"
+				certSecretName = names.GetControllerManagerKubeconfigCertificateSecretName(tt.cluster)
 				userName = "kube-controller-manager"
-				endpoint = capiv2.APIEndpoint{Host: "test-cluster", Port: 443}
+				endpoint = capiv2.APIEndpoint{Host: tt.cluster.Name, Port: 443}
 			case "localhost":
-				certSecretName = "test-cluster-konnectivity-client"
+				certSecretName = names.GetKonnectivityClientKubeconfigCertificateSecretName(tt.cluster)
 				userName = "konnectivity-client"
 				endpoint = capiv2.APIEndpoint{Host: "localhost", Port: 6443}
 			}
@@ -270,12 +279,13 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 		},
 	}
 
-	oldCertSecret := createCertificateSecret("test-cluster-admin-kubeconfig", "default", false)
+	certSecretName := names.GetAdminKubeconfigCertificateSecretName(cluster)
+	oldCertSecret := createCertificateSecret(certSecretName, "default", false)
 	oldCertSecret.Data[corev1.TLSCertKey] = []byte("old-cert-data")
 	oldCertSecret.Data[corev1.TLSPrivateKeyKey] = []byte("old-key-data")
 
-	caSecret := createCertificateSecret("test-cluster-ca", "default", true)
-	caBundleSecret := createCertificateSecret("test-cluster-ca-bundle", "default", true)
+	caSecret := createCertificateSecret(names.GetCASecretName(cluster), "default", true)
+	caBundleSecret := createCertificateSecret(names.GetCABundleSecretName(cluster), "default", true)
 
 	kubeClient := fake.NewClientset(oldCertSecret, caSecret, caBundleSecret)
 	managementClusterClient := &alias.ManagementClusterClient{
@@ -291,7 +301,7 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 
 	certSecret1, err := kubeClient.CoreV1().
 		Secrets(cluster.Namespace).
-		Get(ctx, "test-cluster-admin-kubeconfig", metav1.GetOptions{})
+		Get(ctx, certSecretName, metav1.GetOptions{})
 	g.Expect(err).NotTo(HaveOccurred())
 
 	kubeconfig1, err := reconciler.generateKubeconfigFromSecret(ctx, cluster, endpoint, "admin", certSecret1)
@@ -307,7 +317,7 @@ func TestKubeconfigReconciler_CertificateRotation(t *testing.T) {
 
 	certSecret2, err := kubeClient.CoreV1().
 		Secrets(cluster.Namespace).
-		Get(ctx, "test-cluster-admin-kubeconfig", metav1.GetOptions{})
+		Get(ctx, certSecretName, metav1.GetOptions{})
 	g.Expect(err).NotTo(HaveOccurred())
 
 	kubeconfig2, err := reconciler.generateKubeconfigFromSecret(ctx, cluster, endpoint, "admin", certSecret2)
@@ -340,14 +350,14 @@ func TestKubeconfigReconciler_MultiUserScenarios(t *testing.T) {
 		name       string
 		secretName string
 	}{
-		{"admin", "test-cluster-admin-kubeconfig"},
-		{"controller-manager", "test-cluster-controller-manager-kubeconfig"},
-		{"scheduler", "test-cluster-scheduler-kubeconfig"},
+		{"admin", names.GetAdminKubeconfigCertificateSecretName(cluster)},
+		{"controller-manager", names.GetControllerManagerKubeconfigCertificateSecretName(cluster)},
+		{"scheduler", names.GetSchedulerKubeconfigCertificateSecretName(cluster)},
 	}
 
 	secrets := []*corev1.Secret{
-		createCertificateSecret("test-cluster-ca", "default", true),
-		createCertificateSecret("test-cluster-ca-bundle", "default", true),
+		createCertificateSecret(names.GetCASecretName(cluster), "default", true),
+		createCertificateSecret(names.GetCABundleSecretName(cluster), "default", true),
 	}
 	for _, user := range users {
 		secrets = append(secrets, createCertificateSecret(user.secretName, "default", false))

@@ -711,6 +711,27 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerService(
 				WithPort(6443).
 				WithTargetPort(*apiPort.TargetPort).
 				WithProtocol(*apiPort.Protocol)
+			if _, ready, err := arr.ReconcileService(
+				ctx,
+				hostedControlPlane,
+				cluster,
+				hostedControlPlane.Namespace,
+				names.GetKonnectivityServiceName(cluster),
+				corev1.ServiceTypeClusterIP,
+				true,
+				arr.componentAPIServer,
+				[]*corev1ac.ServicePortApplyConfiguration{
+					corev1ac.ServicePort().
+						WithName("konnectivity").
+						WithPort(arr.konnectivityServicePort).
+						WithTargetPort(arr.konnectivityContainerPortName).
+						WithProtocol(corev1.ProtocolTCP),
+				},
+			); err != nil {
+				return "", err
+			} else if !ready {
+				return "Konnectivity Service is not ready", nil
+			}
 			if service, ready, err := arr.ReconcileService(
 				ctx,
 				hostedControlPlane,
@@ -1195,6 +1216,8 @@ func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 		"server-port":             "0",
 		"uds-name":                path.Join(*konnectivityUDSVolumeMount.MountPath, arr.konnectivityUDSSocketName),
 		"mode":                    "grpc",
+		// lets agents keep dialing until they reached every server even if their lease informer is stale
+		"server-count": strconv.Itoa(int(hostedControlPlane.Spec.ReplicasOrDefault())),
 	}
 
 	return operatorutil.ArgsToSlice(

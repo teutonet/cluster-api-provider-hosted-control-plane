@@ -105,6 +105,32 @@ This project uses [Task](https://taskfile.dev) as the build system. Key commands
 - Test files follow `*_test.go` convention
 - Use `task test` to run all tests or `task test path=<package>` for specific packages
 - Testing frameworks: Uses standard Go testing with gomega for assertions
+- Take resource names from the `names` helpers in tests too, see [Resource Names](#resource-names)
+
+## Resource Names
+
+The names of the resources the controller creates come from the helpers in `pkg/operator/util/names`.
+
+- Never hardcode a resource name or rebuild it (`"s-test-cluster"`, `fmt.Sprintf("%s-etcd", cluster.Name)`), neither
+  in code nor in tests: call the helper. In tests this covers expectations, fixtures and test helpers alike. A rename
+  then changes one place, and a test can't silently check a name that never existed (one did: a `<cluster>-audit`
+  secret).
+- `pkg/operator/util/names/names_stability_test.go` is the only place with the literal strings. It pins only the names
+  users, tooling and the platform depend on, in two groups:
+  - `TestNamesThatMustNeverChange`: there is no safe rename. The LoadBalancer service (a rename is a new load balancer
+    with a new IP), the hostnames (in certificates, agents and users' wildcard DNS), the etcd names (the statefulset
+    name is part of the volume claim names, so a rename orphans the data; the member names are in the peer URLs and
+    certificates) and the secrets users read the CA and kubeconfigs from. If one of these tests fails, the change is
+    wrong, don't update the expectation.
+  - `TestNamesWhoseChangeCausesABriefInterruption`: the TLSRoutes and the konnectivity service. The operator applies
+    resources by name and doesn't delete the old one, so a rename needs create the new one, wait until it is accepted,
+    then delete the old one, otherwise clients of the hostname see a short blip.
+  - Internal names (certificates of the control plane components, issuers, internal secrets and config maps) are not
+    pinned.
+- A new helper: if users or tooling depend on the name, pin it in one of the two groups, otherwise leave it unpinned.
+- Some names are still built inline in production code without a helper (the CAPI `<cluster>-kubeconfig` secret, the
+  `<cluster>-<component>` names of the Deployments in `ReconcileDeployment`). They can't be pinned or reused in tests
+  until they get a helper.
 
 ## Build and Artifacts
 
