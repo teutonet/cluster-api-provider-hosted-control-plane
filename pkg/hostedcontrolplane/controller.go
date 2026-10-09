@@ -782,6 +782,14 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					FailedReason: v1alpha1.APIServerDeploymentsFailedReason,
 				},
 				{
+					// right after the rollout, as the old apiservers (and the lease reconciler they used to run)
+					// leave the endpoints empty on shutdown
+					Name:         "kubernetes service",
+					Reconcile:    workloadClusterReconciler.ReconcileKubernetesService,
+					Condition:    v1alpha1.KubernetesServiceReadyCondition,
+					FailedReason: v1alpha1.KubernetesServiceFailedReason,
+				},
+				{
 					Name: "admin kubeconfig",
 					Reconcile: func(
 						ctx context.Context,

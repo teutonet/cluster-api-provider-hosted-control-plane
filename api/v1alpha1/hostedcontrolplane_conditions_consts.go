@@ -11,6 +11,8 @@ const (
 	SyncControlPlaneEndpointFailedReason   = "SyncControlPlaneEndpointFailed"
 	APIServerDeploymentsReadyCondition     = "APIServerDeploymentsReady"
 	APIServerDeploymentsFailedReason       = "APIServerDeploymentsFailed"
+	KubernetesServiceReadyCondition        = "KubernetesServiceReady"
+	KubernetesServiceFailedReason          = "KubernetesServiceFailed"
 	CACertificatesReadyCondition           = "CACertificatesReady"
 	CACertificatesFailedReason             = "CACertificatesFailed"
 	CABundleReadyCondition                 = "CABundleReady"

@@ -13,6 +13,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/coredns"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/konnectivity"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/kubeproxy"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/kubernetesservice"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload/rbac"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -25,6 +26,13 @@ import (
 
 type WorkloadClusterReconciler interface {
 	ReconcileWorkloadClusterResources(
+		ctx context.Context,
+		hostedControlPlane *v1alpha1.HostedControlPlane,
+		cluster *capiv2.Cluster,
+	) (string, error)
+	// ReconcileKubernetesService keeps the workload cluster's kubernetes endpoints pointing at the load balancer.
+	// It is separate from ReconcileWorkloadClusterResources so it can run right after the apiserver rollout.
+	ReconcileKubernetesService(
 		ctx context.Context,
 		hostedControlPlane *v1alpha1.HostedControlPlane,
 		cluster *capiv2.Cluster,
@@ -93,6 +101,24 @@ type workloadClusterReconciler struct {
 }
 
 var _ WorkloadClusterReconciler = &workloadClusterReconciler{}
+
+func (wr *workloadClusterReconciler) ReconcileKubernetesService(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv2.Cluster,
+) (string, error) {
+	workloadClusterClient, _, err := wr.workloadClusterClientFactory(ctx, wr.managementClusterClient, cluster)
+	if err != nil {
+		return "", fmt.Errorf("failed to get workload cluster client: %w", err)
+	}
+
+	notReadyReason, err := kubernetesservice.NewKubernetesServiceReconciler(workloadClusterClient).
+		ReconcileKubernetesEndpoints(ctx, hostedControlPlane)
+	if err != nil {
+		return "", fmt.Errorf("failed to reconcile kubernetes service endpoints: %w", err)
+	}
+	return notReadyReason, nil
+}
 
 func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 	ctx context.Context,
