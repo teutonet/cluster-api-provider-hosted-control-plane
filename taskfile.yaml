@@ -248,6 +248,7 @@ tasks:
         jq -c '.[]' {{ .sbomDir }}/bundled-images.json | while read -r component; do
           name=$(jq -r '.name' <<<"${component}")
           image=$(jq -r '.image' <<<"${component}")
+          ref="${image}"
           out="{{ .sbomDir }}/${name}.spdx.json"
           if [[ "$(jq -r '.fetchAttestation' <<<"${component}")" == "true" ]]; then
             # oras, unlike podman/buildah/syft, doesn't expand Docker Hub's implicit
@@ -274,7 +275,13 @@ tasks:
                 {{ .orasCmd }} blob fetch "${repo}@${layerDigest}" --output {{ .sbomDir }}/attestation.json
                 subjectDigest="sha256:$(jq -r '.subject[0].digest.sha256' {{ .sbomDir }}/attestation.json)"
                 if [[ "${subjectDigest}" == "${amdDigest}" ]]; then
-                  jq '.predicate' {{ .sbomDir }}/attestation.json > "${out}"
+                  # upstream names its root package "sbom" (purpose FILE), which makes it
+                  # unidentifiable once merged; describe it like the syft-generated image roots.
+                  jq --arg name "${ref%:*}" --arg version "${ref##*:}" '
+                    .predicate
+                    | (.packages[] | select(.SPDXID == "SPDXRef-DocumentRoot"))
+                      |= (.name = $name | .versionInfo = $version | .primaryPackagePurpose = "CONTAINER")
+                  ' {{ .sbomDir }}/attestation.json > "${out}"
                   break
                 fi
               done
@@ -289,10 +296,12 @@ tasks:
           ($base.packages + ([.[1:][] | .packages] | add // [])) as $packages |
           ($base.files + ([.[1:][] | .files] | add // [])) as $files |
           ($base.relationships + ([.[1:][] | .relationships] | add // [])) as $relationships |
+          (($base.hasExtractedLicensingInfos // []) + ([.[1:][] | .hasExtractedLicensingInfos // []] | add // [])) as $licenses |
           $base
           | .packages = ($packages | unique_by(.SPDXID))
           | .files = ($files | unique_by(.SPDXID))
           | .relationships = ($relationships | unique)
+          | .hasExtractedLicensingInfos = ($licenses | unique_by(.licenseId))
         ' {{ .sbomDir }}/controller-manager.spdx.json {{ .sbomDir }}/nginx.spdx.json \
           {{ .sbomDir }}/coredns.spdx.json {{ .sbomDir }}/konnectivity-server.spdx.json \
           {{ .sbomDir }}/konnectivity-agent.spdx.json {{ .sbomDir }}/etcd.spdx.json \
