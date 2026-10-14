@@ -419,7 +419,12 @@ for details on:
 ## 📄 License
 
 This project is licensed under the GNU Affero General Public License v3.0 -
-see the [LICENSE](LICENSE) file for details.
+see the [LICENSE](LICENSE) file for details - with an additional permission:
+software that only uses the Kubernetes API resources (CRDs) and the API Go types of this project does not
+have to be open source. Modifications of the project itself stay AGPL-3.0, including the obligation to offer the source
+to users of a modified version over the network. See [LICENSE-EXCEPTION](LICENSE-EXCEPTION) for the exact terms.
+
+SPDX identifier: `AGPL-3.0-or-later WITH AdditionRef-HCP-Interface-Exception`
 
 ---
 

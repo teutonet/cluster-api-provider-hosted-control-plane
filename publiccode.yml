@@ -17,6 +17,10 @@ description:
       control planes as first-class Kubernetes resources.
 
 legal:
+  # An additional permission applies, see LICENSE-EXCEPTION
+  # (AGPL-3.0-or-later WITH AdditionRef-HCP-Interface-Exception). The publiccode
+  # validator only accepts SPDX-listed exceptions, so only the base license is
+  # stated here.
   license: AGPL-3.0-or-later
 
 maintenance:
