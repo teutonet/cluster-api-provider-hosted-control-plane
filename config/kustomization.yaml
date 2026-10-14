@@ -11,6 +11,7 @@ resources:
   - ./deployment.yaml
   - ./namespace.yaml
   - ./rbac.yaml
+  - ./rbac-aggregation.yaml
   - ./service.yaml
   - ./webhook-certificate.yaml
   - ../build/crds

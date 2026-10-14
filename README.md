@@ -306,6 +306,21 @@ Each provider supports:
 | `certificateAuthority` | No       | PEM-encoded CA bundle for verifying the provider's TLS certificate     |
 | `claimValidationRules` | No       | CEL expressions that must evaluate to `true` for the token to be valid |
 
+## 🔑 RBAC for Users
+
+The release manifest ships two aggregated ClusterRoles so that subjects bound to the builtin `view`, `edit` or `admin`
+ClusterRoles can access `HostedControlPlane` and `HostedControlPlaneTemplate` resources without additional RBAC:
+
+- `capi-hosted-control-plane-hostedcontrolplane-viewer` is aggregated into `view` and grants read access to
+  `hostedcontrolplanes`, `hostedcontrolplanes/status`, `hostedcontrolplanes/scale` and `hostedcontrolplanetemplates`.
+- `capi-hosted-control-plane-hostedcontrolplane-editor` is aggregated into `edit` and `admin`. It grants the same read
+  access plus write access to `hostedcontrolplanes`, `hostedcontrolplanes/scale` and `hostedcontrolplanetemplates`.
+
+`edit` and `admin` do not inherit `view`, which is why the editor role carries the read verbs as well.
+Note that write access to a `HostedControlPlane` includes the free-form component `args`, audit webhook settings and
+secret mounts, so it should be treated as privileged.
+To not ship the roles, remove `./rbac-aggregation.yaml` from `config/kustomization.yaml` or patch them out when building.
+
 ## 🎛️ Configuration
 
 ### Environment Variables
