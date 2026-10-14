@@ -2,7 +2,8 @@ name: CI
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # main runs publish the image, so a newer merge must not cancel one that is already running
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 on:
   push:
