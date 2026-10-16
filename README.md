@@ -41,6 +41,10 @@ Hosted control planes break this coupling by running control plane components as
     only with their specific control plane endpoints
   - Falls back to vanilla Kubernetes Network Policies when Cilium is not available
 
+## 🕵️‍♂️ Who is using Hosted Control Plane?
+
+Take a look at the [Adopters](ADOPTERS.md).
+
 ## 🏛️ Architecture
 
 ```mermaid
