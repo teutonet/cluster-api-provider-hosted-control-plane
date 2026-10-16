@@ -126,3 +126,23 @@ func TestReconcileCACertificates_IntermediateCertNotReady(t *testing.T) {
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(notReady).To(Equal("etcd CA certificate not ready"))
 }
+
+func TestReconcileCACertificates_KeepsPrivateKeyAcrossRenewals(t *testing.T) {
+	g, ctx, _ := G(t)
+
+	cmClient := cmfake.NewClientset(readyIssuer(names.GetRootIssuerName(bundleTestCluster)))
+	r := newCAReconciler(cmClient)
+
+	_, err := r.ReconcileCACertificates(ctx, bundleTestHCP, bundleTestCluster)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	certificates, err := cmClient.CertmanagerV1().Certificates(bundleTestHCP.Namespace).
+		List(ctx, metav1.ListOptions{})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(certificates.Items).To(HaveLen(len(caDefinitions)))
+	for _, certificate := range certificates.Items {
+		g.Expect(certificate.Spec.PrivateKey).NotTo(BeNil(), certificate.Name)
+		g.Expect(certificate.Spec.PrivateKey.RotationPolicy).
+			To(Equal(certmanagerv1.RotationPolicyNever), certificate.Name)
+	}
+}
