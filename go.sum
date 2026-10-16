@@ -73,8 +73,8 @@ github.com/cert-manager/cert-manager v1.21.2 h1:UWgoYM+KLNtRlqmoWOKjKBOBUPVHeepQ
 github.com/cert-manager/cert-manager v1.21.2/go.mod h1:cUXqp2Ki46IovJB+XpkfaFNzitQDJjyfjrCAsl5Jnns=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/cilium/cilium v1.20.2 h1:dqiEGIcXc+gqCLYG/l7VCFJ8GHyb4HUrwbZOpkX5dL8=
-github.com/cilium/cilium v1.20.2/go.mod h1:jnZg0Nd8IZNPqLcuBXOKQYABxwAqfiyeEKJL9t9bW1Y=
+github.com/cilium/cilium v1.20.3 h1:Lw1jEDHuuc7cxxa3H+79bIJ12xW16rjNCtfcVpYDbxg=
+github.com/cilium/cilium v1.20.3/go.mod h1:aecvkw/1qbGiOPfw9GbzkGDITKyijEwwWwpjEZoCjGc=
 github.com/cilium/ebpf v0.22.0 h1:v2ktp0roffpMOj2MMf3idtCQZOsAoC4BJbAJN+ke2bY=
 github.com/cilium/ebpf v0.22.0/go.mod h1:CDzZbe2hC5JjlDC+CY3KFCzlYwN4gbxppYM+Z10bQt4=
 github.com/cilium/hive v1.0.4 h1:Sw4loPv25qMnnYSA65+ybpvZMJHQuUMjQ9jcwoPmP7U=
