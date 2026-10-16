@@ -40,6 +40,19 @@
         "go.opentelemetry.io/**"
       ],
       "groupName": "OpenTelemetry modules"
+    },
+    {
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepTypes": [
+        "indirect"
+      ],
+      "matchPackageNames": [
+        "golang.org/x/**"
+      ],
+      "enabled": true,
+      "groupName": "golang.org/x modules"
     }
   ],
   "customManagers": [
