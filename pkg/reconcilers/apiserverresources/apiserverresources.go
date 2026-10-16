@@ -14,6 +14,7 @@ import (
 	stdslices "slices"
 	"strconv"
 	"strings"
+	"time"
 
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	slices "github.com/samber/lo"
@@ -47,6 +48,14 @@ import (
 const caBundleCertName = "bundle.crt"
 
 const kubeconfigFlag = "kubeconfig"
+
+const shutdownDelayDurationFlag = "shutdown-delay-duration"
+
+// kube-apiserver closes its listener within milliseconds of SIGTERM, but the endpoint slices, the load balancer and
+// the gateway need a bit more than a second to stop routing to the pod. Without a delay every rollout fails the
+// requests that are routed to a pod that no longer listens. During the delay the apiserver keeps serving (and fails
+// /readyz).
+const defaultShutdownDelayDuration = 10 * time.Second
 
 var (
 	errWebhookSecretIsMissingKey     = errors.New("webhook authentication secret is missing key")
@@ -1083,6 +1092,11 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 			args["audit-log-mode"] = mode
 			args["audit-log-path"] = "-"
 		}
+	}
+
+	// only a default: controller args win over user args, but the delay is a tuning knob users may need to change
+	if _, userSet := hostedControlPlane.Spec.Deployment.APIServer.Args[shutdownDelayDurationFlag]; !userSet {
+		args[shutdownDelayDurationFlag] = defaultShutdownDelayDuration.String()
 	}
 
 	return operatorutil.ArgsToSlice(

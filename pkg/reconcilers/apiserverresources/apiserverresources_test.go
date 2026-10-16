@@ -2,6 +2,7 @@ package apiserverresources
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	. "github.com/onsi/gomega"
@@ -296,6 +297,49 @@ func TestBuildKonnectivityServerArgs_ServerCount(t *testing.T) {
 			)
 
 			g.Expect(args).To(ContainElement(tt.expected))
+		})
+	}
+}
+
+func TestBuildAPIServerArgs_ShutdownDelay(t *testing.T) {
+	const flag = "--shutdown-delay-duration"
+
+	tests := []struct {
+		name     string
+		userArgs map[string]string
+		expected string
+	}{
+		{name: "delays the listener shutdown by default", expected: flag + "=10s"},
+		{
+			name:     "keeps a user supplied delay",
+			userArgs: map[string]string{"shutdown-delay-duration": "0s"},
+			expected: flag + "=0s",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, ctx, _ := G(t)
+			reconciler := &apiServerResourcesReconciler{}
+			hostedControlPlane := &v1alpha1.HostedControlPlane{}
+			hostedControlPlane.Spec.Deployment.APIServer.Args = tt.userArgs
+			cluster := &capiv2.Cluster{ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns", Name: "test-cluster"}}
+
+			args := reconciler.buildAPIServerArgs(
+				ctx,
+				hostedControlPlane,
+				cluster,
+				corev1ac.VolumeMount().WithMountPath("/pki"),
+				corev1ac.VolumeMount().WithMountPath("/egress"),
+				nil,
+				corev1ac.VolumeMount().WithMountPath("/authn"),
+				corev1ac.ContainerPort().WithContainerPort(6443),
+			)
+
+			shutdownDelayArgs := slices.Filter(args, func(arg string, _ int) bool {
+				return strings.HasPrefix(arg, flag)
+			})
+			g.Expect(shutdownDelayArgs).To(ConsistOf(tt.expected))
 		})
 	}
 }
