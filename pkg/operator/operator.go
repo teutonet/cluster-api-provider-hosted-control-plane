@@ -109,6 +109,8 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (retE
 		operatorConfig.MaxConcurrentReconciles,
 		operatorConfig.ControllerNamespace,
 		operatorConfig.ReconcileFilter,
+		operatorConfig.CACertificateDuration,
+		operatorConfig.CertificateDuration,
 		tracerProvider, tracingWrapper,
 	); err != nil {
 		return err
