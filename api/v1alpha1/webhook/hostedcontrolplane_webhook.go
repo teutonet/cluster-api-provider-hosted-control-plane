@@ -49,6 +49,11 @@ func NewHostedControlPlaneWebhook(
 
 var _ admission.Validator[*v1alpha1.HostedControlPlane] = &hostedControlPlaneWebhook{}
 
+// invalid wraps the Invalid StatusError with %w, controller-runtime unwraps it via errors.As to build the response.
+func (w *hostedControlPlaneWebhook) invalid(name string, fieldErrs field.ErrorList) error {
+	return fmt.Errorf("invalid %s: %w", w.groupKind.Kind, apierrors.NewInvalid(w.groupKind, name, fieldErrs))
+}
+
 func (w *hostedControlPlaneWebhook) ValidateCreate(
 	ctx context.Context,
 	newHostedControlPlane *v1alpha1.HostedControlPlane,
@@ -100,7 +105,7 @@ func (w *hostedControlPlaneWebhook) ValidateCreate(
 	}
 
 	if len(fieldErrs) > 0 {
-		return warnings, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, fieldErrs)
+		return warnings, w.invalid(newHostedControlPlane.Name, fieldErrs)
 	}
 
 	return warnings, nil
@@ -127,7 +132,7 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 ) (admission.Warnings, error) {
 	oldVersion, fieldErr := w.parseVersion(oldHostedControlPlane)
 	if fieldErr != nil {
-		return nil, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{fieldErr})
+		return nil, w.invalid(newHostedControlPlane.Name, field.ErrorList{fieldErr})
 	}
 
 	// ignore fieldErr because we're going to validate the whole object anyway.
@@ -138,7 +143,7 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 	}
 
 	if version.Compare(*newVersion, *oldVersion, version.WithBuildTags()) == -1 {
-		return warnings, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{field.Invalid(
+		return warnings, w.invalid(newHostedControlPlane.Name, field.ErrorList{field.Invalid(
 			w.specPath.Child("version"),
 			newHostedControlPlane.Spec.Version,
 			fmt.Sprintf("version cannot be decreased from %q to %q", oldVersion, newVersion),
@@ -149,8 +154,7 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 		newHostedControlPlane.Spec.ETCD.VolumeSize != nil {
 		if oldHostedControlPlane.Spec.ETCD.AutoGrowEnabled() &&
 			newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(oldHostedControlPlane.Status.ETCDVolumeSize) == -1 {
-			return warnings, apierrors.NewInvalid(
-				w.groupKind,
+			return warnings, w.invalid(
 				newHostedControlPlane.Name,
 				field.ErrorList{field.Invalid(
 					w.specPath.Child("etcd").Child("volumeSize"),
@@ -164,7 +168,7 @@ func (w *hostedControlPlaneWebhook) ValidateUpdate(
 			)
 		} else if oldHostedControlPlane.Spec.ETCD.VolumeSize != nil &&
 			newHostedControlPlane.Spec.ETCD.VolumeSize.Cmp(*oldHostedControlPlane.Spec.ETCD.VolumeSize) == -1 {
-			return warnings, apierrors.NewInvalid(w.groupKind, newHostedControlPlane.Name, field.ErrorList{field.Invalid(
+			return warnings, w.invalid(newHostedControlPlane.Name, field.ErrorList{field.Invalid(
 				w.specPath.Child("etcd").Child("volumeSize"),
 				newHostedControlPlane.Spec.ETCD.VolumeSize,
 				fmt.Sprintf(
