@@ -250,11 +250,13 @@ func (cr *certificateReconciler) createCertificateSpec(
 		certmanagerv1.UsageDigitalSignature,
 	}
 	usages = append(usages, additionalUsages...)
+	spec := certmanagerv1ac.CertificateSpec()
 	if isCA {
 		usages = append(usages, certmanagerv1.UsageCertSign)
+		spec = spec.WithPrivateKey(stablePrivateKey())
 	}
 
-	return certmanagerv1ac.CertificateSpec().
+	return spec.
 		WithSecretName(secretName).
 		WithIssuerRef(certmanagermetav1ac.IssuerReference().
 			WithKind(certmanagerv1.IssuerKind).
@@ -265,6 +267,14 @@ func (cr *certificateReconciler) createCertificateSpec(
 		WithCommonName(commonName).
 		WithDuration(metav1.Duration{Duration: slices.Ternary(isCA, cr.caCertificateDuration, cr.certificateDuration)}).
 		WithRenewBeforePercentage(cr.certificateRenewBefore)
+}
+
+// stablePrivateKey keeps the private key across renewals. cert-manager >= v1.18 defaults to rotating it.
+// The service account key (no overlap between old and new public key) and the CA keys (leaf certificates
+// issued by the previous key must stay valid) must not change on every renewal.
+func stablePrivateKey() *certmanagerv1ac.CertificatePrivateKeyApplyConfiguration {
+	return certmanagerv1ac.CertificatePrivateKey().
+		WithRotationPolicy(certmanagerv1.RotationPolicyNever)
 }
 
 func (cr *certificateReconciler) createCertificateSpecs(
@@ -343,7 +353,7 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				names.GetCAIssuerName(cluster),
 				"service-account",
 				names.GetServiceAccountSecretName(cluster),
-			),
+			).WithPrivateKey(stablePrivateKey()),
 		},
 		names.GetAdminCertificateName(cluster): {
 			kind: "Admin",
