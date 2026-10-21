@@ -1,0 +1,41 @@
+Additional permission under section 7 of the GNU Affero General Public
+License version 3
+
+This is an additional permission under section 7 of the GNU Affero General
+Public License version 3 (the "License") for the Cluster API Control Plane
+Provider for Hosted Control Planes (the "Program"). It is granted in addition
+to the License, which is in the file LICENSE.
+
+SPDX identifier: AGPL-3.0-or-later WITH AdditionRef-HCP-Interface-Exception
+
+1. Interfaces. "Interfaces" means the following parts of the Program, in
+   unmodified form:
+   (a) the CustomResourceDefinitions the Program defines, in any API
+       version (including HostedControlPlane and HostedControlPlaneTemplate
+       of the API group controlplane.cluster.x-k8s.io), and their schemas;
+   (b) the Go packages of the Program that only declare the types and
+       constants of those resources, in any API version, but not code that
+       implements behaviour, such as webhooks, controllers or reconcilers;
+   (c) the command line flags, configuration, and metrics endpoints of the
+       Program.
+
+2. Independent works. A work that interacts with the Program only through
+   the Interfaces, including by creating, reading or watching resources
+   defined in 1(a) or by importing the unmodified packages in 1(b), and that
+   contains no other source code of the Program, is an independent work. It
+   is not a covered work under the License and may be licensed in any way,
+   including proprietary terms.
+
+3. Output. Resources the Program creates or manages at runtime (including
+   Deployments, Services and Secrets), the Kubernetes clusters they form, and
+   anything running in or on those clusters, are not covered works merely
+   because the Program created or manages them.
+
+4. Modifications stay covered. This permission does not apply to any
+   modification of the Program. A modified version of the Program, including
+   any change to the files that implement the Interfaces, or any work
+   containing source code of the Program beyond the Interfaces, remains a
+   covered work. It must be conveyed under the License together with this
+   additional permission, including the Corresponding Source obligations and
+   section 13, so that users interacting with it remotely through a network
+   are offered its Corresponding Source.

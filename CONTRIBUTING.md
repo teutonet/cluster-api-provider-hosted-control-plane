@@ -18,6 +18,7 @@ with testing and feedback. This guide will help you get started with the develop
 - [🏗️ Architecture Overview](#️-architecture-overview)
 - [🚢 Release Process](#-release-process)
 - [❓ Getting Help](#-getting-help)
+- [📄 License and Upstreaming](#-license-and-upstreaming)
 - [🙏 Recognition](#-recognition)
 
 ## 🤝 Code of Conduct
@@ -361,6 +362,16 @@ Releases are handled by maintainers, but contributors should be aware of:
 - **GitHub Issues**: For bug reports and feature requests
 - **GitHub Discussions**: For questions and community discussion  
 - **Code Review**: Maintainers will provide feedback on PRs
+
+## 📄 License and Upstreaming
+
+This project is licensed under AGPL-3.0-or-later with an additional permission for software that only uses its
+Kubernetes resources and API types, see [LICENSE-EXCEPTION](LICENSE-EXCEPTION). By contributing you agree that your
+contribution is licensed under the same terms.
+
+If you modify this project, the license requires you to keep your modified version open source. We ask you to go one
+step further and upstream your changes as a pull request instead of maintaining a fork. Everybody, including you,
+benefits from a single maintained version.
 
 ## 🙏 Recognition
 
