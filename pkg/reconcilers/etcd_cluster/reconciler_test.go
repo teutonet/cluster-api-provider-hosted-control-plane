@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	clocktesting "k8s.io/utils/clock/testing"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
 	. "github.com/onsi/gomega"
@@ -540,7 +541,10 @@ func TestEtcdClusterReconciler_etcdIsHealthy(t *testing.T) {
 }
 
 func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
-	yesterday := metav1.Time{Time: time.Now().Add(-25 * time.Hour)}
+	// Pinned to midday so "0 2 * * *" can never fire between an hour ago and now, whatever the wall clock says.
+	now := time.Date(2026, time.October, 28, 12, 0, 0, 0, time.UTC)
+	fakeClock := clocktesting.NewFakePassiveClock(now)
+	yesterday := metav1.Time{Time: now.Add(-25 * time.Hour)}
 	cronAt2AM := "0 2 * * *"
 
 	t.Run("should create snapshot and upload to S3 when scheduled", func(t *testing.T) {
@@ -565,6 +569,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		g, ctx, returningFakeRecorder := G(t, hcp)
 
 		reconciler := &etcdClusterReconciler{
+			clock:             fakeClock,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -605,11 +610,12 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 				},
 			},
 			Status: v1alpha1.HostedControlPlaneStatus{
-				ETCDLastBackupTime: metav1.Time{Time: time.Now().Add(-1 * time.Hour)},
+				ETCDLastBackupTime: metav1.Time{Time: now.Add(-1 * time.Hour)},
 			},
 		}
 
 		reconciler := &etcdClusterReconciler{
+			clock:             fakeClock,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -623,6 +629,44 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(s3ClientStub.LastUploadedBody).To(BeEmpty())
+	})
+
+	t.Run("should create backup once the schedule time has passed since the last backup", func(t *testing.T) {
+		g, ctx, _ := G(t)
+		etcdClientStub := NewEtcdClientStub()
+		s3ClientStub := NewS3ClientStub()
+
+		afterSchedule := time.Date(2026, time.October, 28, 2, 30, 0, 0, time.UTC)
+		hcp := &v1alpha1.HostedControlPlane{
+			Spec: v1alpha1.HostedControlPlaneSpec{
+				HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+					ETCD: v1alpha1.ETCDComponent{
+						Backup: &v1alpha1.ETCDBackup{
+							Schedule: cronAt2AM,
+						},
+					},
+				},
+			},
+			Status: v1alpha1.HostedControlPlaneStatus{
+				ETCDLastBackupTime: metav1.Time{Time: afterSchedule.Add(-1 * time.Hour)},
+			},
+		}
+
+		reconciler := &etcdClusterReconciler{
+			clock: clocktesting.NewFakePassiveClock(afterSchedule),
+			s3ClientFactory: func(
+				context.Context, *alias.ManagementClusterClient,
+				*v1alpha1.HostedControlPlane, *capiv2.Cluster,
+			) (s3_client.S3Client, error) {
+				return s3ClientStub, nil
+			},
+		}
+
+		err := reconciler.reconcileETCDBackup(ctx, etcdClientStub, hcp, nil)
+
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(s3ClientStub.LastUploadedBody).To(Equal(EtcdSnapshotData))
+		g.Expect(hcp.Status.ETCDLastBackupTime.Time).To(BeTemporally("==", afterSchedule))
 	})
 
 	t.Run("should handle etcd snapshot creation failure", func(t *testing.T) {
@@ -647,6 +691,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
+			clock:             fakeClock,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -684,6 +729,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
+			clock:             fakeClock,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -720,6 +766,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
+			clock:             fakeClock,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -762,6 +809,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
+			clock:             fakeClock,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -804,6 +852,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
+			clock:             fakeClock,
 			etcdClientFactory: nil,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -840,6 +889,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
+			clock:            fakeClock,
 			watchdogInterval: 10 * time.Millisecond,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,
@@ -876,6 +926,7 @@ func TestEtcdClusterReconciler_reconcileETCDBackup(t *testing.T) {
 		}
 
 		reconciler := &etcdClusterReconciler{
+			clock:            fakeClock,
 			watchdogInterval: 10 * time.Millisecond,
 			s3ClientFactory: func(
 				context.Context, *alias.ManagementClusterClient,

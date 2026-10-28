@@ -38,6 +38,7 @@ import (
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
@@ -95,6 +96,7 @@ func NewEtcdClusterReconciler(
 		apiServerComponentLabel:    apiServerComponentLabel,
 		controllerComponent:        systemControllerComponent,
 		watchdogInterval:           1 * time.Minute,
+		clock:                      clock.RealClock{},
 	}
 }
 
@@ -111,6 +113,7 @@ type etcdClusterReconciler struct {
 	apiServerComponentLabel    string
 	controllerComponent        string
 	watchdogInterval           time.Duration
+	clock                      clock.PassiveClock
 }
 
 var _ EtcdClusterReconciler = &etcdClusterReconciler{}
@@ -352,7 +355,7 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 			}
 
 			lastBackupTime := hostedControlPlane.Status.ETCDLastBackupTime
-			if lastBackupTime.IsZero() || resolvedSchedule.Next(lastBackupTime.Time).Before(time.Now()) {
+			if lastBackupTime.IsZero() || resolvedSchedule.Next(lastBackupTime.Time).Before(er.clock.Now()) {
 				ctx, cancel := context.WithCancelCause(ctx)
 				defer cancel(nil)
 				watchdog := time.AfterFunc(er.watchdogInterval, func() {
@@ -373,7 +376,7 @@ func (er *etcdClusterReconciler) reconcileETCDBackup(
 					return fmt.Errorf("failed to upload etcd snapshot to S3: %w", errors.Join(err, context.Cause(ctx)))
 				}
 
-				hostedControlPlane.Status.ETCDLastBackupTime = metav1.NewTime(time.Now())
+				hostedControlPlane.Status.ETCDLastBackupTime = metav1.NewTime(er.clock.Now())
 				hostedControlPlane.Status.ETCDNextBackupTime = metav1.NewTime(
 					resolvedSchedule.Next(hostedControlPlane.Status.ETCDLastBackupTime.Time),
 				)
