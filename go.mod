@@ -41,7 +41,7 @@ require (
 	k8s.io/component-base v0.37.1
 	k8s.io/kube-proxy v0.37.1
 	k8s.io/kubelet v0.37.1
-	k8s.io/kubernetes v1.37.1
+	k8s.io/kubernetes v1.37.2
 	k8s.io/utils v0.0.0-20261023123148-ca04ba58ecab
 	sigs.k8s.io/cluster-api v1.14.3
 	sigs.k8s.io/cluster-api/api v1.14.3
