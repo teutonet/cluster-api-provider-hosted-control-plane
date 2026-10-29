@@ -764,7 +764,11 @@ func (arr *apiServerResourcesReconciler) ReconcileApiServerService(
 			} else if !ready {
 				return "Api Server Service is waiting on its IP", nil
 			} else {
-				hostedControlPlane.Status.LegacyIP = service.Status.LoadBalancer.Ingress[0].IP
+				legacyIP, err := loadBalancerIP(service)
+				if err != nil {
+					return "", err
+				}
+				hostedControlPlane.Status.LegacyIP = legacyIP
 			}
 
 			return "", nil
@@ -1646,4 +1650,18 @@ func (arr *apiServerResourcesReconciler) getAuditWebhookAuthenticationToken(
 		)
 	}
 	return token, nil
+}
+
+func loadBalancerIP(service *corev1.Service) (string, error) {
+	var ips, hostnames []string
+	for _, ingress := range service.Status.LoadBalancer.Ingress {
+		ips = append(ips, ingress.IP)
+		hostnames = append(hostnames, ingress.Hostname)
+	}
+
+	addresses, err := operatorutil.ResolveAddresses(ips, hostnames)
+	if err != nil {
+		return "", fmt.Errorf("load balancer of service %s/%s: %w", service.Namespace, service.Name, err)
+	}
+	return addresses[0].String(), nil
 }

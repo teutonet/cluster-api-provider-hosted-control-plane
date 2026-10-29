@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/netip"
 	"path"
 	"strconv"
 
@@ -26,6 +27,8 @@ import (
 	rbacv1ac "k8s.io/client-go/applyconfigurations/rbac/v1"
 	serviceaccountAdmission "k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
 
 type KonnectivityReconciler interface {
@@ -39,6 +42,7 @@ type KonnectivityReconciler interface {
 func NewKonnectivityReconciler(
 	managementClusterClient *alias.WorkloadClusterClient,
 	ciliumClient ciliumclient.Interface,
+	gatewayClient gwclient.Interface,
 	konnectivityNamespace string,
 	konnectivityServiceAccount string,
 	konnectivityServerAudience string,
@@ -50,6 +54,7 @@ func NewKonnectivityReconciler(
 			CiliumClient:          ciliumClient,
 			Tracer:                tracing.GetTracer("konnectivity"),
 		},
+		gatewayClient:                       gatewayClient,
 		konnectivityServerAudience:          konnectivityServerAudience,
 		konnectivityServicePort:             konnectivityServicePort,
 		konnectivityNamespace:               konnectivityNamespace,
@@ -60,6 +65,7 @@ func NewKonnectivityReconciler(
 
 type konnectivityReconciler struct {
 	reconcilers.WorkloadResourceReconciler
+	gatewayClient                       gwclient.Interface
 	konnectivityNamespace               string
 	konnectivityServerAudience          string
 	konnectivityServicePort             int32
@@ -240,46 +246,31 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDeployment(
 				WithContainerPort(8134).
 				WithProtocol(corev1.ProtocolTCP)
 
-			minorVersion, err := operatorutil.GetMinorVersion(hostedControlPlane)
+			container, err := kr.newKonnectivityContainer(
+				ctx,
+				hostedControlPlane,
+				cluster,
+				serviceAccountTokenVolumeMount,
+				healthPort,
+			)
 			if err != nil {
-				return "", fmt.Errorf("failed to get minor version of hosted control plane: %w", err)
+				return "", err
 			}
-
-			container := corev1ac.Container().
-				WithName("konnectivity-agent").
-				WithImage(operatorutil.ResolveKonnectivityImage(
-					hostedControlPlane.Spec.KonnectivityClient.Image,
-					"proxy-agent",
-					minorVersion,
-				)).
-				WithImagePullPolicy(hostedControlPlane.Spec.KonnectivityClient.ImagePullPolicyOrDefault()).
-				WithArgs(kr.buildKonnectivityClientArgs(
-					ctx,
-					hostedControlPlane,
-					cluster,
-					serviceAccountTokenVolumeMount,
-					healthPort,
-				)...).
-				WithEnv(corev1ac.EnvVar().
-					WithName("NODE_NAME").
-					WithValueFrom(corev1ac.EnvVarSource().
-						WithFieldRef(corev1ac.ObjectFieldSelector().
-							WithFieldPath("spec.nodeName"),
-						),
-					),
-				).
-				WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
-					hostedControlPlane.Spec.KonnectivityClient.Resources,
-				)).
-				WithStartupProbe(operatorutil.CreateStartupProbe(healthPort, "/readyz", corev1.URISchemeHTTP)).
-				WithReadinessProbe(operatorutil.CreateReadinessProbe(healthPort, "/readyz", corev1.URISchemeHTTP)).
-				WithLivenessProbe(operatorutil.CreateLivenessProbe(healthPort, "/healthz", corev1.URISchemeHTTP)).
-				WithPorts(healthPort).
-				WithVolumeMounts(serviceAccountTokenVolumeMount)
 
 			nodes, err := kr.WorkloadClusterClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 			if err != nil {
 				return "", fmt.Errorf("failed to list nodes: %w", err)
+			}
+
+			gateway, err := kr.gatewayClient.GatewayV1().
+				Gateways(hostedControlPlane.Spec.Gateway.Namespace).
+				Get(ctx, hostedControlPlane.Spec.Gateway.Name, metav1.GetOptions{})
+			if err != nil {
+				return "", fmt.Errorf("failed to get gateway: %w", err)
+			}
+			gatewayAddresses, err := gatewayIPs(gateway)
+			if err != nil {
+				return "", err
 			}
 
 			_, ready, err := kr.ReconcileDeployment(
@@ -293,27 +284,10 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDeployment(
 						float64(hostedControlPlane.Spec.KonnectivityClient.ReplicaCount(2)),
 					),
 				),
-				reconcilers.PodOptions{
-					ServiceAccountName: kr.konnectivityServiceAccountName,
-					PriorityClassName:  "system-cluster-critical",
-					Tolerations: []*corev1ac.TolerationApplyConfiguration{
-						corev1ac.Toleration().
-							WithKey("CriticalAddonsOnly").
-							WithOperator(corev1.TolerationOpExists),
-					},
-				},
+				konnectivityPodOptions(kr.konnectivityServiceAccountName),
 				names.GetControlPlaneLabels(cluster, "konnectivity"),
 				map[int32][]networkpolicy.IngressNetworkPolicyTarget{},
-				map[int32][]networkpolicy.EgressNetworkPolicyTarget{
-					0: { // needs to proxy to any port in the whole cluster
-						networkpolicy.NewClusterNetworkPolicyTarget(),
-					},
-					kr.konnectivityServicePort: {
-						networkpolicy.NewDNSNetworkPolicyTarget(
-							names.GetKonnectivityServerHost(cluster),
-						),
-					},
-				},
+				konnectivityEgressTargets(kr.konnectivityServicePort, gatewayAddresses),
 				[]slices.Tuple2[*corev1ac.ContainerApplyConfiguration, reconcilers.ContainerOptions]{
 					slices.T2(container, reconcilers.ContainerOptions{
 						NeedsServiceAccount: true,
@@ -369,4 +343,107 @@ func (kr *konnectivityReconciler) buildKonnectivityClientArgs(
 		hostedControlPlane.Spec.KonnectivityClient.Args,
 		args,
 	)
+}
+
+func konnectivityPodOptions(serviceAccountName string) reconcilers.PodOptions {
+	return reconcilers.PodOptions{
+		ServiceAccountName: serviceAccountName,
+		PriorityClassName:  "system-cluster-critical",
+		// The agent only needs the external konnectivity hostname, so it resolves it through the node resolver
+		// instead of CoreDNS: otherwise a broken CoreDNS keeps the agents from reconnecting, which in turn breaks
+		// everything that needs the tunnel (logs, exec, aggregated APIs) while CoreDNS is the thing to be debugged.
+		DNSPolicy: corev1.DNSDefault,
+		Tolerations: []*corev1ac.TolerationApplyConfiguration{
+			corev1ac.Toleration().
+				WithKey("CriticalAddonsOnly").
+				WithOperator(corev1.TolerationOpExists),
+		},
+	}
+}
+
+func konnectivityEgressTargets(
+	konnectivityServicePort int32,
+	gatewayIPs []netip.Addr,
+) map[int32][]networkpolicy.EgressNetworkPolicyTarget {
+	return map[int32][]networkpolicy.EgressNetworkPolicyTarget{
+		0: { // needs to proxy to any port in the whole cluster
+			networkpolicy.NewClusterNetworkPolicyTarget(),
+		},
+		// The node resolver is outside the cluster, same as for CoreDNS itself.
+		53: {
+			networkpolicy.NewWorldNetworkPolicyTarget(),
+		},
+		// A FQDN rule can't be used here: Cilium only learns the addresses from DNS answers it proxied, and the
+		// agent no longer asks the kube-dns pods, so the gateway's addresses are pinned instead.
+		konnectivityServicePort: slices.Map(gatewayIPs,
+			func(ip netip.Addr, _ int) networkpolicy.EgressNetworkPolicyTarget {
+				return networkpolicy.NewCIDRNetworkPolicyTarget(netip.PrefixFrom(ip, ip.BitLen()).String())
+			},
+		),
+	}
+}
+
+// gatewayIPs returns the addresses the gateway is reachable on.
+func gatewayIPs(gateway *gwv1.Gateway) ([]netip.Addr, error) {
+	var ips, hostnames []string
+	for _, address := range gateway.Status.Addresses {
+		switch {
+		case address.Type == nil || *address.Type == gwv1.IPAddressType:
+			ips = append(ips, address.Value)
+		case *address.Type == gwv1.HostnameAddressType:
+			hostnames = append(hostnames, address.Value)
+		}
+	}
+
+	addresses, err := operatorutil.ResolveAddresses(ips, hostnames)
+	if err != nil {
+		return nil, fmt.Errorf("gateway %s/%s: %w", gateway.Namespace, gateway.Name, err)
+	}
+	return addresses, nil
+}
+
+func (kr *konnectivityReconciler) newKonnectivityContainer(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv2.Cluster,
+	serviceAccountTokenVolumeMount *corev1ac.VolumeMountApplyConfiguration,
+	healthPort *corev1ac.ContainerPortApplyConfiguration,
+) (*corev1ac.ContainerApplyConfiguration, error) {
+	minorVersion, err := operatorutil.GetMinorVersion(hostedControlPlane)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get minor version of hosted control plane: %w", err)
+	}
+
+	return corev1ac.Container().
+		WithName("konnectivity-agent").
+		WithTerminationMessagePolicy(corev1.TerminationMessageFallbackToLogsOnError).
+		WithImage(operatorutil.ResolveKonnectivityImage(
+			hostedControlPlane.Spec.KonnectivityClient.Image,
+			"proxy-agent",
+			minorVersion,
+		)).
+		WithImagePullPolicy(hostedControlPlane.Spec.KonnectivityClient.ImagePullPolicyOrDefault()).
+		WithArgs(kr.buildKonnectivityClientArgs(
+			ctx,
+			hostedControlPlane,
+			cluster,
+			serviceAccountTokenVolumeMount,
+			healthPort,
+		)...).
+		WithEnv(corev1ac.EnvVar().
+			WithName("NODE_NAME").
+			WithValueFrom(corev1ac.EnvVarSource().
+				WithFieldRef(corev1ac.ObjectFieldSelector().
+					WithFieldPath("spec.nodeName"),
+				),
+			),
+		).
+		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
+			hostedControlPlane.Spec.KonnectivityClient.Resources,
+		)).
+		WithStartupProbe(operatorutil.CreateStartupProbe(healthPort, "/readyz", corev1.URISchemeHTTP)).
+		WithReadinessProbe(operatorutil.CreateReadinessProbe(healthPort, "/readyz", corev1.URISchemeHTTP)).
+		WithLivenessProbe(operatorutil.CreateLivenessProbe(healthPort, "/healthz", corev1.URISchemeHTTP)).
+		WithPorts(healthPort).
+		WithVolumeMounts(serviceAccountTokenVolumeMount), nil
 }

@@ -22,6 +22,7 @@ import (
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/conditions"
+	gwclient "sigs.k8s.io/gateway-api/pkg/client/clientset/versioned"
 )
 
 type WorkloadClusterReconciler interface {
@@ -41,6 +42,7 @@ type WorkloadClusterReconciler interface {
 
 func NewWorkloadClusterReconciler(
 	managementClusterClient *alias.ManagementClusterClient,
+	gatewayClient gwclient.Interface,
 	workloadClusterClientFactory WorkloadClusterClientFactory,
 	caCertificateDuration time.Duration,
 	certificateDuration time.Duration,
@@ -55,6 +57,7 @@ func NewWorkloadClusterReconciler(
 ) WorkloadClusterReconciler {
 	return &workloadClusterReconciler{ //nolint:gosec // service account names, not credentials
 		managementClusterClient:             managementClusterClient,
+		gatewayClient:                       gatewayClient,
 		workloadClusterClientFactory:        workloadClusterClientFactory,
 		caCertificateDuration:               caCertificateDuration,
 		certificateDuration:                 certificateDuration,
@@ -79,6 +82,7 @@ func NewWorkloadClusterReconciler(
 
 type workloadClusterReconciler struct {
 	managementClusterClient             *alias.ManagementClusterClient
+	gatewayClient                       gwclient.Interface
 	workloadClusterClientFactory        WorkloadClusterClientFactory
 	caCertificateDuration               time.Duration
 	certificateDuration                 time.Duration
@@ -184,6 +188,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 			konnectivityReconciler := konnectivity.NewKonnectivityReconciler(
 				workloadClusterClient,
 				workloadClusterCiliumClient,
+				wr.gatewayClient,
 				wr.konnectivityNamespace,
 				wr.konnectivityServiceAccount,
 				wr.konnectivityServerAudience,

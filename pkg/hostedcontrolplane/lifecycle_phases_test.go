@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	auditv1 "k8s.io/apiserver/pkg/apis/audit/v1"
@@ -41,6 +42,7 @@ import (
 	v2 "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/cluster-bootstrap/token/api"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/pkg/controller/certificates/rootcacertpublisher"
@@ -214,6 +216,11 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 				},
 			},
 		},
+		Status: gwv1.GatewayStatus{
+			Addresses: []gwv1.GatewayStatusAddress{
+				{Type: new(gwv1.IPAddressType), Value: "192.0.2.10"},
+			},
+		},
 	}
 
 	k8sClient := fakeClient.NewClientBuilder().
@@ -232,6 +239,10 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 	var workloadClusterCiliumClient cmclient.Interface = nil
 	certManagerclient := certmanagerfake.NewClientset()
 	gatewayInterface := gwfake.NewClientset()
+	// NewClientset(gateway) guesses the wrong resource (gatewaies), so serve it through a reactor
+	gatewayInterface.PrependReactor("get", "gateways", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, gateway, nil
+	})
 	etcdClient := &EtcdClientStub{
 		StatusError: errors.New("statefulset offline"),
 		AlarmError:  errors.New("statefulset offline"),
