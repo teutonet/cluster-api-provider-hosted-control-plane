@@ -15,6 +15,8 @@ import (
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/go-logr/logr"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	monitoringclient "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
@@ -30,6 +32,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/etcd_cluster/volume_stats"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/infrastructure_cluster"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/kubeconfig"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/monitoring"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/node_rotation"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/tlsroutes"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/workload"
@@ -73,6 +76,7 @@ func NewHostedControlPlaneReconciler(
 	managementClusterClient *alias.ManagementClusterClient,
 	certManagerClient cmclient.Interface,
 	gatewayClient gwclient.Interface,
+	monitoringClient monitoringclient.Interface,
 	ciliumClientFactory func(ctx context.Context) (ciliumclient.Interface, error),
 	workloadClusterClientFactory func(
 		ctx context.Context,
@@ -92,6 +96,7 @@ func NewHostedControlPlaneReconciler(
 		managementClusterClient:        managementClusterClient,
 		certManagerClient:              certManagerClient,
 		gatewayClient:                  gatewayClient,
+		monitoringClient:               monitoringClient,
 		etcdClientFactory:              etcdClientFactory,
 		s3ClientFactory:                s3ClientFactory,
 		volumeStatsProvider:            volumeStatsProvider,
@@ -127,6 +132,7 @@ type hostedControlPlaneReconciler struct {
 	managementClusterClient      *alias.ManagementClusterClient
 	certManagerClient            cmclient.Interface
 	gatewayClient                gwclient.Interface
+	monitoringClient             monitoringclient.Interface
 	etcdClientFactory            etcd_client.EtcdClientFactory
 	s3ClientFactory              s3_client.S3ClientFactory
 	volumeStatsProvider          volume_stats.EtcdVolumeStatsProvider
@@ -477,7 +483,10 @@ func (r *hostedControlPlaneReconciler) patch(
 				})
 			applicableConditions := slices.FilterMap(hostedControlPlane.Status.Conditions,
 				func(condition metav1.Condition, _ int) (string, bool) {
-					if !slices.Contains([]string{capiv2.ReadyCondition, capiv2.PausedCondition}, condition.Type) &&
+					if !slices.Contains(
+						[]string{capiv2.ReadyCondition, capiv2.PausedCondition, v1alpha1.MonitoringReadyCondition},
+						condition.Type,
+					) &&
 						!strings.HasPrefix(condition.Type, "Workload") {
 						return condition.Type, true
 					} else {
@@ -609,6 +618,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 			}
 
 			var ciliumClient ciliumclient.Interface
+			var monitoringClient monitoringclient.Interface
 
 			groups, err := r.managementClusterClient.Discovery().ServerGroups()
 			if err != nil {
@@ -622,6 +632,16 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 					return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to create cilium client: %w", err)
 				}
 			}
+			if slices.SomeBy(groups.Groups, func(group metav1.APIGroup) bool {
+				return group.Name == monitoringv1.SchemeGroupVersion.Group
+			}) {
+				monitoringClient = r.monitoringClient
+			}
+
+			monitoringTarget, err := monitoring.Resolve(ctx, monitoringClient, hostedControlPlane)
+			if err != nil {
+				return ctrl.Result{}, errorsUtil.IfErrErrorf("failed to resolve monitoring: %w", err)
+			}
 
 			certificateReconciler := certificates.NewCertificateReconciler(
 				r.certManagerClient,
@@ -631,6 +651,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				hostedControlPlane.Spec.Certificates.CACertificateDurationOrDefault(),
 				r.certificatesDuration,
 				r.konnectivityServerAudience,
+				monitoringTarget.Enabled,
 			)
 			kubeconfigReconciler := kubeconfig.NewKubeconfigReconciler(
 				r.managementClusterClient,
@@ -669,6 +690,12 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.konnectivityClientUsername,
 				r.konnectivityServerAudience,
 			)
+			monitoringReconciler := monitoring.NewMonitoringReconciler(
+				monitoringClient,
+				r.apiServerComponentLabel,
+				r.apiServerServicePort,
+				monitoring.KonnectivityAgentComponent,
+			)
 			tlsRoutesReconciler := tlsroutes.NewTLSRoutesReconciler(
 				r.gatewayClient,
 				r.apiServerServicePort,
@@ -698,6 +725,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.konnectivityServiceAccount,
 				r.konnectivityServerAudience,
 				r.apiServerServicePort,
+				monitoringTarget.Enabled,
 			)
 
 			phases := []Phase{
@@ -859,6 +887,34 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 						Message: fmt.Sprintf("Management phase %s reconciled successfully", phase.Name),
 					})
 				}
+			}
+
+			// not part of the phases, as monitoring must never block anything, it only surfaces its state
+			if err := monitoringReconciler.ReconcileMonitoring(
+				ctx, hostedControlPlane, cluster, monitoringTarget,
+			); err != nil {
+				conditions.Set(hostedControlPlane, metav1.Condition{
+					Type:    v1alpha1.MonitoringReadyCondition,
+					Status:  metav1.ConditionFalse,
+					Reason:  v1alpha1.MonitoringFailedReason,
+					Message: fmt.Sprintf("Reconciling monitoring failed: %v", err),
+				})
+				return reconcile.Result{}, fmt.Errorf("failed to reconcile monitoring: %w", err)
+			}
+			if monitoringTarget.NotReadyReason != "" {
+				conditions.Set(hostedControlPlane, metav1.Condition{
+					Type:    v1alpha1.MonitoringReadyCondition,
+					Status:  metav1.ConditionFalse,
+					Reason:  monitoringTarget.NotReadyReason,
+					Message: "Monitoring is not set up: " + monitoringTarget.NotReadyMessage,
+				})
+			} else {
+				conditions.Set(hostedControlPlane, metav1.Condition{
+					Type:    v1alpha1.MonitoringReadyCondition,
+					Status:  metav1.ConditionTrue,
+					Reason:  "ReconcileSucceeded",
+					Message: "Monitoring reconciled successfully",
+				})
 			}
 
 			return ctrl.Result{

@@ -78,6 +78,35 @@ type HostedControlPlaneInlineSpec struct {
 	OIDCProviders map[string]OIDCProvider `json:"oidcProviders,omitempty"`
 	//+kubebuilder:validation:Optional
 	Certificates CertificatesSpec `json:"certificates,omitempty"`
+	//+kubebuilder:validation:Optional
+	Monitoring MonitoringSpec `json:"monitoring,omitempty"`
+}
+
+// MonitoringSpec configures how the components we run for the cluster are monitored.
+type MonitoringSpec struct {
+	// Prometheus configures the scraping of konnectivity (server, and agent in the workload cluster) and CoreDNS by a
+	// Prometheus managed by the Prometheus Operator. Enabled by default if the Prometheus Operator CRDs are installed.
+	// The metrics carry the labels `capi_cluster_name` and `capi_cluster_namespace`.
+	// If the CRDs are missing or no Prometheus can be determined, the `MonitoringReady` condition says so,
+	// nothing else is blocked.
+	//+kubebuilder:validation:Optional
+	Prometheus *PrometheusSpec `json:"prometheus,omitempty"`
+}
+
+// PrometheusSpec selects the Prometheus that scrapes the components. If monitorLabels is not set and there is exactly
+// one Prometheus in the management cluster, the labels are derived from its monitor selectors.
+type PrometheusSpec struct {
+	// Disabled turns off the monitoring resources.
+	//+kubebuilder:validation:Optional
+	Disabled *bool `json:"disabled,omitempty"`
+	// MonitorLabels are put on the PodMonitor and ScrapeConfigs, so the Prometheus selects them
+	// (`podMonitorSelector`, `scrapeConfigSelector`). Required if there is not exactly one Prometheus.
+	//+kubebuilder:validation:Optional
+	MonitorLabels map[string]string `json:"monitorLabels,omitempty"`
+}
+
+func (p *PrometheusSpec) IsDisabled() bool {
+	return p != nil && p.Disabled != nil && *p.Disabled
 }
 
 // CertificatesSpec configures the durations of CA certificates managed by cert-manager.
