@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
@@ -380,4 +381,44 @@ func TestReconcileApiServerService_KonnectivityServicePublishesNotReadyAddresses
 	g.Expect(konnectivityService.Spec.Ports).To(ConsistOf(
 		HaveField("Port", int32(8132)),
 	))
+}
+
+func TestLoadBalancerIP(t *testing.T) {
+	ingress := func(ip string, hostname string) corev1.LoadBalancerIngress {
+		return corev1.LoadBalancerIngress{IP: ip, Hostname: hostname}
+	}
+
+	tests := []struct {
+		name     string
+		ingress  []corev1.LoadBalancerIngress
+		expected string
+		wantErr  bool
+	}{
+		{name: "ip", ingress: []corev1.LoadBalancerIngress{ingress("192.0.2.10", "")}, expected: "192.0.2.10"},
+		{
+			name:     "nip.io hostname",
+			ingress:  []corev1.LoadBalancerIngress{ingress("", "192.0.2.10.nip.io")},
+			expected: "192.0.2.10",
+		},
+		{name: "other hostname", ingress: []corev1.LoadBalancerIngress{ingress("", "lb.example.com")}, wantErr: true},
+		{name: "malformed ip", ingress: []corev1.LoadBalancerIngress{ingress("999.1.1.1", "")}, wantErr: true},
+		{name: "no ingress", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, _, _ := G(t)
+			service := &corev1.Service{Status: corev1.ServiceStatus{
+				LoadBalancer: corev1.LoadBalancerStatus{Ingress: tt.ingress},
+			}}
+
+			ip, err := loadBalancerIP(service)
+
+			if tt.wantErr {
+				g.Expect(err).To(MatchError(operatorutil.ErrNoIPAddress))
+				return
+			}
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(ip).To(Equal(tt.expected))
+		})
+	}
 }
