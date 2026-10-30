@@ -24,6 +24,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/monitoring"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -129,7 +130,7 @@ func NewApiServerResourcesReconciler(
 		componentAPIServer:                  apiServerComponentLabel,
 		componentControllerManager:          "controller-manager",
 		componentScheduler:                  "scheduler",
-		apiContainerPortName:                intstr.FromString("api"),
+		apiContainerPortName:                intstr.FromString(monitoring.APIServerPortName),
 		apiContainerPort:                    konstants.KubeAPIServerPort,
 		konnectivityContainerPortName:       intstr.FromString("konnectivity"),
 		konnectivityKubeconfigFileName:      "konnectivity-server.conf",

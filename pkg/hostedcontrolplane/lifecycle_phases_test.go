@@ -260,6 +260,7 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 		managementClusterClient,
 		certManagerclient,
 		gatewayInterface,
+		nil,
 		func(ctx context.Context) (cmclient.Interface, error) {
 			return managementClusterCiliumClient, nil
 		},
@@ -1437,9 +1438,14 @@ func TestHostedControlPlane_FullLifecycle(t *testing.T) {
 
 	t.Log("Final State Verification")
 
+	// there are no Prometheus Operator CRDs, that must be surfaced but must not block anything
 	g.Expect(slices.Filter(hcp.Status.Conditions, func(condition metav1.Condition, _ int) bool {
 		return condition.Type != capiv2.PausedCondition && condition.Status != metav1.ConditionTrue
-	})).To(BeEmpty())
+	})).To(ConsistOf(MatchFields(IgnoreExtras, Fields{
+		"Type":   Equal(v1alpha1.MonitoringReadyCondition),
+		"Status": Equal(metav1.ConditionFalse),
+		"Reason": Equal(v1alpha1.MonitoringPrometheusOperatorMissingReason),
+	})))
 	g.Expect(hcp.Status.Ready).To(BeTrue())
 	g.Expect(hcp.Status.Initialization.ControlPlaneInitialized).To(PointTo(BeTrue()))
 

@@ -15,6 +15,7 @@ import (
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/monitoring"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -43,6 +44,7 @@ func NewKonnectivityReconciler(
 	konnectivityServiceAccount string,
 	konnectivityServerAudience string,
 	konnectivityServicePort int32,
+	metricsScrapingEnabled bool,
 ) KonnectivityReconciler {
 	return &konnectivityReconciler{ //nolint:gosec // service account names, not credentials
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
@@ -52,6 +54,7 @@ func NewKonnectivityReconciler(
 		},
 		konnectivityServerAudience:          konnectivityServerAudience,
 		konnectivityServicePort:             konnectivityServicePort,
+		metricsScrapingEnabled:              metricsScrapingEnabled,
 		konnectivityNamespace:               konnectivityNamespace,
 		konnectivityServiceAccountName:      konnectivityServiceAccount,
 		konnectivityServiceAccountTokenName: "konnectivity-agent-token",
@@ -63,6 +66,7 @@ type konnectivityReconciler struct {
 	konnectivityNamespace               string
 	konnectivityServerAudience          string
 	konnectivityServicePort             int32
+	metricsScrapingEnabled              bool
 	konnectivityServiceAccountName      string
 	konnectivityServiceAccountTokenName string
 }
@@ -237,7 +241,7 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDeployment(
 				WithReadOnly(true)
 			healthPort := corev1ac.ContainerPort().
 				WithName("health").
-				WithContainerPort(8134).
+				WithContainerPort(monitoring.KonnectivityAgentMetricsPort).
 				WithProtocol(corev1.ProtocolTCP)
 
 			minorVersion, err := operatorutil.GetMinorVersion(hostedControlPlane)
@@ -302,8 +306,8 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDeployment(
 							WithOperator(corev1.TolerationOpExists),
 					},
 				},
-				names.GetControlPlaneLabels(cluster, "konnectivity"),
-				map[int32][]networkpolicy.IngressNetworkPolicyTarget{},
+				names.GetControlPlaneLabels(cluster, monitoring.KonnectivityAgentComponent),
+				kr.metricsIngressPolicyTargets(),
 				map[int32][]networkpolicy.EgressNetworkPolicyTarget{
 					0: { // needs to proxy to any port in the whole cluster
 						networkpolicy.NewClusterNetworkPolicyTarget(),
@@ -331,6 +335,18 @@ func (kr *konnectivityReconciler) reconcileKonnectivityDeployment(
 			return "", nil
 		},
 	)
+}
+
+// metricsIngressPolicyTargets allows the scraping of the metrics through the pod proxy of the apiserver, which
+// connects from a konnectivity agent.
+func (kr *konnectivityReconciler) metricsIngressPolicyTargets() map[int32][]networkpolicy.IngressNetworkPolicyTarget {
+	targets := map[int32][]networkpolicy.IngressNetworkPolicyTarget{}
+	if kr.metricsScrapingEnabled {
+		targets[monitoring.KonnectivityAgentMetricsPort] = []networkpolicy.IngressNetworkPolicyTarget{
+			monitoring.NewKonnectivityAgentNetworkPolicyTarget(kr.konnectivityNamespace),
+		}
+	}
+	return targets
 }
 
 func (kr *konnectivityReconciler) buildKonnectivityClientArgs(

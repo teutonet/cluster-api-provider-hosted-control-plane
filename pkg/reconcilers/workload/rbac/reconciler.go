@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-logr/logr"
 
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
@@ -32,6 +33,7 @@ func NewRBACReconciler(
 	kubeletConfigMapName string,
 	clusterInfoConfigMapNamespace string,
 	clusterInfoConfigMapName string,
+	metricsScrapingEnabled bool,
 ) RBACReconciler {
 	return &rbacReconciler{
 		managementClusterClient:          managementClusterClient,
@@ -41,6 +43,7 @@ func NewRBACReconciler(
 		kubeletConfigMapName:             kubeletConfigMapName,
 		clusterInfoConfigMapNamespace:    clusterInfoConfigMapNamespace,
 		clusterInfoConfigMapName:         clusterInfoConfigMapName,
+		metricsScrapingEnabled:           metricsScrapingEnabled,
 	}
 }
 
@@ -52,6 +55,7 @@ type rbacReconciler struct {
 	kubeadmKubeletConfigMapNamespace string
 	clusterInfoConfigMapNamespace    string
 	clusterInfoConfigMapName         string
+	metricsScrapingEnabled           bool
 }
 
 var _ RBACReconciler = &rbacReconciler{}
@@ -102,6 +106,18 @@ func (rr *rbacReconciler) ReconcileRBAC(ctx context.Context) (string, error) {
 					Name:     "ClusterAdminBindingRBAC",
 					Generate: rr.generateClusterAdminBindingRBAC,
 				},
+			}
+
+			if rr.metricsScrapingEnabled {
+				phases = append(phases, struct {
+					Name     string
+					Generate func() (*RBACResources, error)
+				}{
+					Name:     "MetricsScrapingRBAC",
+					Generate: rr.generateMetricsScrapingRBAC,
+				})
+			} else if err := rr.deleteMetricsScrapingRBAC(ctx); err != nil {
+				return "", err
 			}
 
 			logger := logr.FromContextAsSlogLogger(ctx)
@@ -419,4 +435,83 @@ func (rr *rbacReconciler) generateNodeBootstrapTokenPostCSRsRBAC() (*RBACResourc
 	return &RBACResources{
 		ClusterRoleBindings: []*rbacv1ac.ClusterRoleBindingApplyConfiguration{clusterRoleBinding},
 	}, nil
+}
+
+// metricsScrapingRBACName is the name of the Role and RoleBinding that allow Prometheus to discover and scrape the
+// pods of kube-system through the pod proxy of the apiserver, and of the ClusterRole and ClusterRoleBinding that
+// allow it to read /metrics of the apiserver.
+const metricsScrapingRBACName = "control-plane-metrics"
+
+func (rr *rbacReconciler) generateMetricsScrapingRBAC() (*RBACResources, error) {
+	role := rbacv1ac.Role(metricsScrapingRBACName, metav1.NamespaceSystem).
+		WithRules(
+			rbacv1ac.PolicyRule().
+				WithAPIGroups("").
+				WithResources("pods").
+				WithVerbs("get", "list", "watch"),
+			rbacv1ac.PolicyRule().
+				WithAPIGroups("").
+				WithResources("pods/proxy").
+				WithVerbs("get"),
+		)
+
+	roleBinding := rbacv1ac.RoleBinding(metricsScrapingRBACName, metav1.NamespaceSystem).
+		WithRoleRef(
+			rbacv1ac.RoleRef().
+				WithAPIGroup(rbacv1.GroupName).
+				WithKind(*role.Kind).
+				WithName(*role.Name),
+		).
+		WithSubjects(
+			rbacv1ac.Subject().
+				WithKind(rbacv1.UserKind).
+				WithName(importcycle.MetricsClientUsername),
+		)
+
+	// the apiserver (and other components) authorize /metrics as a non resource URL
+	clusterRole := rbacv1ac.ClusterRole(metricsScrapingRBACName).
+		WithRules(
+			rbacv1ac.PolicyRule().
+				WithNonResourceURLs("/metrics").
+				WithVerbs("get"),
+		)
+	clusterRoleBinding := rbacv1ac.ClusterRoleBinding(metricsScrapingRBACName).
+		WithRoleRef(
+			rbacv1ac.RoleRef().
+				WithAPIGroup(rbacv1.GroupName).
+				WithKind(*clusterRole.Kind).
+				WithName(*clusterRole.Name),
+		).
+		WithSubjects(
+			rbacv1ac.Subject().
+				WithKind(rbacv1.UserKind).
+				WithName(importcycle.MetricsClientUsername),
+		)
+
+	return &RBACResources{
+		ClusterRoles:        []*rbacv1ac.ClusterRoleApplyConfiguration{clusterRole},
+		ClusterRoleBindings: []*rbacv1ac.ClusterRoleBindingApplyConfiguration{clusterRoleBinding},
+		Roles:               []*rbacv1ac.RoleApplyConfiguration{role},
+		RoleBindings:        []*rbacv1ac.RoleBindingApplyConfiguration{roleBinding},
+	}, nil
+}
+
+func (rr *rbacReconciler) deleteMetricsScrapingRBAC(ctx context.Context) error {
+	if err := rr.managementClusterClient.RbacV1().RoleBindings(metav1.NamespaceSystem).
+		Delete(ctx, metricsScrapingRBACName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete metrics scraping role binding: %w", err)
+	}
+	if err := rr.managementClusterClient.RbacV1().Roles(metav1.NamespaceSystem).
+		Delete(ctx, metricsScrapingRBACName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete metrics scraping role: %w", err)
+	}
+	if err := rr.managementClusterClient.RbacV1().ClusterRoleBindings().
+		Delete(ctx, metricsScrapingRBACName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete metrics scraping cluster role binding: %w", err)
+	}
+	if err := rr.managementClusterClient.RbacV1().ClusterRoles().
+		Delete(ctx, metricsScrapingRBACName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete metrics scraping cluster role: %w", err)
+	}
+	return nil
 }

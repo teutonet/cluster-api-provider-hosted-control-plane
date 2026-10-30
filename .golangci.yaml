@@ -218,6 +218,18 @@ linters:
         - pkg: github.com/cilium/cilium/pkg/k8s/client/clientset/versioned/typed/cilium.io/v2
           alias: ciliuminterfacev2
 
+        # Prometheus Operator
+        - pkg: github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1
+          alias: monitoringv1
+        - pkg: github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1
+          alias: monitoringv1alpha1
+        - pkg: github.com/prometheus-operator/prometheus-operator/pkg/client/applyconfiguration/monitoring/v1
+          alias: monitoringv1ac
+        - pkg: github.com/prometheus-operator/prometheus-operator/pkg/client/applyconfiguration/monitoring/v1alpha1
+          alias: monitoringv1alpha1ac
+        - pkg: github.com/prometheus-operator/prometheus-operator/pkg/client/versioned
+          alias: monitoringclient
+
         # Standard Library
         - pkg: slices
           alias: stdslices

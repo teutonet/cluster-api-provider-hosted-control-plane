@@ -333,7 +333,7 @@ func (l LabelNetworkPolicyTarget) ApplyToKubernetesIngressNetworkPolicy(
 	networkPolicyPeerApplyConfiguration *networkingv1ac.NetworkPolicyPeerApplyConfiguration,
 ) *networkingv1ac.NetworkPolicyPeerApplyConfiguration {
 	policyPeerApplyConfiguration := networkPolicyPeerApplyConfiguration
-	if l.PodLabels == nil {
+	if l.PodLabels != nil {
 		policyPeerApplyConfiguration = policyPeerApplyConfiguration.
 			WithPodSelector(metav1ac.LabelSelector().WithMatchLabels(l.PodLabels))
 	}
@@ -353,22 +353,20 @@ func (l LabelNetworkPolicyTarget) ApplyToKubernetesEgressNetworkPolicy(
 func (l LabelNetworkPolicyTarget) ApplyToCiliumIngressNetworkPolicy(
 	ciliumPolicyPeer *CiliumPolicyPeer,
 ) *CiliumPolicyPeer {
-	if l.PodLabels != nil {
-		ciliumPolicyPeer.Endpoints = append(ciliumPolicyPeer.Endpoints, api.EndpointSelector{
-			LabelSelector: &ciliummetav1.LabelSelector{
-				MatchLabels: l.PodLabels,
-			},
-		})
+	if l.PodLabels == nil && l.NamespaceLabels == nil {
+		return ciliumPolicyPeer
 	}
-	if l.NamespaceLabels != nil {
-		ciliumPolicyPeer.Endpoints = append(ciliumPolicyPeer.Endpoints, api.EndpointSelector{
-			LabelSelector: &ciliummetav1.LabelSelector{
-				MatchLabels: slices.MapEntries(l.NamespaceLabels, func(k string, v string) (string, string) {
+	// a single selector, as multiple endpoint selectors are ORed, but pod and namespace labels have to match together
+	ciliumPolicyPeer.Endpoints = append(ciliumPolicyPeer.Endpoints, api.EndpointSelector{
+		LabelSelector: &ciliummetav1.LabelSelector{
+			MatchLabels: slices.Assign(
+				l.PodLabels,
+				slices.MapEntries(l.NamespaceLabels, func(k string, v string) (string, string) {
 					return cilium.PodNamespaceMetaLabelsPrefix + k, v
 				}),
-			},
-		})
-	}
+			),
+		},
+	})
 	return ciliumPolicyPeer
 }
 
