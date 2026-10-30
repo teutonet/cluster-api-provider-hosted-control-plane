@@ -1,24 +1,28 @@
 package util
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	stdslices "slices"
+	"strings"
 
 	slices "github.com/samber/lo"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/emit"
 )
 
 type ArgOption struct {
 	Prefix    *string
 	Delimiter *string
+	// Repeated holds flags that are rendered once per value, in the given order. A key in here replaces the same key
+	// in the user and controller args, an empty slice drops it.
+	Repeated map[string][]string
 }
 
 var argumentOverriddenEvent = "ArgumentOverridden"
 
 func argsToSlice(
-	userArgs map[string]string,
+	userArgs map[string]v1alpha1.ArgValue,
 	controllerArgs map[string]string,
 	opts *ArgOption,
 ) []string {
@@ -29,6 +33,7 @@ func argsToSlice(
 
 	prefix := "--"
 	joiner := "="
+	var repeated map[string][]string
 	if opts != nil {
 		if opts.Prefix != nil {
 			prefix = *opts.Prefix
@@ -36,17 +41,28 @@ func argsToSlice(
 		if opts.Delimiter != nil {
 			joiner = *opts.Delimiter
 		}
+		repeated = opts.Repeated
 	}
-	argsSlice := slices.MapToSlice(slices.Assign(userArgs, controllerArgs), func(key string, value string) arg {
-		return arg{
-			key:   key,
-			value: value,
-		}
+
+	merged := make(map[string][]string, len(userArgs)+len(controllerArgs)+len(repeated))
+	for key, values := range userArgs {
+		merged[key] = values
+	}
+	for key, value := range controllerArgs {
+		merged[key] = []string{value}
+	}
+	for key, values := range repeated {
+		merged[key] = values
+	}
+
+	keys := slices.Keys(merged)
+	stdslices.Sort(keys)
+	args := slices.FlatMap(keys, func(key string, _ int) []arg {
+		return slices.Map(merged[key], func(value string, _ int) arg {
+			return arg{key: key, value: value}
+		})
 	})
-	stdslices.SortFunc(argsSlice, func(left, right arg) int {
-		return cmp.Compare(left.key, right.key)
-	})
-	return slices.FlatMap(argsSlice, func(arg arg, _ int) []string {
+	return slices.FlatMap(args, func(arg arg, _ int) []string {
 		if joiner == " " {
 			return []string{fmt.Sprintf("%s%s", prefix, arg.key), arg.value}
 		}
@@ -56,23 +72,23 @@ func argsToSlice(
 
 // ArgsToSlice merges user and controller arguments with observability for overrides.
 // Controller args override user args and overrides are logged, traced, and emitted as events.
+// A user arg with several values is rendered once per value, in order.
 func ArgsToSlice(
 	ctx context.Context,
-	userArgs map[string]string,
+	userArgs map[string]v1alpha1.ArgValue,
 	controllerArgs map[string]string,
 	opts ...ArgOption,
 ) []string {
-	if overriddenKeys := slices.Filter(slices.Keys(userArgs), func(key string, _ int) bool {
-		return slices.HasKey(controllerArgs, key)
-	}); len(overriddenKeys) > 0 {
-		for _, key := range slices.Filter(overriddenKeys, func(key string, _ int) bool {
-			return userArgs[key] != controllerArgs[key]
-		}) {
+	userKeys := slices.Keys(userArgs)
+	stdslices.Sort(userKeys)
+	for _, key := range userKeys {
+		controllerValue, overridden := controllerArgs[key]
+		if overridden && !stdslices.Equal(userArgs[key], []string{controllerValue}) {
 			emit.Warn(ctx, emit.SinkAll, nil,
 				"ControllerArgumentTakesPrecedence",
 				argumentOverriddenEvent,
 				"User argument overridden by controller",
-				"arg", key, "userValue", userArgs[key], "controllerValue", controllerArgs[key],
+				"arg", key, "userValue", strings.Join(userArgs[key], ","), "controllerValue", controllerValue,
 			)
 		}
 	}
