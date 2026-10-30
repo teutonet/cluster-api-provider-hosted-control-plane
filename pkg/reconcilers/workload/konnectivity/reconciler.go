@@ -359,6 +359,11 @@ func (kr *konnectivityReconciler) buildKonnectivityClientArgs(
 		"sync-interval":       "250ms",
 		"sync-interval-cap":   "2s",
 		"server-count-source": "max",
+		// A tunnel that dies without a FIN/RST reaching the agent (gateway/LB hiccup) stays in the agent's client set,
+		// so the agent counts it as a connection, never dials a replacement and the server on the other end is left
+		// without agents. Without pings that is only noticed after the 1h default. The konnectivity server rejects
+		// pings more frequent than every 30s, so stay clearly above that.
+		"keepalive-time": "35s",
 		"service-account-token-path": path.Join(
 			*serviceAccountTokenVolumeMount.MountPath,
 			kr.konnectivityServiceAccountTokenName,

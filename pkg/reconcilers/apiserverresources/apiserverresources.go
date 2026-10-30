@@ -1232,6 +1232,10 @@ func (arr *apiServerResourcesReconciler) buildKonnectivityServerArgs(
 		"mode":                    "grpc",
 		// lets agents keep dialing until they reached every server even if their lease informer is stale
 		"server-count": strconv.Itoa(int(hostedControlPlane.Spec.ReplicasOrDefault())),
+		// A half-open tunnel (dropped without FIN/RST) keeps counting as a backend until the default 1h ping, and
+		// requests routed to it hang until "dial timeout, backstop". Pinging makes the server drop it (after the
+		// ping interval plus the fixed 20s ack timeout), so requests go to a live agent or fail fast.
+		"keepalive-time": "10s",
 	}
 
 	return operatorutil.ArgsToSlice(
