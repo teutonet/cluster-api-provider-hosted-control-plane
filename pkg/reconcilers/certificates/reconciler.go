@@ -16,6 +16,7 @@ import (
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/emit"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
@@ -57,17 +58,19 @@ func NewCertificateReconciler(
 	caCertificateDuration time.Duration,
 	certificateDuration time.Duration,
 	konnectivityServerAudience string,
+	metricsClientCertificateEnabled bool,
 ) CertificateReconciler {
 	return &certificateReconciler{
-		certManagerClient:          certManagerClient,
-		kubernetesClient:           kubernetesClient,
-		kubernetesServiceIP:        kubernetesServiceIP,
-		rootCACertificateDuration:  rootCACertificateDuration,
-		caCertificateDuration:      caCertificateDuration,
-		certificateDuration:        certificateDuration,
-		certificateRenewBefore:     int32(50),
-		konnectivityServerAudience: konnectivityServerAudience,
-		tracer:                     tracing.GetTracer("certificates"),
+		certManagerClient:               certManagerClient,
+		kubernetesClient:                kubernetesClient,
+		kubernetesServiceIP:             kubernetesServiceIP,
+		rootCACertificateDuration:       rootCACertificateDuration,
+		caCertificateDuration:           caCertificateDuration,
+		certificateDuration:             certificateDuration,
+		certificateRenewBefore:          int32(50),
+		konnectivityServerAudience:      konnectivityServerAudience,
+		metricsClientCertificateEnabled: metricsClientCertificateEnabled,
+		tracer:                          tracing.GetTracer("certificates"),
 	}
 }
 
@@ -80,7 +83,9 @@ type certificateReconciler struct {
 	certificateDuration        time.Duration
 	certificateRenewBefore     int32
 	konnectivityServerAudience string
-	tracer                     string
+	// metricsClientCertificateEnabled adds the client certificate Prometheus uses to scrape the workload cluster
+	metricsClientCertificateEnabled bool
+	tracer                          string
 }
 
 var _ CertificateReconciler = &certificateReconciler{}
@@ -444,6 +449,18 @@ func (cr *certificateReconciler) createCertificateSpecs(
 				certmanagerv1.UsageClientAuth,
 			),
 		},
+	}
+
+	if cr.metricsClientCertificateEnabled {
+		specs[names.GetMetricsClientCertificateName(cluster)] = certificateSpec{
+			kind: "MetricsClient",
+			spec: createCertificateSpec(
+				names.GetCAIssuerName(cluster),
+				importcycle.MetricsClientUsername,
+				names.GetMetricsClientCertificateSecretName(cluster),
+				certmanagerv1.UsageClientAuth,
+			),
+		}
 	}
 
 	specs = slices.MapValues(specs, func(spec certificateSpec, _ string) certificateSpec {

@@ -16,6 +16,8 @@ require (
 	github.com/coredns/corefile-migration v1.0.36
 	github.com/go-logr/logr v1.4.4
 	github.com/onsi/gomega v1.44.0
+	github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring v0.94.2
+	github.com/prometheus-operator/prometheus-operator/pkg/client v0.94.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/lo v1.53.0
 	github.com/testcontainers/testcontainers-go v0.44.0
@@ -217,7 +219,7 @@ require (
 	k8s.io/cri-api v0.37.1 // indirect
 	k8s.io/cri-client v0.37.1 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
-	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
+	k8s.io/kube-openapi v0.0.0-20260821135717-be32def86098 // indirect
 	k8s.io/streaming v0.37.1 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.37.0 // indirect
 	sigs.k8s.io/json v0.0.0-20260909141634-11ed52e25bc5 // indirect
