@@ -32,15 +32,15 @@ require (
 	go4.org v0.0.0-20261028031214-ed6929a230fe
 	golang.org/x/text v0.43.0
 	google.golang.org/grpc v1.85.0
-	k8s.io/api v0.37.1
-	k8s.io/apiextensions-apiserver v0.37.1
-	k8s.io/apimachinery v0.37.1
-	k8s.io/apiserver v0.37.1
-	k8s.io/client-go v0.37.1
-	k8s.io/cluster-bootstrap v0.37.1
-	k8s.io/component-base v0.37.1
-	k8s.io/kube-proxy v0.37.1
-	k8s.io/kubelet v0.37.1
+	k8s.io/api v0.37.2
+	k8s.io/apiextensions-apiserver v0.37.2
+	k8s.io/apimachinery v0.37.2
+	k8s.io/apiserver v0.37.2
+	k8s.io/client-go v0.37.2
+	k8s.io/cluster-bootstrap v0.37.2
+	k8s.io/component-base v0.37.2
+	k8s.io/kube-proxy v0.37.2
+	k8s.io/kubelet v0.37.2
 	k8s.io/kubernetes v1.37.2
 	k8s.io/utils v0.0.0-20261023123148-ca04ba58ecab
 	sigs.k8s.io/cluster-api v1.14.3
@@ -214,11 +214,11 @@ require (
 	k8s.io/cli-runtime v0.37.1 // indirect
 	k8s.io/component-helpers v0.37.1 // indirect
 	k8s.io/controller-manager v0.37.1 // indirect
-	k8s.io/cri-api v0.37.1 // indirect
+	k8s.io/cri-api v0.37.2 // indirect
 	k8s.io/cri-client v0.37.1 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260721132016-d427ff9ee9ad // indirect
-	k8s.io/streaming v0.37.1 // indirect
+	k8s.io/streaming v0.37.2 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.37.0 // indirect
 	sigs.k8s.io/json v0.0.0-20260909141634-11ed52e25bc5 // indirect
 	sigs.k8s.io/kustomize/api v0.21.2 // indirect
@@ -229,9 +229,9 @@ require (
 )
 
 replace (
-	k8s.io/cli-runtime => k8s.io/cli-runtime v0.37.1
-	k8s.io/component-helpers => k8s.io/component-helpers v0.37.1
-	k8s.io/controller-manager => k8s.io/controller-manager v0.37.1
-	k8s.io/cri-api => k8s.io/cri-api v0.37.1
-	k8s.io/cri-client => k8s.io/cri-client v0.37.1
+	k8s.io/cli-runtime => k8s.io/cli-runtime v0.37.2
+	k8s.io/component-helpers => k8s.io/component-helpers v0.37.2
+	k8s.io/controller-manager => k8s.io/controller-manager v0.37.2
+	k8s.io/cri-api => k8s.io/cri-api v0.37.2
+	k8s.io/cri-client => k8s.io/cri-client v0.37.2
 )
