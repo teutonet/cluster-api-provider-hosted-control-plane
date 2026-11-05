@@ -306,13 +306,13 @@ func TestBuildAPIServerArgs_ShutdownDelay(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		userArgs map[string]string
+		userArgs map[string]v1alpha1.ArgValue
 		expected string
 	}{
 		{name: "delays the listener shutdown by default", expected: flag + "=10s"},
 		{
 			name:     "keeps a user supplied delay",
-			userArgs: map[string]string{"shutdown-delay-duration": "0s"},
+			userArgs: map[string]v1alpha1.ArgValue{"shutdown-delay-duration": {"0s"}},
 			expected: flag + "=0s",
 		},
 	}
@@ -380,4 +380,95 @@ func TestReconcileApiServerService_KonnectivityServicePublishesNotReadyAddresses
 	g.Expect(konnectivityService.Spec.Ports).To(ConsistOf(
 		HaveField("Port", int32(8132)),
 	))
+}
+
+func TestBuildAPIServerArgs_ServiceAccountIssuers(t *testing.T) {
+	const (
+		issuerFlag    = "--service-account-issuer="
+		audiencesFlag = "--api-audiences="
+		jwksURIFlag   = "--service-account-jwks-uri="
+		external      = "https://api.example.com:443"
+		legacy        = "https://kubernetes.default.svc"
+	)
+
+	tests := []struct {
+		name              string
+		userArgs          map[string]v1alpha1.ArgValue
+		expectedIssuers   []string
+		expectedAudiences string
+		expectedJWKSURI   string
+	}{
+		{
+			name:              "defaults to the external url and the legacy url",
+			expectedIssuers:   []string{external, legacy},
+			expectedAudiences: external + "," + legacy,
+			expectedJWKSURI:   external + "/openid/v1/jwks",
+		},
+		{
+			name:     "a single user issuer is put in front",
+			userArgs: map[string]v1alpha1.ArgValue{"service-account-issuer": {"https://issuer.example.com"}},
+			expectedIssuers: []string{
+				"https://issuer.example.com", external, legacy,
+			},
+			expectedAudiences: "https://issuer.example.com," + external + "," + legacy,
+			expectedJWKSURI:   external + "/openid/v1/jwks",
+		},
+		{
+			name: "several user issuers keep their order and are put in front",
+			userArgs: map[string]v1alpha1.ArgValue{
+				"service-account-issuer": {"https://z.example.com", "https://a.example.com"},
+			},
+			expectedIssuers: []string{
+				"https://z.example.com", "https://a.example.com", external, legacy,
+			},
+			expectedAudiences: "https://z.example.com,https://a.example.com," + external + "," + legacy,
+			expectedJWKSURI:   external + "/openid/v1/jwks",
+		},
+		{
+			name: "user audiences and jwks uri win",
+			userArgs: map[string]v1alpha1.ArgValue{
+				"service-account-issuer":   {"https://issuer.example.com"},
+				"api-audiences":            {"custom"},
+				"service-account-jwks-uri": {"https://issuer.example.com/openid/v1/jwks"},
+			},
+			expectedIssuers:   []string{"https://issuer.example.com", external, legacy},
+			expectedAudiences: "custom",
+			expectedJWKSURI:   "https://issuer.example.com/openid/v1/jwks",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, ctx, _ := G(t)
+			reconciler := &apiServerResourcesReconciler{}
+			hostedControlPlane := &v1alpha1.HostedControlPlane{}
+			hostedControlPlane.Spec.Deployment.APIServer.Args = tt.userArgs
+			cluster := &capiv2.Cluster{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns", Name: "test-cluster"},
+				Spec: capiv2.ClusterSpec{
+					ControlPlaneEndpoint: capiv2.APIEndpoint{Host: "api.example.com", Port: 443},
+				},
+			}
+
+			args := reconciler.buildAPIServerArgs(
+				ctx,
+				hostedControlPlane,
+				cluster,
+				corev1ac.VolumeMount().WithMountPath("/pki"),
+				corev1ac.VolumeMount().WithMountPath("/egress"),
+				nil,
+				corev1ac.VolumeMount().WithMountPath("/authn"),
+				corev1ac.ContainerPort().WithContainerPort(6443),
+			)
+
+			withPrefix := func(prefix string) []string {
+				return slices.FilterMap(args, func(arg string, _ int) (string, bool) {
+					return strings.CutPrefix(arg, prefix)
+				})
+			}
+			g.Expect(withPrefix(issuerFlag)).To(Equal(tt.expectedIssuers))
+			g.Expect(withPrefix(audiencesFlag)).To(ConsistOf(tt.expectedAudiences))
+			g.Expect(withPrefix(jwksURIFlag)).To(ConsistOf(tt.expectedJWKSURI))
+		})
+	}
 }
