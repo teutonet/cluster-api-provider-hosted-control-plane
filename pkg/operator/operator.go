@@ -13,6 +13,7 @@ import (
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	ciliumclient "github.com/cilium/cilium/pkg/k8s/client/clientset/versioned"
 	"github.com/go-logr/logr"
+	monitoringclient "github.com/prometheus-operator/prometheus-operator/pkg/client/versioned"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	webhookv1alpha1 "github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1/webhook"
@@ -49,6 +50,9 @@ import (
 const (
 	hostedControlPlaneControllerName = "hcp-controller"
 )
+
+//+kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
+//+kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
 
 func Start(ctx context.Context, version string, operatorConfig etc.Config) (retErr error) {
 	ctx = configureLogging(ctx, operatorConfig.LogFormat, operatorConfig.LogLevel)
@@ -190,11 +194,17 @@ func setupControllers(
 		return fmt.Errorf("failed to create gateway client: %w", err)
 	}
 
+	monitoringClient, err := monitoringclient.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		return fmt.Errorf("failed to create prometheus operator client: %w", err)
+	}
+
 	if err := hostedcontrolplane.NewHostedControlPlaneReconciler(
 		client.WithFieldOwner(mgr.GetClient(), hostedControlPlaneControllerName),
 		&managementClusterClient,
 		certManagerClient,
 		gatewayClient,
+		monitoringClient,
 		func(ctx context.Context) (ciliumclient.Interface, error) {
 			return workload.GetCiliumClient(kubernetesClient, mgr.GetConfig())
 		},

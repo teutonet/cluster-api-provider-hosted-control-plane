@@ -1,0 +1,20 @@
+# ServiceMonitor for the metrics of the operator itself, opt in by enabling `./prometheus` in `../kustomization.yaml`.
+# The metrics endpoint authenticates the caller, so the Prometheus service account needs to be allowed to `get` the
+# non resource URL `/metrics` (kube-prometheus-stack does that by default).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: controller-manager-metrics-monitor
+  namespace: system
+  labels:
+    control-plane: controller-manager
+spec:
+  endpoints:
+    - path: /metrics
+      port: metrics
+      scheme: http
+      # deprecated, but the only way to use the token of the Prometheus itself, which is the point of this monitor
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+  selector:
+    matchLabels:
+      control-plane: controller-manager

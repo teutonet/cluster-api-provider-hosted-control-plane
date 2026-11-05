@@ -52,6 +52,7 @@ func NewWorkloadClusterReconciler(
 	konnectivityServiceAccount string,
 	konnectivityServerAudience string,
 	konnectivityServicePort int32,
+	metricsScrapingEnabled bool,
 ) WorkloadClusterReconciler {
 	return &workloadClusterReconciler{ //nolint:gosec // service account names, not credentials
 		managementClusterClient:             managementClusterClient,
@@ -66,6 +67,7 @@ func NewWorkloadClusterReconciler(
 		konnectivityServiceAccount:          konnectivityServiceAccount,
 		konnectivityServerAudience:          konnectivityServerAudience,
 		konnectivityServicePort:             konnectivityServicePort,
+		metricsScrapingEnabled:              metricsScrapingEnabled,
 		konnectivityServiceAccountName:      "konnectivity-agent",
 		konnectivityServiceAccountTokenName: "konnectivity-agent-token",
 		kubeadmKubeletConfigMapNamespace:    metav1.NamespaceSystem,
@@ -90,6 +92,7 @@ type workloadClusterReconciler struct {
 	konnectivityServiceAccount          string
 	konnectivityServerAudience          string
 	konnectivityServicePort             int32
+	metricsScrapingEnabled              bool
 	konnectivityServiceAccountName      string
 	konnectivityServiceAccountTokenName string
 	kubeadmKubeletConfigMapNamespace    string
@@ -150,6 +153,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				wr.kubeletConfigMapName,
 				wr.clusterInfoConfigMapNamespace,
 				wr.clusterInfoConfigMapName,
+				wr.metricsScrapingEnabled,
 			)
 
 			configReconciler := config.NewConfigReconciler(
@@ -179,6 +183,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				workloadClusterCiliumClient,
 				wr.serviceDomain,
 				wr.dnsIP,
+				wr.metricsScrapingEnabled,
 			)
 
 			konnectivityReconciler := konnectivity.NewKonnectivityReconciler(
@@ -188,6 +193,7 @@ func (wr *workloadClusterReconciler) ReconcileWorkloadClusterResources(
 				wr.konnectivityServiceAccount,
 				wr.konnectivityServerAudience,
 				wr.konnectivityServicePort,
+				wr.metricsScrapingEnabled,
 			)
 
 			workloadPhases := []WorkloadPhase{

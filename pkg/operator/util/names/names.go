@@ -227,3 +227,27 @@ func GetKonnectivityTLSRouteName(cluster *capiv2.Cluster) string {
 func GetKonnectivityServerHost(cluster *capiv2.Cluster) string {
 	return fmt.Sprintf("konnectivity.%s", cluster.Spec.ControlPlaneEndpoint.Host)
 }
+
+func GetMetricsClientCertificateName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-metrics-client"
+}
+
+func GetMetricsClientCertificateSecretName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-metrics-client"
+}
+
+func GetKonnectivityServerPodMonitorName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-konnectivity-server"
+}
+
+func GetKonnectivityAgentScrapeConfigName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-konnectivity-agent"
+}
+
+func GetCoreDNSScrapeConfigName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-coredns"
+}
+
+func GetAPIServerPodMonitorName(cluster *capiv2.Cluster) string {
+	return cluster.Name + "-apiserver"
+}

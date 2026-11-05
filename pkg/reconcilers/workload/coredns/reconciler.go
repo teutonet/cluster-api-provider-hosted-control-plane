@@ -15,6 +15,7 @@ import (
 	operatorutil "github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/monitoring"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/networkpolicy"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/util/tracing"
 	"go.opentelemetry.io/otel/trace"
@@ -36,6 +37,7 @@ func NewCoreDNSReconciler(
 	ciliumClient ciliumclient.Interface,
 	serviceDomain string,
 	dnsIP net.IP,
+	metricsScrapingEnabled bool,
 ) CoreDNSReconciler {
 	return &coreDNSReconciler{
 		WorkloadResourceReconciler: reconcilers.WorkloadResourceReconciler{
@@ -43,10 +45,11 @@ func NewCoreDNSReconciler(
 			CiliumClient:          ciliumClient,
 			Tracer:                tracing.GetTracer("coredns"),
 		},
-		serviceDomain:  serviceDomain,
-		dnsIP:          dnsIP,
-		coreDNSPort:    53,
-		prometheusPort: 9153,
+		serviceDomain:          serviceDomain,
+		dnsIP:                  dnsIP,
+		coreDNSPort:            53,
+		prometheusPort:         monitoring.CoreDNSMetricsPort,
+		metricsScrapingEnabled: metricsScrapingEnabled,
 		coreDNSLabels: map[string]string{
 			"k8s-app":                       "kube-dns",
 			"kubernetes.io/cluster-service": "true",
@@ -70,6 +73,7 @@ type coreDNSReconciler struct {
 	coreDNSServiceAccountName string
 	coreDNSPort               int32
 	prometheusPort            int32
+	metricsScrapingEnabled    bool
 	coreDNSDNSPortName        string
 	coreDNSTCPDNSPortName     string
 	coreDNSMetricsPortName    string
@@ -337,7 +341,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 						WithProtocol(corev1.ProtocolTCP),
 					corev1ac.ContainerPort().
 						WithName(cr.coreDNSMetricsPortName).
-						WithContainerPort(9153).
+						WithContainerPort(cr.prometheusPort).
 						WithProtocol(corev1.ProtocolTCP),
 					healthPort,
 					readyPort,
@@ -381,11 +385,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 					},
 				},
 				cr.coreDNSLabels,
-				map[int32][]networkpolicy.IngressNetworkPolicyTarget{
-					cr.coreDNSPort: {
-						networkpolicy.NewNamespaceLabelNetworkPolicyTarget(map[string]string{}),
-					},
-				},
+				cr.ingressPolicyTargets(),
 				map[int32][]networkpolicy.EgressNetworkPolicyTarget{
 					53: {
 						networkpolicy.NewWorldNetworkPolicyTarget(),
@@ -414,6 +414,21 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 	)
 }
 
+func (cr *coreDNSReconciler) ingressPolicyTargets() map[int32][]networkpolicy.IngressNetworkPolicyTarget {
+	targets := map[int32][]networkpolicy.IngressNetworkPolicyTarget{
+		cr.coreDNSPort: {
+			networkpolicy.NewNamespaceLabelNetworkPolicyTarget(map[string]string{}),
+		},
+	}
+	if cr.metricsScrapingEnabled {
+		// the metrics are scraped through the pod proxy of the apiserver, which connects from a konnectivity agent
+		targets[cr.prometheusPort] = []networkpolicy.IngressNetworkPolicyTarget{
+			monitoring.NewKonnectivityAgentNetworkPolicyTarget(cr.coreDNSNamespace),
+		}
+	}
+	return targets
+}
+
 func (cr *coreDNSReconciler) reconcileCoreDNSService(ctx context.Context) (string, error) {
 	return tracing.WithSpan(ctx, cr.Tracer, "ReconcileCoreDNSService",
 		func(ctx context.Context, span trace.Span) (string, error) {
@@ -438,7 +453,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSService(ctx context.Context) (strin
 						WithTargetPort(intstr.FromString(cr.coreDNSTCPDNSPortName)),
 					corev1ac.ServicePort().
 						WithName("metrics").
-						WithPort(9153).
+						WithPort(cr.prometheusPort).
 						WithProtocol(corev1.ProtocolTCP).
 						WithTargetPort(intstr.FromString(cr.coreDNSMetricsPortName)),
 				},
