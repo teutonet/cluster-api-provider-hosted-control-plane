@@ -42,6 +42,15 @@
       "groupName": "OpenTelemetry modules"
     },
     {
+      "matchDatasources": [
+        "go"
+      ],
+      "matchPackageNames": [
+        "go.etcd.io/etcd/**"
+      ],
+      "groupName": "etcd modules"
+    },
+    {
       "matchManagers": [
         "gomod"
       ],
