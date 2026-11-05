@@ -36,3 +36,24 @@ func TestBuildKonnectivityClientArgs_ReconnectTuning(t *testing.T) {
 		"--sync-interval=250ms",
 	))
 }
+
+func TestBuildKonnectivityClientArgs_KeepaliveStaysAboveServerEnforcement(t *testing.T) {
+	g, ctx, _ := G(t)
+	reconciler := &konnectivityReconciler{
+		konnectivityServicePort:             443,
+		konnectivityServiceAccountTokenName: "konnectivity-agent-token",
+	}
+	cluster := &capiv2.Cluster{}
+	cluster.Spec.ControlPlaneEndpoint.Host = "cluster.example.com"
+
+	args := reconciler.buildKonnectivityClientArgs(
+		ctx,
+		&v1alpha1.HostedControlPlane{},
+		cluster,
+		corev1ac.VolumeMount().WithMountPath("/var/run/secrets/tokens"),
+		corev1ac.ContainerPort().WithContainerPort(8134).WithProtocol(corev1.ProtocolTCP),
+	)
+
+	// the konnectivity server answers pings more frequent than 30s with GOAWAY, which would loop the agent
+	g.Expect(args).To(ContainElement("--keepalive-time=35s"))
+}
