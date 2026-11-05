@@ -78,6 +78,8 @@ type coreDNSReconciler struct {
 	coreDNSCorefileFileName   string
 }
 
+const coreDNSConfigVolumeName = "config-volume"
+
 var _ CoreDNSReconciler = &coreDNSReconciler{}
 
 func (cr *coreDNSReconciler) ReconcileCoreDNS(
@@ -195,79 +197,6 @@ func (cr *coreDNSReconciler) reconcileCoreDNSRBAC(ctx context.Context) error {
 func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context) error {
 	return tracing.WithSpan1(ctx, cr.Tracer, "ReconcileCoreDNSConfigMap",
 		func(ctx context.Context, span trace.Span) error {
-			defaultCorefile := &corefile.Corefile{
-				Servers: []*corefile.Server{
-					{
-						DomPorts: []string{fmt.Sprintf(".:%d", cr.coreDNSPort)},
-						Plugins: []*corefile.Plugin{
-							{
-								Name: "errors",
-							},
-							{
-								Name: "health",
-								Options: []*corefile.Option{
-									{
-										Name: "lameduck",
-										Args: []string{"5s"},
-									},
-								},
-							},
-							{
-								Name: "ready",
-							},
-							{
-								Name: "kubernetes",
-								Args: []string{cr.serviceDomain, "in-addr.arpa", "ip6.arpa"},
-								Options: []*corefile.Option{
-									{
-										Name: "fallthrough",
-										Args: []string{"in-addr.arpa", "ip6.arpa"},
-									},
-									{
-										Name: "ttl",
-										Args: []string{"30"},
-									},
-								},
-							},
-							{
-								Name: "prometheus",
-								Args: []string{fmt.Sprintf(":%d", cr.prometheusPort)},
-							},
-							{
-								Name: "forward",
-								Args: []string{".", "/etc/resolv.conf"},
-								Options: []*corefile.Option{
-									{
-										Name: "max_concurrent",
-										Args: []string{"1000"},
-									},
-								},
-							},
-							{
-								Name: "cache",
-								Args: []string{"30"},
-								Options: []*corefile.Option{
-									{
-										Name: "disable",
-										Args: []string{"success", cr.serviceDomain},
-									},
-									{
-										Name: "disable",
-										Args: []string{"denial", cr.serviceDomain},
-									},
-								},
-							},
-							{
-								Name: "loop",
-							},
-							{
-								Name: "loadbalance",
-							},
-						},
-					},
-				},
-			}
-
 			return cr.ReconcileConfigmap(
 				ctx,
 				cr.coreDNSNamespace,
@@ -275,11 +204,97 @@ func (cr *coreDNSReconciler) reconcileCoreDNSConfigMap(ctx context.Context) erro
 				false,
 				cr.coreDNSLabels,
 				map[string]string{
-					cr.coreDNSCorefileFileName: defaultCorefile.ToString(),
+					cr.coreDNSCorefileFileName: cr.buildCorefile().ToString(),
 				},
 			)
 		},
 	)
+}
+
+func (cr *coreDNSReconciler) buildCorefile() *corefile.Corefile {
+	return &corefile.Corefile{
+		Servers: []*corefile.Server{
+			{
+				DomPorts: []string{fmt.Sprintf(".:%d", cr.coreDNSPort)},
+				Plugins: []*corefile.Plugin{
+					{
+						Name: "errors",
+					},
+					{
+						Name: "health",
+						Options: []*corefile.Option{
+							{
+								Name: "lameduck",
+								Args: []string{"5s"},
+							},
+						},
+					},
+					{
+						Name: "ready",
+					},
+					{
+						Name: "kubernetes",
+						Args: []string{cr.serviceDomain, "in-addr.arpa", "ip6.arpa"},
+						Options: []*corefile.Option{
+							{
+								Name: "fallthrough",
+								Args: []string{"in-addr.arpa", "ip6.arpa"},
+							},
+							{
+								Name: "ttl",
+								Args: []string{"30"},
+							},
+						},
+					},
+					{
+						Name: "prometheus",
+						Args: []string{fmt.Sprintf(":%d", cr.prometheusPort)},
+					},
+					{
+						Name: "forward",
+						Args: []string{".", "/etc/resolv.conf"},
+						Options: []*corefile.Option{
+							{
+								Name: "max_concurrent",
+								Args: []string{"1000"},
+							},
+							{
+								Name: "health_check",
+								Args: []string{"5s"},
+							},
+							{
+								Name: "max_fails",
+								Args: []string{"3"},
+							},
+						},
+					},
+					{
+						Name: "cache",
+						Args: []string{"30"},
+						Options: []*corefile.Option{
+							{
+								Name: "disable",
+								Args: []string{"success", cr.serviceDomain},
+							},
+							{
+								Name: "disable",
+								Args: []string{"denial", cr.serviceDomain},
+							},
+							{
+								Name: "serve_stale",
+							},
+						},
+					},
+					{
+						Name: "loop",
+					},
+					{
+						Name: "loadbalance",
+					},
+				},
+			},
+		},
+	}
 }
 
 func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
@@ -289,7 +304,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 	return tracing.WithSpan(ctx, cr.Tracer, "ReconcileCoreDNSDeployment",
 		func(ctx context.Context, span trace.Span) (string, error) {
 			coreDNSConfigVolume := corev1ac.Volume().
-				WithName("config-volume").
+				WithName(coreDNSConfigVolumeName).
 				WithConfigMap(corev1ac.ConfigMapVolumeSource().
 					WithName(cr.coreDNSResourceName).
 					WithItems(
@@ -298,54 +313,7 @@ func (cr *coreDNSReconciler) reconcileCoreDNSDeployment(
 							WithPath(cr.coreDNSCorefileFileName),
 					),
 				)
-			corednsConfigVolumeMount := corev1ac.VolumeMount().
-				WithName(*coreDNSConfigVolume.Name).
-				WithMountPath("/etc/coredns").
-				WithReadOnly(true)
-
-			healthPort := corev1ac.ContainerPort().
-				WithName("health").
-				WithContainerPort(8080).
-				WithProtocol(corev1.ProtocolTCP)
-			readyPort := corev1ac.ContainerPort().
-				WithName("ready").
-				WithContainerPort(8181).
-				WithProtocol(corev1.ProtocolTCP)
-			container := corev1ac.Container().
-				WithName("coredns").
-				WithImage(operatorutil.ResolveCoreDNSImage(hostedControlPlane.Spec.CoreDNS.Image)).
-				WithImagePullPolicy(hostedControlPlane.Spec.CoreDNS.ImagePullPolicyOrDefault()).
-				WithArgs(operatorutil.ArgsToSlice(
-					ctx,
-					hostedControlPlane.Spec.CoreDNS.Args,
-					map[string]string{
-						"conf": path.Join(*corednsConfigVolumeMount.MountPath, cr.coreDNSCorefileFileName),
-					},
-					operatorutil.ArgOption{Prefix: new("-")},
-				)...).
-				WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
-					hostedControlPlane.Spec.CoreDNS.Resources,
-				)).
-				WithPorts(
-					corev1ac.ContainerPort().
-						WithName(cr.coreDNSDNSPortName).
-						WithContainerPort(cr.coreDNSPort).
-						WithProtocol(corev1.ProtocolUDP),
-					corev1ac.ContainerPort().
-						WithName(cr.coreDNSTCPDNSPortName).
-						WithContainerPort(cr.coreDNSPort).
-						WithProtocol(corev1.ProtocolTCP),
-					corev1ac.ContainerPort().
-						WithName(cr.coreDNSMetricsPortName).
-						WithContainerPort(9153).
-						WithProtocol(corev1.ProtocolTCP),
-					healthPort,
-					readyPort,
-				).
-				WithVolumeMounts(corednsConfigVolumeMount).
-				WithLivenessProbe(operatorutil.CreateLivenessProbe(healthPort, "/health", corev1.URISchemeHTTP)).
-				WithReadinessProbe(operatorutil.CreateReadinessProbe(readyPort, "/ready", corev1.URISchemeHTTP)).
-				WithStartupProbe(operatorutil.CreateStartupProbe(readyPort, "/ready", corev1.URISchemeHTTP))
+			container := cr.buildContainer(ctx, hostedControlPlane)
 
 			nodes, err := cr.WorkloadClusterClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 			if err != nil {
@@ -453,4 +421,58 @@ func (cr *coreDNSReconciler) reconcileCoreDNSService(ctx context.Context) (strin
 			return "", nil
 		},
 	)
+}
+
+func (cr *coreDNSReconciler) buildContainer(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+) *corev1ac.ContainerApplyConfiguration {
+	corednsConfigVolumeMount := corev1ac.VolumeMount().
+		WithName(coreDNSConfigVolumeName).
+		WithMountPath("/etc/coredns").
+		WithReadOnly(true)
+	healthPort := corev1ac.ContainerPort().
+		WithName("health").
+		WithContainerPort(8080).
+		WithProtocol(corev1.ProtocolTCP)
+	readyPort := corev1ac.ContainerPort().
+		WithName("ready").
+		WithContainerPort(8181).
+		WithProtocol(corev1.ProtocolTCP)
+	return corev1ac.Container().
+		WithName("coredns").
+		WithTerminationMessagePolicy(corev1.TerminationMessageFallbackToLogsOnError).
+		WithImage(operatorutil.ResolveCoreDNSImage(hostedControlPlane.Spec.CoreDNS.Image)).
+		WithImagePullPolicy(hostedControlPlane.Spec.CoreDNS.ImagePullPolicyOrDefault()).
+		WithArgs(operatorutil.ArgsToSlice(
+			ctx,
+			hostedControlPlane.Spec.CoreDNS.Args,
+			map[string]string{
+				"conf": path.Join(*corednsConfigVolumeMount.MountPath, cr.coreDNSCorefileFileName),
+			},
+			operatorutil.ArgOption{Prefix: new("-")},
+		)...).
+		WithResources(operatorutil.ResourceRequirementsToResourcesApplyConfiguration(
+			hostedControlPlane.Spec.CoreDNS.Resources,
+		)).
+		WithPorts(
+			corev1ac.ContainerPort().
+				WithName(cr.coreDNSDNSPortName).
+				WithContainerPort(cr.coreDNSPort).
+				WithProtocol(corev1.ProtocolUDP),
+			corev1ac.ContainerPort().
+				WithName(cr.coreDNSTCPDNSPortName).
+				WithContainerPort(cr.coreDNSPort).
+				WithProtocol(corev1.ProtocolTCP),
+			corev1ac.ContainerPort().
+				WithName(cr.coreDNSMetricsPortName).
+				WithContainerPort(9153).
+				WithProtocol(corev1.ProtocolTCP),
+			healthPort,
+			readyPort,
+		).
+		WithVolumeMounts(corednsConfigVolumeMount).
+		WithLivenessProbe(operatorutil.CreateLivenessProbe(healthPort, "/health", corev1.URISchemeHTTP)).
+		WithReadinessProbe(operatorutil.CreateReadinessProbe(readyPort, "/ready", corev1.URISchemeHTTP)).
+		WithStartupProbe(operatorutil.CreateStartupProbe(readyPort, "/ready", corev1.URISchemeHTTP))
 }

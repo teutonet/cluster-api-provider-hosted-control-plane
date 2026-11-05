@@ -681,6 +681,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 			nodeRotationReconciler := node_rotation.NewNodeRotationReconciler(r.client, r.certManagerClient)
 			workloadClusterReconciler := workload.NewWorkloadClusterReconciler(
 				r.managementClusterClient,
+				r.gatewayClient,
 				func(
 					ctx context.Context, managementClusterClient *alias.ManagementClusterClient, cluster *capiv2.Cluster,
 				) (*alias.WorkloadClusterClient, ciliumclient.Interface, error) {
