@@ -993,7 +993,10 @@ func createDeploymentMutator(
 			WithStrategy(appsv1ac.DeploymentStrategy().
 				WithType(appsv1.RollingUpdateDeploymentStrategyType).
 				WithRollingUpdate(appsv1ac.RollingUpdateDeployment().
-					WithMaxSurge(intstr.FromInt32(replicas)),
+					// percentages, so the fields don't change when the replicas change.
+					// maxUnavailable rounds down, so 99% keeps at least one pod available.
+					WithMaxSurge(intstr.FromString("100%")).
+					WithMaxUnavailable(intstr.FromString("99%")),
 				),
 			).
 			WithReplicas(replicas),
