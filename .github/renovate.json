@@ -14,6 +14,16 @@
       "rangeStrategy": "bump"
     },
     {
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepTypes": [
+        "indirect"
+      ],
+      "enabled": true,
+      "groupName": "indirect Go modules"
+    },
+    {
       "matchDatasources": [
         "go"
       ],
@@ -40,19 +50,6 @@
         "go.opentelemetry.io/**"
       ],
       "groupName": "OpenTelemetry modules"
-    },
-    {
-      "matchManagers": [
-        "gomod"
-      ],
-      "matchDepTypes": [
-        "indirect"
-      ],
-      "matchPackageNames": [
-        "golang.org/x/**"
-      ],
-      "enabled": true,
-      "groupName": "golang.org/x modules"
     }
   ],
   "customManagers": [
