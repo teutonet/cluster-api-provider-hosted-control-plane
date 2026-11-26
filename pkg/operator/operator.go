@@ -113,6 +113,7 @@ func Start(ctx context.Context, version string, operatorConfig etc.Config) (retE
 		operatorConfig.MaxConcurrentReconciles,
 		operatorConfig.ControllerNamespace,
 		operatorConfig.ReconcileFilter,
+		operatorConfig.ManagementClusterOIDC,
 		tracerProvider, tracingWrapper,
 	); err != nil {
 		return err
@@ -166,6 +167,7 @@ func setupControllers(
 	maxConcurrentReconciles int,
 	controllerNamespace string,
 	reconcileFilter string,
+	managementClusterOIDC bool,
 	tracerProvider *trace.TracerProvider,
 	tracingWrapper func(rt http.RoundTripper) http.RoundTripper,
 ) error {
@@ -256,6 +258,7 @@ func setupControllers(
 		mgr.GetEventRecorder(hostedControlPlaneControllerName),
 		controllerNamespace,
 		reconcileFilter,
+		managementClusterOIDC,
 	).SetupWithManager(mgr, maxConcurrentReconciles, predicateLogger); err != nil {
 		return fmt.Errorf("failed to setup controller: %w", err)
 	}

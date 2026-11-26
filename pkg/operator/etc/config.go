@@ -28,6 +28,11 @@ type Config struct {
 	// ReconcileFilter, when non-empty, limits reconciliation to HostedControlPlanes whose name or
 	// owner Cluster name matches. Supports bare name or "namespace/name" format. Debugging aid only.
 	ReconcileFilter string `env:"HCP_RECONCILE_FILTER"`
+
+	// ManagementClusterOIDC controls whether the hosted API servers trust service account tokens issued by the
+	// management cluster. This requires the management cluster to serve its OIDC discovery document and JWKS to
+	// unauthenticated clients.
+	ManagementClusterOIDC bool `env:"MANAGEMENT_CLUSTER_OIDC" envDefault:"true"`
 }
 
 func GetOperatorConfig() (Config, error) {
