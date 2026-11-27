@@ -132,8 +132,13 @@ type Container struct {
 	Image *ImageSpec `json:"image,omitempty"`
 	//+kubebuilder:validation:Optional
 	ImagePullPolicy *corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
+	// Args are command line arguments, each value is a string or a list of strings, see ArgValue. The schema can't
+	// express "string or list", so it is not validated here, a wrong type is rejected when the object is decoded.
 	//+kubebuilder:validation:Optional
-	Args map[string]string `json:"args,omitempty"`
+	//+kubebuilder:validation:Type=object
+	//+kubebuilder:validation:Schemaless
+	//+kubebuilder:pruning:PreserveUnknownFields
+	Args map[string]ArgValue `json:"args,omitempty"`
 	//+kubebuilder:validation:Optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }

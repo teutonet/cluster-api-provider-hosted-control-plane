@@ -51,6 +51,17 @@ const kubeconfigFlag = "kubeconfig"
 
 const shutdownDelayDurationFlag = "shutdown-delay-duration"
 
+const (
+	serviceAccountIssuerFlag  = "service-account-issuer"
+	serviceAccountJWKSURIFlag = "service-account-jwks-uri"
+	apiAudiencesFlag          = "api-audiences"
+)
+
+// legacyServiceAccountIssuer was the only issuer before the external url became the default. It is kept as the last
+// issuer so tokens issued back then keep validating.
+// TODO: remove it once all tokens signed with it have expired or were rotated.
+const legacyServiceAccountIssuer = "https://kubernetes.default.svc"
+
 // kube-apiserver closes its listener within milliseconds of SIGTERM, but the endpoint slices, the load balancer and
 // the gateway need a bit more than a second to stop routing to the pod. Without a delay every rollout fails the
 // requests that are routed to a pod that no longer listens. During the delay the apiserver keeps serving (and fails
@@ -1031,7 +1042,14 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 			return string(item)
 		})
 
-	jwksURI := fmt.Sprintf("https://%s/openid/v1/jwks", cluster.Spec.ControlPlaneEndpoint.String())
+	externalURL := fmt.Sprintf("https://%s", cluster.Spec.ControlPlaneEndpoint.String())
+	userArgs := hostedControlPlane.Spec.Deployment.APIServer.Args
+	// the first issuer signs new tokens, the others only validate. User issuers go first, so new tokens get the
+	// user's one while the external and the legacy issuer keep validating.
+	serviceAccountIssuers := slices.Flatten([][]string{
+		userArgs[serviceAccountIssuerFlag],
+		{externalURL, legacyServiceAccountIssuer},
+	})
 	args := map[string]string{
 		"authentication-config": path.Join(
 			*authenticationConfigVolumeMount.MountPath, arr.authenticationConfigFileName,
@@ -1060,8 +1078,6 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 		"requestheader-group-headers":        "X-Remote-Group",
 		"requestheader-username-headers":     "X-Remote-User",
 		"secure-port":                        strconv.Itoa(int(*apiPort.ContainerPort)),
-		"service-account-issuer":             "https://kubernetes.default.svc",
-		"service-account-jwks-uri":           jwksURI,
 		"service-account-key-file":           path.Join(certificatesDir, konstants.ServiceAccountPublicKeyName),
 		"service-account-signing-key-file":   path.Join(certificatesDir, konstants.ServiceAccountPrivateKeyName),
 		"service-cluster-ip-range":           arr.serviceCIDR.String(),
@@ -1094,15 +1110,24 @@ func (arr *apiServerResourcesReconciler) buildAPIServerArgs(
 		}
 	}
 
-	// only a default: controller args win over user args, but the delay is a tuning knob users may need to change
-	if _, userSet := hostedControlPlane.Spec.Deployment.APIServer.Args[shutdownDelayDurationFlag]; !userSet {
-		args[shutdownDelayDurationFlag] = defaultShutdownDelayDuration.String()
+	// only defaults: controller args win over user args, but these are tuning knobs users may need to change
+	defaults := map[string]string{
+		shutdownDelayDurationFlag: defaultShutdownDelayDuration.String(),
+		serviceAccountJWKSURIFlag: externalURL + "/openid/v1/jwks",
+		// the default audience is the first issuer, so old tokens would be rejected if only that one was accepted
+		apiAudiencesFlag: strings.Join(serviceAccountIssuers, ","),
+	}
+	for flag, value := range defaults {
+		if _, userSet := userArgs[flag]; !userSet {
+			args[flag] = value
+		}
 	}
 
 	return operatorutil.ArgsToSlice(
 		ctx,
-		hostedControlPlane.Spec.Deployment.APIServer.Args,
+		userArgs,
 		args,
+		operatorutil.ArgOption{Repeated: map[string][]string{serviceAccountIssuerFlag: serviceAccountIssuers}},
 	)
 }
 

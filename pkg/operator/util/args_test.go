@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	slices "github.com/samber/lo"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/recorder"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -85,7 +87,7 @@ func TestArgsToSlice(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g, _, _ := G(t)
-			result := argsToSlice(tt.userArgs, tt.controllerArgs, nil)
+			result := argsToSlice(argValues(tt.userArgs), tt.controllerArgs, nil)
 
 			g.Expect(result).To(Equal(tt.expected))
 
@@ -105,14 +107,83 @@ func TestArgsToSlice_Ordering(t *testing.T) {
 		"a": "1", "m": "13", "z": "26",
 	}
 
-	result1 := argsToSlice(input1, map[string]string{}, nil)
-	result2 := argsToSlice(input2, map[string]string{}, nil)
+	result1 := argsToSlice(argValues(input1), map[string]string{}, nil)
+	result2 := argsToSlice(argValues(input2), map[string]string{}, nil)
 
 	g.Expect(result1).
 		To(Equal(result2))
 
 	expected := []string{"--a=1", "--m=13", "--z=26"}
 	g.Expect(result1).To(Equal(expected))
+}
+
+func TestArgsToSlice_UserSliceAndSingleValues(t *testing.T) {
+	g, ctx, _ := G(t)
+
+	result := ArgsToSlice(
+		ctx,
+		map[string]v1alpha1.ArgValue{
+			"single": {"a"},
+			"multi":  {"z", "b", "c"},
+			"none":   {},
+		},
+		map[string]string{"controller": "x"},
+	)
+
+	g.Expect(result).To(Equal([]string{"--controller=x", "--multi=z", "--multi=b", "--multi=c", "--single=a"}))
+}
+
+func TestArgsToSlice_RepeatedValues(t *testing.T) {
+	tests := []struct {
+		name           string
+		userArgs       map[string]string
+		controllerArgs map[string]string
+		opt            ArgOption
+		expected       []string
+	}{
+		{
+			name:           "repeats a flag once per value, in order",
+			controllerArgs: map[string]string{"a": "1"},
+			opt: ArgOption{Repeated: map[string][]string{
+				"issuer": {"https://new.example.com", "https://old.example.com"},
+			}},
+			expected: []string{
+				"--a=1",
+				"--issuer=https://new.example.com",
+				"--issuer=https://old.example.com",
+			},
+		},
+		{
+			name:           "a repeated key replaces the user and controller value",
+			userArgs:       map[string]string{"issuer": "https://user.example.com"},
+			controllerArgs: map[string]string{"issuer": "https://default.example.com"},
+			opt:            ArgOption{Repeated: map[string][]string{"issuer": {"https://new.example.com"}}},
+			expected:       []string{"--issuer=https://new.example.com"},
+		},
+		{
+			name:           "uses the delimiter and prefix",
+			controllerArgs: map[string]string{},
+			opt: ArgOption{
+				Prefix:    new("-"),
+				Delimiter: new(" "),
+				Repeated:  map[string][]string{"t": {"x", "y"}},
+			},
+			expected: []string{"-t", "x", "-t", "y"},
+		},
+		{
+			name:           "an empty slice drops the key",
+			controllerArgs: map[string]string{"issuer": "https://default.example.com"},
+			opt:            ArgOption{Repeated: map[string][]string{"issuer": {}}},
+			expected:       []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, ctx, _ := G(t)
+			g.Expect(ArgsToSlice(ctx, argValues(tt.userArgs), tt.controllerArgs, tt.opt)).To(Equal(tt.expected))
+		})
+	}
 }
 
 func TestArgsToSliceWithObservability(t *testing.T) {
@@ -266,7 +337,7 @@ func TestArgsToSliceWithObservability(t *testing.T) {
 
 			result := ArgsToSlice(
 				ctx,
-				tt.userArgs,
+				argValues(tt.userArgs),
 				tt.controllerArgs,
 			)
 
@@ -329,15 +400,24 @@ func TestArgsToSliceWithObservabilityBackwardCompatibility(t *testing.T) {
 	}
 
 	// Test with argsToSlice (original function)
-	originalResult := argsToSlice(userArgs, controllerArgs, nil)
+	originalResult := argsToSlice(argValues(userArgs), controllerArgs, nil)
 
 	// Test with ArgsToSlice (new function)
 	newResult := ArgsToSlice(
 		ctx,
-		userArgs,
+		argValues(userArgs),
 		controllerArgs,
 	)
 
 	g.Expect(newResult).
 		To(Equal(originalResult))
+}
+
+func argValues(args map[string]string) map[string]v1alpha1.ArgValue {
+	if args == nil {
+		return nil
+	}
+	return slices.MapValues(args, func(value string, _ string) v1alpha1.ArgValue {
+		return v1alpha1.ArgValue{value}
+	})
 }
