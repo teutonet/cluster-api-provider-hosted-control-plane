@@ -34,20 +34,20 @@ require (
 	go4.org v0.0.0-20261028031214-ed6929a230fe
 	golang.org/x/text v0.44.0
 	google.golang.org/grpc v1.85.0
-	k8s.io/api v0.37.2
-	k8s.io/apiextensions-apiserver v0.37.2
-	k8s.io/apimachinery v0.37.2
-	k8s.io/apiserver v0.37.2
-	k8s.io/client-go v0.37.2
-	k8s.io/cluster-bootstrap v0.37.2
-	k8s.io/component-base v0.37.2
-	k8s.io/kube-proxy v0.37.2
-	k8s.io/kubelet v0.37.2
-	k8s.io/kubernetes v1.37.2
+	k8s.io/api v0.37.3
+	k8s.io/apiextensions-apiserver v0.37.3
+	k8s.io/apimachinery v0.37.3
+	k8s.io/apiserver v0.37.3
+	k8s.io/client-go v0.37.3
+	k8s.io/cluster-bootstrap v0.37.3
+	k8s.io/component-base v0.37.3
+	k8s.io/kube-proxy v0.37.3
+	k8s.io/kubelet v0.37.3
+	k8s.io/kubernetes v1.37.3
 	k8s.io/utils v0.0.0-20261023123148-ca04ba58ecab
 	sigs.k8s.io/cluster-api v1.14.4
 	sigs.k8s.io/cluster-api/api v1.14.4
-	sigs.k8s.io/controller-runtime v0.25.2
+	sigs.k8s.io/controller-runtime v0.25.3
 	sigs.k8s.io/gateway-api v1.7.0
 )
 
@@ -110,14 +110,11 @@ require (
 	github.com/go-openapi/runtime/server-middleware v0.33.3 // indirect
 	github.com/go-openapi/spec v1.0.1 // indirect
 	github.com/go-openapi/strfmt v0.27.3 // indirect
-	github.com/go-openapi/swag v0.29.2 // indirect
-	github.com/go-openapi/swag/cmdutils v0.29.2 // indirect
 	github.com/go-openapi/swag/conv v0.29.2 // indirect
 	github.com/go-openapi/swag/fileutils v0.29.2 // indirect
 	github.com/go-openapi/swag/jsonutils v0.29.2 // indirect
 	github.com/go-openapi/swag/loading v0.29.2 // indirect
 	github.com/go-openapi/swag/mangling v0.29.2 // indirect
-	github.com/go-openapi/swag/netutils v0.29.2 // indirect
 	github.com/go-openapi/swag/pools v0.29.2 // indirect
 	github.com/go-openapi/swag/stringutils v0.29.2 // indirect
 	github.com/go-openapi/swag/typeutils v0.29.2 // indirect
@@ -213,27 +210,28 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	k8s.io/cli-runtime v0.37.1 // indirect
-	k8s.io/component-helpers v0.37.1 // indirect
-	k8s.io/controller-manager v0.37.1 // indirect
-	k8s.io/cri-api v0.37.2 // indirect
-	k8s.io/cri-client v0.37.1 // indirect
+	k8s.io/cli-runtime v0.37.3 // indirect
+	k8s.io/component-helpers v0.37.3 // indirect
+	k8s.io/controller-manager v0.37.3 // indirect
+	k8s.io/cri-api v0.37.3 // indirect
+	k8s.io/cri-client v0.37.3 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
-	k8s.io/kube-openapi v0.0.0-20260821135717-be32def86098 // indirect
-	k8s.io/streaming v0.37.2 // indirect
+	k8s.io/kube-openapi v0.0.0-20261124193638-7c5f465a2be7 // indirect
+	k8s.io/streaming v0.37.3 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.37.0 // indirect
 	sigs.k8s.io/json v0.0.0-20260909141634-11ed52e25bc5 // indirect
 	sigs.k8s.io/kustomize/api v0.21.2 // indirect
 	sigs.k8s.io/kustomize/kyaml v0.21.2 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
+	sigs.k8s.io/structured-merge-diff/v7 v7.0.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
 replace (
-	k8s.io/cli-runtime => k8s.io/cli-runtime v0.37.2
-	k8s.io/component-helpers => k8s.io/component-helpers v0.37.2
-	k8s.io/controller-manager => k8s.io/controller-manager v0.37.2
-	k8s.io/cri-api => k8s.io/cri-api v0.37.2
-	k8s.io/cri-client => k8s.io/cri-client v0.37.2
+	k8s.io/cli-runtime => k8s.io/cli-runtime v0.37.3
+	k8s.io/component-helpers => k8s.io/component-helpers v0.37.3
+	k8s.io/controller-manager => k8s.io/controller-manager v0.37.3
+	k8s.io/cri-api => k8s.io/cri-api v0.37.3
+	k8s.io/cri-client => k8s.io/cri-client v0.37.3
 )
