@@ -241,6 +241,19 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyRBAC(
 	)
 }
 
+func (kr *kubeProxyReconciler) buildKubeProxyConfiguration(
+	kubeconfigFileName string,
+) kubeproxyv1alpha1.KubeProxyConfiguration {
+	return kubeproxyv1alpha1.KubeProxyConfiguration{
+		ClientConnection: componentbaseconfigalpha1.ClientConnectionConfiguration{
+			Kubeconfig: path.Join(kr.kubeProxyConfigMountPath, kubeconfigFileName),
+		},
+		ClusterCIDR:        kr.podCIDR.String(),
+		MetricsBindAddress: "0.0.0.0:10249",
+		NodePortAddresses:  []string{"primary"},
+	}
+}
+
 func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(
 	ctx context.Context,
 	cluster *capiv2.Cluster,
@@ -277,14 +290,7 @@ func (kr *kubeProxyReconciler) reconcileKubeProxyConfigMap(
 				},
 			}
 
-			kubeProxyConfig := kubeproxyv1alpha1.KubeProxyConfiguration{
-				ClientConnection: componentbaseconfigalpha1.ClientConnectionConfiguration{
-					Kubeconfig: path.Join(kr.kubeProxyConfigMountPath, kubeconfigFileName),
-				},
-				ClusterCIDR:        kr.podCIDR.String(),
-				MetricsBindAddress: "0.0.0.0:10249",
-				NodePortAddresses:  []string{"primary"},
-			}
+			kubeProxyConfig := kr.buildKubeProxyConfiguration(kubeconfigFileName)
 
 			kubeconfigBytes, err := clientcmd.Write(*kubeconfig)
 			if err != nil {
