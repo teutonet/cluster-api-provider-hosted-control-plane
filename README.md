@@ -335,6 +335,47 @@ To not ship the roles, remove `./rbac-aggregation.yaml` from `config/kustomizati
 | `LOG_LEVEL`                   | Log level (debug, info, etc.)    | info                                  |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry collector endpoint | -                                     |
 
+## 📈 Monitoring
+
+If the [Prometheus Operator](https://prometheus-operator.dev/) CRDs are installed, the components we run for a cluster
+are scraped automatically:
+
+- **konnectivity server** (management cluster): `PodMonitor`
+- **kube-apiserver** (management cluster): `PodMonitor` with an allowlist, about 15 of the ~16k-46k series per pod are
+  kept: the egress dialer (`apiserver_egress_dialer_dial_*`, the apiserver's dials to konnectivity, so failures like
+  "No agent available" are visible), `apiserver_current_inflight_requests` and `apiserver_request_total` for
+  `pods/exec|log|attach|portforward` and all 5xx except the health check endpoints (`/readyz`, `/livez`, `/healthz`). The endpoint is authenticated, the client certificate below is used and
+  needs `get` on `/metrics` in the workload cluster.
+- **konnectivity agent** and **CoreDNS** (workload cluster): `ScrapeConfig`s that discover the pods through the internal
+  apiserver Service and scrape them through the pod proxy of the apiserver, so the pod network of the workload cluster
+  does not need to be reachable. The credential is a client certificate issued from the cluster CA
+  (user `control-plane-metrics`), which is only allowed to `get`, `list` and `watch` pods and to `get` `pods/proxy` in
+  `kube-system`, and to `get` `/metrics`. The workload cluster network policies allow the proxy to reach the metrics ports.
+
+All metrics carry the labels `capi_cluster_name` and `capi_cluster_namespace`, so they can be told apart from the
+metrics of the management cluster.
+
+The monitors need the labels your Prometheus selects (`podMonitorSelector`, `scrapeConfigSelector`). If there is exactly
+one `Prometheus` in the management cluster they are derived from it, otherwise set them explicitly. The namespace
+selectors of the Prometheus must allow the namespace of the HostedControlPlane.
+
+```yaml
+spec:
+  monitoring:
+    prometheus:
+      # disabled: true
+      monitorLabels:
+        release: kube-prometheus-stack
+```
+
+The `MonitoringReady` condition says why monitoring is not set up (no CRDs, no or multiple Prometheus, ...). It never
+blocks anything and is not part of `Ready`.
+
+The metrics of the operator itself are exposed by a `ServiceMonitor` that is not part of the release manifests, enable
+`./prometheus` in [`config/kustomization.yaml`](config/kustomization.yaml) to build it. The metrics endpoint
+authenticates its callers, so the service account of the Prometheus needs to be allowed to `get` the non resource URL
+`/metrics`.
+
 ## 🧪 Development
 
 ### Prerequisites
@@ -404,7 +445,7 @@ for details on:
 
 ## 🛣️ Roadmap
 
-- [ ] **Enhanced Monitoring**: Prometheus metrics
+- [x] **Enhanced Monitoring**: Prometheus metrics
 - [ ] **Auto-Scaling**: Dynamic control plane scaling based on load
 
 ## 🆘 Support

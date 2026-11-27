@@ -66,6 +66,7 @@ func createTestReconcilerWithFilter(client client.Client, reconcileFilter string
 		&alias.ManagementClusterClient{Interface: fake.NewClientset()},
 		&certmanagerfake.Clientset{},
 		nil,
+		nil,
 		func(ctx context.Context) (ciliumclient.Interface, error) {
 			return nil, nil
 		},

@@ -7,6 +7,7 @@ import (
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	certmanagermetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	. "github.com/onsi/gomega"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 )
@@ -188,4 +189,24 @@ func TestCertificateReconciler_createCertificateSpecs_ServiceAccountKeepsPrivate
 	serviceAccount := specs[names.GetServiceAccountCertificateName(bundleTestCluster)]
 	g.Expect(serviceAccount.spec.PrivateKey).NotTo(BeNil())
 	g.Expect(*serviceAccount.spec.PrivateKey.RotationPolicy).To(Equal(certmanagerv1.RotationPolicyNever))
+}
+
+func TestCertificateReconciler_createCertificateSpecs_MetricsClientOnlyWhenEnabled(t *testing.T) {
+	g, _, _ := G(t)
+	name := names.GetMetricsClientCertificateName(bundleTestCluster)
+
+	disabled := &certificateReconciler{certificateDuration: time.Hour, caCertificateDuration: time.Hour}
+	g.Expect(disabled.createCertificateSpecs(bundleTestHCP, bundleTestCluster)).NotTo(HaveKey(name))
+
+	enabled := &certificateReconciler{
+		certificateDuration:             time.Hour,
+		caCertificateDuration:           time.Hour,
+		metricsClientCertificateEnabled: true,
+	}
+	specs := enabled.createCertificateSpecs(bundleTestHCP, bundleTestCluster)
+	g.Expect(specs).To(HaveKey(name))
+	g.Expect(*specs[name].spec.CommonName).To(Equal(importcycle.MetricsClientUsername))
+	g.Expect(*specs[name].spec.SecretName).To(Equal(names.GetMetricsClientCertificateSecretName(bundleTestCluster)))
+	g.Expect(specs[name].spec.Usages).To(ContainElement(certmanagerv1.UsageClientAuth))
+	g.Expect(specs[name].customLabels).To(HaveKeyWithValue(names.CertificateKindLabel, "client"))
 }

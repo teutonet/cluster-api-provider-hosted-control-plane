@@ -17,6 +17,8 @@ resources:
   - ../build/crds
   - ../build/rbac
   - ../build/webhooks
+  # To scrape the metrics of the operator with the Prometheus Operator, uncomment:
+  # - ./prometheus
 
 configurations:
   - ./kustomizeconfig.yaml
