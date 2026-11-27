@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.9.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.8.0...v1.9.0) (2026-11-27)
+
+
+### Features
+
+* **rbac:** aggregate HostedControlPlane roles into view, edit and admin ([#251](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/251)) ([2f12c3b](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/2f12c3b6a9c2c7b5f3ba2973a1adeb25532cc546))
+* scrape konnectivity, coredns and apiserver via Prometheus ([#301](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/301)) ([4d7aec1](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/4d7aec1a5f509cc2e07d0f021a32cf05a49fefc8))
+* support multiple service account issuers in apiserver args ([#296](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/296)) ([9a07e7e](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/9a07e7e8070a7b8709ad78a64172149e7e5d4db3))
+
+
+### Bug Fixes
+
+* **apiserver:** delay listener shutdown so endpoints can drain ([#266](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/266)) ([df0c0b4](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/df0c0b4ab080bb0b18618c58a51672a644d9c37a))
+* **ci:** don't cancel in-progress CI runs on main ([#250](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/250)) ([aa95642](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/aa95642c76539d5a1d080a4a702b00f03dc321db))
+* **ci:** quote shell expansions in publish steps ([#252](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/252)) ([d7d1083](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/d7d108353d51ab3134c7ea8f6e2f41cb8e0f00ca))
+* **deps:** bump golang.org/x/net to v0.61.0 ([#263](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/263)) ([564dbf2](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/564dbf2034926b9eec935d656dd52b5baaf921d8))
+* **deps:** bump klauspost/compress and x/crypto ([#317](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/317)) ([e79592a](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/e79592aa20a2daf1285c573ba4ed95bd1cf5eb3f))
+* **etcd:** make backup schedule test independent of wall clock ([#294](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/294)) ([b98a01c](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/b98a01cb397dec3a1487f7ae3f4f3de63d225820))
+* keep private keys stable across cert-manager renewals ([#264](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/264)) ([d9cb60d](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/d9cb60db270ae4c53c89b4a6d7e3ecee11f2c5e0))
+* **konnectivity:** detect half-open tunnels with gRPC keepalive ([#300](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/300)) ([1373a60](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/1373a60a71011c809b0f3ebbce0aef6ae9e53148))
+* **sbom:** make the merged SBOM valid and identify the nginx root ([#253](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/issues/253)) ([6bc1e57](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/commit/6bc1e574234a0dff2992e7fb8850947c91a0d8f3))
+
 ## [1.8.0](https://github.com/teutonet/cluster-api-provider-hosted-control-plane/compare/v1.7.2...v1.8.0) (2026-10-09)
 
 
