@@ -50,6 +50,15 @@
         "go.opentelemetry.io/**"
       ],
       "groupName": "OpenTelemetry modules"
+    },
+    {
+      "matchDatasources": [
+        "go"
+      ],
+      "matchPackageNames": [
+        "go.etcd.io/etcd/**"
+      ],
+      "groupName": "etcd modules"
     }
   ],
   "customManagers": [
