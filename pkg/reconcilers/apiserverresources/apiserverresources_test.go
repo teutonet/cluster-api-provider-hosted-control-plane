@@ -268,6 +268,24 @@ func TestReconcileAuthenticationConfig_StableOIDCProviderOrder(t *testing.T) {
 	}
 }
 
+func TestBuildKonnectivityServerArgs_Keepalive(t *testing.T) {
+	g, ctx, _ := G(t)
+	reconciler := &apiServerResourcesReconciler{}
+
+	args := reconciler.buildKonnectivityServerArgs(
+		ctx,
+		&v1alpha1.HostedControlPlane{},
+		corev1ac.VolumeMount().WithMountPath("/pki"),
+		corev1ac.VolumeMount().WithMountPath("/kube"),
+		corev1ac.VolumeMount().WithMountPath("/uds"),
+		corev1ac.ContainerPort().WithContainerPort(8132),
+		corev1ac.ContainerPort().WithContainerPort(8133),
+		corev1ac.ContainerPort().WithContainerPort(8134),
+	)
+
+	g.Expect(args).To(ContainElement("--keepalive-time=10s"))
+}
+
 func TestBuildKonnectivityServerArgs_ServerCount(t *testing.T) {
 	tests := []struct {
 		name     string
