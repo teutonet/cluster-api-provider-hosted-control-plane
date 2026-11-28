@@ -8,18 +8,22 @@ import (
 	. "github.com/onsi/gomega"
 	slices "github.com/samber/lo"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/api/v1alpha1"
+	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/importcycle"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/operator/util/names"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers"
 	"github.com/teutonet/cluster-api-provider-hosted-control-plane/pkg/reconcilers/alias"
 	. "github.com/teutonet/cluster-api-provider-hosted-control-plane/test"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	apiserverv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	konstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/pkg/controller/certificates/rootcacertpublisher"
 	capiv2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/yaml"
 )
 
 func TestApiServerResourcesReconciler_extractAdditionalVolumesAndMounts(t *testing.T) {
@@ -204,6 +208,7 @@ func TestReconcileAuthenticationConfig_StableOIDCProviderOrder(t *testing.T) {
 			ManagementClusterClient: &alias.ManagementClusterClient{Interface: fakeClient},
 		},
 		authenticationConfigFileName: "config.yaml",
+		managementClusterOIDC:        true,
 	}
 
 	hcp := &v1alpha1.HostedControlPlane{
@@ -265,6 +270,85 @@ func TestReconcileAuthenticationConfig_StableOIDCProviderOrder(t *testing.T) {
 
 	for range 50 {
 		g.Expect(reconcileAndGetYAML(g)).To(Equal(firstYAML))
+	}
+}
+
+func TestReconcileAuthenticationConfig_ManagementClusterOIDC(t *testing.T) {
+	namespace := "test-ns"
+	customIssuer := "https://sso.example.com"
+
+	hcp := &v1alpha1.HostedControlPlane{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "test-hcp", UID: "test-uid"},
+		Spec: v1alpha1.HostedControlPlaneSpec{
+			Version: "1.35.0",
+			HostedControlPlaneInlineSpec: v1alpha1.HostedControlPlaneInlineSpec{
+				OIDCProviders: map[string]v1alpha1.OIDCProvider{
+					customIssuer: {
+						ClaimMappings: v1alpha1.OIDCClaimMappings{Username: "claims.email"},
+						Audiences:     []string{"my-cluster"},
+					},
+				},
+			},
+		},
+	}
+	cluster := &capiv2.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "test-cluster"},
+	}
+	rootCAConfigMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      rootcacertpublisher.RootCACertConfigMapName,
+		},
+		Data: map[string]string{
+			konstants.CACertName: "fake-root-ca-cert",
+		},
+	}
+
+	tests := []struct {
+		name                  string
+		managementClusterOIDC bool
+		objects               []runtime.Object
+		expectedIssuers       []string
+	}{
+		{
+			name:                  "enabled adds the management cluster issuer",
+			managementClusterOIDC: true,
+			objects:               []runtime.Object{rootCAConfigMap},
+			expectedIssuers:       []string{importcycle.LocalClusterOIDCEndpoint, customIssuer},
+		},
+		{
+			name:                  "disabled only keeps the configured issuers and does not need the root CA",
+			managementClusterOIDC: false,
+			expectedIssuers:       []string{customIssuer},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, _, _ := G(t)
+			ctx := context.Background()
+			fakeClient := fake.NewClientset(tt.objects...)
+
+			r := &apiServerResourcesReconciler{
+				ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
+					ManagementClusterClient: &alias.ManagementClusterClient{Interface: fakeClient},
+				},
+				authenticationConfigFileName: "config.yaml",
+				managementClusterOIDC:        tt.managementClusterOIDC,
+			}
+
+			g.Expect(r.reconcileAuthenticationConfig(ctx, hcp, cluster)).To(Succeed())
+
+			cm, err := fakeClient.CoreV1().ConfigMaps(namespace).
+				Get(ctx, names.GetAuthenticationConfigMapName(cluster), metav1.GetOptions{})
+			g.Expect(err).NotTo(HaveOccurred())
+
+			authConfig := &apiserverv1.AuthenticationConfiguration{}
+			g.Expect(yaml.Unmarshal([]byte(cm.Data[r.authenticationConfigFileName]), authConfig)).To(Succeed())
+			g.Expect(slices.Map(authConfig.JWT, func(jwt apiserverv1.JWTAuthenticator, _ int) string {
+				return jwt.Issuer.URL
+			})).To(Equal(tt.expectedIssuers))
+		})
 	}
 }
 

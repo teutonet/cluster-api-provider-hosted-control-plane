@@ -90,6 +90,7 @@ func NewHostedControlPlaneReconciler(
 	recorder events.EventRecorder,
 	controllerNamespace string,
 	reconcileFilter string,
+	managementClusterOIDC bool,
 ) HostedControlPlaneReconciler {
 	return &hostedControlPlaneReconciler{
 		client:                         client,
@@ -107,6 +108,7 @@ func NewHostedControlPlaneReconciler(
 		controllerNamespace:            controllerNamespace,
 		controllerComponent:            "hosted-control-plane-controller",
 		reconcileFilter:                reconcileFilter,
+		managementClusterOIDC:          managementClusterOIDC,
 		caCertificatesDuration:         2 * 24 * time.Hour,
 		certificatesDuration:           24 * time.Hour,
 		apiServerComponentLabel:        "api-server",
@@ -148,6 +150,7 @@ type hostedControlPlaneReconciler struct {
 	controllerNamespace            string
 	controllerComponent            string
 	reconcileFilter                string
+	managementClusterOIDC          bool
 	caCertificatesDuration         time.Duration
 	certificatesDuration           time.Duration
 	apiServerComponentLabel        string
@@ -689,6 +692,7 @@ func (r *hostedControlPlaneReconciler) reconcileNormal(
 				r.konnectivityServicePort,
 				r.konnectivityClientUsername,
 				r.konnectivityServerAudience,
+				r.managementClusterOIDC,
 			)
 			monitoringReconciler := monitoring.NewMonitoringReconciler(
 				monitoringClient,

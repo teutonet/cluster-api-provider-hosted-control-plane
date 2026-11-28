@@ -77,6 +77,7 @@ func createTestReconcilerWithFilter(client client.Client, reconcileFilter string
 		&recorder.InfiniteDiscardingFakeRecorder{},
 		"test-namespace",
 		reconcileFilter,
+		true,
 	)
 }
 

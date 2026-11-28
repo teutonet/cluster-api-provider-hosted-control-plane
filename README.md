@@ -279,6 +279,53 @@ subjects:
 > **Note**: The issuer URL `https://kubernetes.default.svc.cluster.local` is reserved and cannot be used as a key in
 > `spec.oidcProviders`.
 
+#### Management Cluster Requirements
+
+The workload cluster API servers run as pods in the management cluster and initialize this authenticator by fetching
+the issuer's discovery document (`/.well-known/openid-configuration`) and its JWKS (`/openid/v1/jwks`) from the
+management cluster API server, **without any credentials**. The management cluster therefore has to:
+
+1. use `https://kubernetes.default.svc.cluster.local` as its service account issuer (`--service-account-issuer`, the
+   default for kubeadm based clusters). The `iss` claim of the tokens and the `jwks_uri` advertised in the discovery
+   document must match this URL;
+2. accept anonymous requests on its API server (`--anonymous-auth=true`, the upstream default), or at least on the
+   two discovery endpoints when the anonymous authenticator is restricted with an `AuthenticationConfiguration`;
+3. allow unauthenticated clients to read the discovery endpoints. Kubernetes only binds the
+   `system:service-account-issuer-discovery` ClusterRole to `system:serviceaccounts` by default, so an additional
+   binding is needed:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: service-account-issuer-discovery-unauthenticated
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:service-account-issuer-discovery
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: system:unauthenticated
+```
+
+If these requirements are not met (for example on RKE2, which sets `--anonymous-auth=false` by default, or on clusters
+hardened according to the CIS benchmark), every workload cluster API server logs
+`oidc authenticator: initializing plugin: 401 Unauthorized` (or `403 Forbidden`) every 10 seconds and management
+cluster tokens are rejected. Other authenticators keep working.
+
+#### Disabling the Management Cluster OIDC Provider
+
+If you don't use management cluster tokens, or can't meet the requirements above, set the `MANAGEMENT_CLUSTER_OIDC`
+environment variable of the controller to `false`. The authenticator is then no longer added to the
+`AuthenticationConfiguration` of the workload clusters, and their API servers are rolled out with the new
+configuration on the next reconciliation. The issuer URL stays reserved in `spec.oidcProviders`.
+
+```bash
+kubectl -n capi-hosted-control-plane-system set env \
+  deployment/capi-hosted-control-plane-controller-manager MANAGEMENT_CLUSTER_OIDC=false
+```
+
 ### Custom OIDC Providers
 
 Additional JWT/OIDC authenticators can be configured via `spec.oidcProviders`. The map key is the issuer URL.
@@ -334,6 +381,7 @@ To not ship the roles, remove `./rbac-aggregation.yaml` from `config/kustomizati
 | `LOG_FORMAT`                  | Log format (json or text)        | json                                  |
 | `LOG_LEVEL`                   | Log level (debug, info, etc.)    | info                                  |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OpenTelemetry collector endpoint | -                                     |
+| `MANAGEMENT_CLUSTER_OIDC`     | Trust management cluster tokens  | true                                  |
 
 ## 📈 Monitoring
 

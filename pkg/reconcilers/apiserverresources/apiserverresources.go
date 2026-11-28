@@ -108,6 +108,7 @@ func NewApiServerResourcesReconciler(
 	konnectivityServicePort int32,
 	konnectivityClientKubeconfigName string,
 	konnectivityServerAudience string,
+	managementClusterOIDC bool,
 ) ApiServerResourcesReconciler {
 	return &apiServerResourcesReconciler{
 		ManagementResourceReconciler: reconcilers.ManagementResourceReconciler{
@@ -128,6 +129,7 @@ func NewApiServerResourcesReconciler(
 		konnectivityServicePort:             konnectivityServicePort,
 		konnectivityClientKubeconfigName:    konnectivityClientKubeconfigName,
 		konnectivityServerAudience:          konnectivityServerAudience,
+		managementClusterOIDC:               managementClusterOIDC,
 		egressSelectorConfigMountPath:       "/etc/kubernetes/egress/configurations",
 		konnectivityUDSMountPath:            "/run/konnectivity",
 		konnectivityUDSSocketName:           "konnectivity-agent.sock",
@@ -162,6 +164,7 @@ type apiServerResourcesReconciler struct {
 	konnectivityServicePort             int32
 	konnectivityClientKubeconfigName    string
 	konnectivityServerAudience          string
+	managementClusterOIDC               bool
 	konnectivityUDSMountPath            string
 	konnectivityUDSSocketName           string
 	egressSelectorConfigMountPath       string
@@ -329,6 +332,38 @@ func (arr *apiServerResourcesReconciler) reconcileAuditConfig(
 		})
 }
 
+// getManagementClusterOIDCProvider returns the JWT authenticator that trusts service account tokens issued by the
+// management cluster. The hosted API server fetches the issuer's discovery document and JWKS from the management
+// cluster API server without credentials, so the management cluster has to allow anonymous access to them.
+func (arr *apiServerResourcesReconciler) getManagementClusterOIDCProvider(
+	ctx context.Context,
+	hostedControlPlane *v1alpha1.HostedControlPlane,
+	cluster *capiv2.Cluster,
+) (v1alpha1.OIDCProvider, error) {
+	managementKubeRootCAConfigMap, err := arr.ManagementClusterClient.CoreV1().
+		ConfigMaps(hostedControlPlane.Namespace).
+		Get(ctx, rootcacertpublisher.RootCACertConfigMapName, metav1.GetOptions{})
+	if err != nil {
+		return v1alpha1.OIDCProvider{}, fmt.Errorf("failed to get management cluster root CA configMap: %w", err)
+	}
+	managementKubeRootCA, ok := managementKubeRootCAConfigMap.Data[konstants.CACertName]
+	if !ok {
+		return v1alpha1.OIDCProvider{}, errRootCAConfigMapMissingCertKey
+	}
+
+	return v1alpha1.OIDCProvider{
+		CertificateAuthority: managementKubeRootCA,
+		ClaimMappings: v1alpha1.OIDCClaimMappings{
+			Username: "\"management-cluster:\" + claims.sub",
+			Groups:   "",
+		},
+		Audiences: []string{
+			importcycle.LocalClusterOIDCEndpoint,
+			fmt.Sprintf("workload-cluster:%s/%s", cluster.Namespace, cluster.Name),
+		},
+	}, nil
+}
+
 func (arr *apiServerResourcesReconciler) reconcileAuthenticationConfig(
 	ctx context.Context,
 	hostedControlPlane *v1alpha1.HostedControlPlane,
@@ -339,27 +374,12 @@ func (arr *apiServerResourcesReconciler) reconcileAuthenticationConfig(
 			providers := make(map[string]v1alpha1.OIDCProvider)
 			maps.Copy(providers, hostedControlPlane.Spec.OIDCProviders)
 
-			managementKubeRootCAConfigMap, err := arr.ManagementClusterClient.CoreV1().
-				ConfigMaps(hostedControlPlane.Namespace).
-				Get(ctx, rootcacertpublisher.RootCACertConfigMapName, metav1.GetOptions{})
-			if err != nil {
-				return fmt.Errorf("failed to get management cluster root CA configMap: %w", err)
-			}
-			managementKubeRootCA, ok := managementKubeRootCAConfigMap.Data[konstants.CACertName]
-			if !ok {
-				return errRootCAConfigMapMissingCertKey
-			}
-
-			providers[importcycle.LocalClusterOIDCEndpoint] = v1alpha1.OIDCProvider{
-				CertificateAuthority: managementKubeRootCA,
-				ClaimMappings: v1alpha1.OIDCClaimMappings{
-					Username: "\"management-cluster:\" + claims.sub",
-					Groups:   "",
-				},
-				Audiences: []string{
-					importcycle.LocalClusterOIDCEndpoint,
-					fmt.Sprintf("workload-cluster:%s/%s", cluster.Namespace, cluster.Name),
-				},
+			if arr.managementClusterOIDC {
+				managementClusterProvider, err := arr.getManagementClusterOIDCProvider(ctx, hostedControlPlane, cluster)
+				if err != nil {
+					return err
+				}
+				providers[importcycle.LocalClusterOIDCEndpoint] = managementClusterProvider
 			}
 
 			minorVersion, err := operatorutil.GetMinorVersion(hostedControlPlane)
